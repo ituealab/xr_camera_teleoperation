@@ -16,12 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Robot side (PC2 Jetson, aarch64, py3.10 venv): IK + Dex3 retargeting + DDS. No torch/mujoco/opencv of ours.
-# NOTE: dex_retargeting (silencht fork, the one xr_teleoperate uses) itself depends on torch==2.3.0 + nlopt.
-# It is imported lazily by the hand controller only.
+# Robot side (PC2 Jetson, aarch64, py3.10): IK + Dex3 retargeting + DDS. No torch/mujoco/opencv of ours.
+# NOT listed here (not installable from PyPI with the needed features): pinocchio WITH its CasADi bindings,
+# hpp-fcl and nlopt come from conda-forge, see envs/robot-conda.yml (PyPI `pin` has no `pinocchio.casadi`);
+# deploy/robot_setup.sh installs them first and then these pip packages.
+# dex_retargeting (the silencht fork xr_teleoperate uses) itself depends on torch==2.3.0; it is imported
+# lazily by the hand controller only (importing xr_camera_teleop.robot.node needs neither).
 robot = [
-    "pin==2.7.0",
-    "hpp-fcl==2.4.4",
     "casadi==3.6.7",
     "cyclonedds==0.10.2",
     "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python@814556d15970dd2ecf1c9984e845ca02ab07e206",

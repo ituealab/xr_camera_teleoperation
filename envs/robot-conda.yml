@@ -1,0 +1,24 @@
+# Robot-side (PC2, linux-aarch64) / laptop conda-forge part of the environment.
+# Pinocchio WITH CasADi bindings (`from pinocchio import casadi`) is only shipped by conda-forge: the PyPI `pin`
+# wheels (2.7.0, 3.3.1, 3.7.0, 4.1.0 tested) have no pinocchio.casadi, which the IK needs. Versions = the laptop's
+# working env (envs/xr-env.freeze.txt), so IK numerics are the same on both machines.
+# The pip-only rest (cyclonedds, unitree_sdk2py, dex_retargeting, torch) is installed by deploy/robot_setup.sh.
+name: xrcam
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pinocchio=3.1.0
+  - casadi=3.6.7
+  - hpp-fcl
+  - numpy=1.26.4
+  - nlopt=2.7.1
+  - scipy
+  - pyzmq
+  - msgpack-python
+  - pyyaml
+  - trimesh
+  - anytree
+  - lxml
+  - pytransform3d
+  - pip
