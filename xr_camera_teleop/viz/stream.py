@@ -37,7 +37,7 @@ class MiniClient:
 
 def make_client(addr):
     try:
-        from xr_camera_teleop.api.client import HandStreamClient
+        from xr_camera_teleop.operator.perception.client import HandStreamClient
 
         return HandStreamClient(addr)
     except Exception:

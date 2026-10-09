@@ -18,13 +18,12 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def publish(a):
     import msgpack
     import zmq
-    from xr_camera_teleop.teleop.synthetic_stream import REST, hand_message_entry, make_message, rest_rotation
+    from xr_camera_teleop.operator.synthetic_stream import REST, hand_message_entry, make_message, rest_rotation
     s = zmq.Context.instance().socket(zmq.PUB)
     s.bind(a.addr)
     time.sleep(0.5)

@@ -8,11 +8,11 @@ pytest.importorskip("pinocchio")
 pytest.importorskip("casadi")
 pytest.importorskip("hppfcl")
 
-from xr_camera_teleop.teleop import g1_collision_spheres as GS  # noqa: E402
-from xr_camera_teleop.teleop import xrt_compat  # noqa: E402
-from xr_camera_teleop.teleop.clutch import neutral_from_ik_fk  # noqa: E402
-from xr_camera_teleop.teleop.filters import rot_exp  # noqa: E402
-from xr_camera_teleop.teleop.self_collision import MeshGate, SphereModel, build_reduced_models, is_hand_wrist  # noqa: E402
+from xr_camera_teleop.robot import g1_collision_spheres as GS  # noqa: E402
+from xr_camera_teleop.robot import ik as ik_mod  # noqa: E402
+from xr_camera_teleop.operator.clutch import neutral_from_ik_fk  # noqa: E402
+from xr_camera_teleop.operator.filters import rot_exp  # noqa: E402
+from xr_camera_teleop.robot.self_collision import MeshGate, SphereModel, build_reduced_models, is_hand_wrist  # noqa: E402
 
 # right arm joint indices in the 14-vector: 7 pitch, 8 roll, 9 yaw, 10 elbow, 11-13 wrist
 R_ROLL, R_YAW = 8, 9
@@ -41,14 +41,14 @@ class TickClock:
 
 @pytest.fixture(scope="module")
 def safe_ik():
-    ik = xrt_compat.make_arm_ik(self_collision=True)
+    ik = ik_mod.make_arm_ik(self_collision=True)
     ik.clock = TickClock()
     return ik
 
 
 @pytest.fixture(scope="module")
 def noescape_ik():
-    ik = xrt_compat.make_arm_ik(self_collision=True, escape=False)
+    ik = ik_mod.make_arm_ik(self_collision=True, escape=False)
     ik.clock = TickClock()
     return ik
 
@@ -61,7 +61,7 @@ def gate_all():
 
 @pytest.fixture(scope="module")
 def up_ik():
-    return xrt_compat.make_arm_ik(self_collision=False)
+    return ik_mod.make_arm_ik(self_collision=False)
 
 
 @pytest.fixture(scope="module")
@@ -264,7 +264,7 @@ def test_trajectory_through_torso_no_collision_no_jumps(safe_ik, gate, neutral):
 
 
 def test_gate_returns_last_safe_q(neutral, gate):
-    ik = xrt_compat.make_arm_ik(self_collision=True, constraints=False, escape=False)    # layer 2 only
+    ik = ik_mod.make_arm_ik(self_collision=True, constraints=False, escape=False)    # layer 2 only
     L0, R0 = neutral
     q = np.zeros(14)
     q, _ = ik.solve_ik(L0, pose(R0, R0[:3, 3] + [0.05, 0, 0.05]), q)        # a safe pose first
@@ -331,8 +331,8 @@ def test_timing_benchmark(safe_ik, up_ik, neutral):
 def test_end_to_end_synthetic_stream_push_right_hand_into_body(safe_ik, gate):
     """Synthetic hand stream -> WiLoRTeleWrapper (ego clutch, filters) -> SafeG1_29_ArmIK, operator pushes
     the right hand into their chest and across to the left; the robot never self-collides."""
-    from xr_camera_teleop.teleop import synthetic_stream as syn
-    from xr_camera_teleop.teleop.wilor_tv_wrapper import WiLoRTeleWrapper
+    from xr_camera_teleop.operator import synthetic_stream as syn
+    from xr_camera_teleop.operator.wrapper import WiLoRTeleWrapper
 
     class Client:
         msg = None
@@ -521,8 +521,8 @@ def test_reset_to_home_joint_space(safe_ik, gate, neutral):
 
 def test_wrapper_reset_and_swap_drive_home(safe_ik, neutral):
     """live_ui Reset button -> wrapper.reset() -> on_home_request -> SafeG1_29_ArmIK.reset_to_home."""
-    from xr_camera_teleop.teleop import synthetic_stream as syn
-    from xr_camera_teleop.teleop.wilor_tv_wrapper import WiLoRTeleWrapper
+    from xr_camera_teleop.operator import synthetic_stream as syn
+    from xr_camera_teleop.operator.wrapper import WiLoRTeleWrapper
 
     class Client:
         msg = None
@@ -532,7 +532,7 @@ def test_wrapper_reset_and_swap_drive_home(safe_ik, neutral):
 
     clk = [100.0]
     w = WiLoRTeleWrapper(client=Client(), clock=lambda: clk[0], k=1.0, neutral=neutral)
-    xrt_compat.connect_ik(safe_ik, w)
+    ik_mod.connect_ik(safe_ik, w)
     q = _twisted(safe_ik, neutral)
     w.reset()
     assert safe_ik.busy

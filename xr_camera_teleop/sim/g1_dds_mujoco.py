@@ -27,7 +27,7 @@ viewer is synced from the same loop (no offscreen rendering, no image streaming)
 only swap a reference to the newest message (never touch physics); GC is frozen/disabled.
 RTF and per-step time percentiles are printed every --report seconds.
 --report-self-collision: every 50 ms the arm q is checked for self-collision on the URDF collision
-meshes (xr_camera_teleop/teleop/self_collision.MeshGate, ~0.2 ms); contacts are REPORTED (not blocked: the
+meshes (xr_camera_teleop/robot/self_collision.MeshGate, ~0.2 ms); contacts are REPORTED (not blocked: the
 MJCF geoms have contype=0) - rate-limited line on contact + counts in the periodic report.
 
     data/xr-env/bin/python xr_camera_teleop/sim/g1_dds_mujoco.py [--headless] [--domain 1 --iface lo]
@@ -47,8 +47,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-REPO = Path(__file__).resolve().parents[2]
-G1_XML = REPO / "third_party" / "xr_teleoperate" / "assets" / "g1" / "g1_body29_hand14.xml"
+from xr_camera_teleop.paths import G1_MJCF as G1_XML  # noqa: E402
 
 BODY_JOINTS = [  # index == G1_29_JointIndex (robot_arm.py)
     "left_hip_pitch", "left_hip_roll", "left_hip_yaw", "left_knee", "left_ankle_pitch", "left_ankle_roll",
@@ -162,8 +161,7 @@ class G1DdsSim:
         self.sc_gate = None
         self.sc = {"checks": 0, "hits": 0, "last_print": -1e9}
         if a.report_self_collision:
-            sys.path.insert(0, str(REPO))
-            from xr_camera_teleop.teleop.self_collision import MeshGate
+            from xr_camera_teleop.robot.self_collision import MeshGate
             self.sc_gate = MeshGate()
             arm_names = list(self.sc_gate.model.names[1:])
             assert arm_names == BODY_JOINTS[15:29], arm_names

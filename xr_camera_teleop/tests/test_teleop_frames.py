@@ -2,12 +2,12 @@
 import numpy as np
 import pytest
 
-from xr_camera_teleop.teleop import synthetic_stream as syn
-from xr_camera_teleop.teleop.clutch import HandClutch
-from xr_camera_teleop.teleop.mano_to_webxr import mano21_to_webxr25
-from xr_camera_teleop.teleop.wilor_tv_wrapper import WiLoRTeleWrapper, fallback_neutral
+from xr_camera_teleop.operator import synthetic_stream as syn
+from xr_camera_teleop.operator.clutch import HandClutch
+from xr_camera_teleop.operator.mano_to_webxr import mano21_to_webxr25
+from xr_camera_teleop.operator.wrapper import WiLoRTeleWrapper, fallback_neutral
 
-tvw = pytest.importorskip("xr_camera_teleop.teleop.xrt_compat").load_tv_wrapper()
+from xr_camera_teleop.robot.vendor import tv_wrapper as tvw
 
 
 class FakeClient:
@@ -106,7 +106,7 @@ def test_hand_pos_matches_tv_wrapper_math():
         # arbitrary world pose of the hand in W (robot basis)
         rng = np.random.default_rng(3)
         ang = rng.normal(size=3) * 0.5
-        from xr_camera_teleop.teleop.filters import rot_exp
+        from xr_camera_teleop.operator.filters import rot_exp
         R_W = rot_exp(ang) @ syn.rest_rotation(side)
         p_W = np.array([0.5, 0.1 if side == "left" else -0.1, -0.2])
         grip = 0.6
@@ -119,7 +119,7 @@ def test_hand_pos_matches_tv_wrapper_math():
         # --- reference: what TeleVuer would deliver for the same physical hand
         kp_local = syn.canonical_hand_mano21(side, grip)
         # we need the *keypoint-derived* frame, same as the wrapper (canonical hand has ~6deg offset)
-        from xr_camera_teleop.teleop.mano_to_webxr import keypoint_wrist_frame
+        from xr_camera_teleop.operator.mano_to_webxr import keypoint_wrist_frame
         Rk, _ = keypoint_wrist_frame(kp_local, side)
         R_arm_robot = R_W @ Rk                                    # IPxr arm frame, robot basis
         kpW = kp_local @ R_W.T + p_W
@@ -217,7 +217,7 @@ def test_ego_absolute_rotation_neutral_hand_gives_robot_neutral():
     push(cl, ck, poses)
     w.calibrate()
     td = w.get_tele_data()
-    from xr_camera_teleop.teleop.mano_to_webxr import frame_angle
+    from xr_camera_teleop.operator.mano_to_webxr import frame_angle
     # synthetic hand's MCP layout tilts the keypoint frame ~6 deg; real hands differ similarly
     assert frame_angle(td.left_wrist_pose[:3, :3], np.eye(3)) < np.radians(8)
     assert frame_angle(td.right_wrist_pose[:3, :3], np.eye(3)) < np.radians(8)

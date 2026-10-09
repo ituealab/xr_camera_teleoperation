@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xr-camera-teleop"
+version = "0.2.0"
+description = "Camera (WiLoR) teleoperation of the Unitree G1 (29 DoF + Dex3): operator laptop sends end-effector commands, the robot runs IK + DDS"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "numpy>=1.26,<2",
+    "pyzmq>=25",
+    "msgpack>=1.0",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+# Robot side (PC2 Jetson, aarch64, py3.10 venv): IK + Dex3 retargeting + DDS. No torch/mujoco/opencv of ours.
+# NOTE: dex_retargeting (silencht fork, the one xr_teleoperate uses) itself depends on torch==2.3.0 + nlopt.
+# It is imported lazily by the hand controller only.
+robot = [
+    "pin==2.7.0",
+    "hpp-fcl==2.4.4",
+    "casadi==3.6.7",
+    "cyclonedds==0.10.2",
+    "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python@814556d15970dd2ecf1c9984e845ca02ab07e206",
+    "dex_retargeting @ git+https://github.com/silencht/dex-retargeting@d7753d38c9ff11f80bafea6cd168351fd3db9b0e",
+]
+# Operator laptop: everything the robot has (local G1 preview uses the same IK) + MuJoCo / OpenCV (UI, sim).
+operator = [
+    "xr-camera-teleop[robot]",
+    "mujoco>=3.1",
+    "opencv-python-headless>=4.8",
+    "pillow",
+    "scipy",
+]
+# WiLoR perception server (GPU). The WiLoR code + weights are external ($WILOR_ROOT), see README.
+perception = [
+    "torch",
+    "torchvision",
+    "ultralytics",
+    "opencv-python-headless>=4.8",
+    "scikit-image",
+]
+dev = ["pytest"]
+
+[project.scripts]
+xrcam-robot = "xr_camera_teleop.robot.node:main"
+xrcam-operator = "xr_camera_teleop.operator.node:main"
+xrcam-ui = "xr_camera_teleop.operator.live_ui:main"
+xrcam-sim = "xr_camera_teleop.sim.g1_dds_mujoco:main"
+xrcam-perception = "xr_camera_teleop.operator.perception.server:main"
+xrcam-replay = "xr_camera_teleop.operator.perception.replay:main"
+xrcam-ctl = "xr_camera_teleop.ctl:main"
+
+[tool.setuptools.packages.find]
+include = ["xr_camera_teleop*"]
+
+[tool.setuptools.package-data]
+xr_camera_teleop = [
+    "assets/g1/*.urdf",
+    "assets/g1/*.xml",
+    "assets/g1/meshes/*",
+    "assets/unitree_hand/*.urdf",
+    "assets/unitree_hand/*.yml",
+    "assets/unitree_hand/meshes/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["xr_camera_teleop/tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning"]

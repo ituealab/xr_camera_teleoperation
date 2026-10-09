@@ -5,11 +5,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "xr_camera_teleop" / "camera"))
 
-from camera_omron import LEVEL_STRAIGHT_DOWN, active_region, load_calibration  # noqa: E402
-from xr_camera_teleop.teleop.camlevel import level_from_down, pitch_rotation  # noqa: E402
+from xr_camera_teleop.operator.camera.camera_omron import LEVEL_STRAIGHT_DOWN, active_region, load_calibration  # noqa: E402
+from xr_camera_teleop.operator.camlevel import level_from_down, pitch_rotation  # noqa: E402
 
 R_W_CAM = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)  # CONTRACT.md
 

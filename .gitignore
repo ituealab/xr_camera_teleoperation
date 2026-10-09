@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+*.egg-info/
+build/
+dist/
 
 # runtime state, envs, recordings, camera caches (created on the machine that runs it)
 data/
@@ -8,5 +11,8 @@ data/
 # WiLoR model code + weights are not part of this repo (see WILOR_ROOT)
 third_party/WiLoR/
 
+# generated at runtime
 MUJOCO_LOG.TXT
 *.mp4
+*.pkl
+*.log
