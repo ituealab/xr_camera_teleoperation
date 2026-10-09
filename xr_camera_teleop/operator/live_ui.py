@@ -1,15 +1,18 @@
 #!/usr/bin/env python
-"""Live 3-panel web UI (run with data/xr-env):  LEFT WiLoR overlay | MIDDLE floating hands | RIGHT G1.
+"""Live 3-panel web UI + operator ee_cmd publisher:  LEFT WiLoR overlay | MIDDLE floating hands | RIGHT G1.
 
-    data/xr-env/bin/python xr_camera_teleop/ui/live_ui.py            # then open http://127.0.0.1:8780/
+    data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui     # (or `xrcam-ui`), then open http://127.0.0.1:8780/
 
-Needs the hand server (wilor-venv):  data/wilor-venv/bin/python xr_camera_teleop/operator/perception/server.py --source zed
+Needs the hand server (wilor-venv):  data/wilor-venv/bin/python -m xr_camera_teleop.operator.perception.server --source zed
 Pipeline (same as tools/render_session.py, live): ZMQ :5590 -> WiLoRTeleWrapper (ego clutch, filters)
--> G1_29_ArmIK -> Dex3 HandRetargeting -> G1Sim (kinematic MuJoCo, pelvis fixed); floating hands via
-HandMapper (shared anchor). The left panel is the server's own /overlay.mjpg (embedded by the page).
+-> SafeG1_29_ArmIK (the same IK code the robot runs) -> Dex3 HandRetargeting -> G1Sim (kinematic MuJoCo, pelvis fixed);
+floating hands via HandMapper (shared anchor). The left panel is the server's own /overlay.mjpg.
+Robot link: the wrapper's TeleData is also published as ee_cmd (tcp://*:5591, operator/link.py) to xrcam-robot, and
+the robot's status (mode, watchdog, IK ms) is shown on the status line. The robot holds until "Start robot" (R).
+--no-publish: preview only (no ee_cmd socket).
 Threads: pipeline (60 Hz, ZMQ conflated latest) | render (EGL offscreen, ~30 fps, MJPEG) | HTTP.
 Camera tilt: the per-message cam_R_level (ZED IMU) is used automatically; the page can override it
-with a manual pitch. Keys on the page: C calibrate, R reset, Space pause/engage.
+with a manual pitch. Keys on the page: C calibrate, H reset/home, R start/stop robot, Space pause/engage clutch.
 """
 from __future__ import annotations
 
@@ -24,12 +27,16 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+from xr_camera_teleop.paths import DATA  # noqa: E402
+
 os.environ.setdefault("MUJOCO_GL", "egl")
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
+import zmq  # noqa: E402
+
+from xr_camera_teleop.operator.link import OperatorLink  # noqa: E402
+from xr_camera_teleop.protocol import EE_PORT, STATUS_PORT  # noqa: E402
 
 PW, PH = 640, 480
 HIDE_AFTER, STALE_AFTER = 2.0, 0.3
@@ -52,7 +59,8 @@ button:hover{border-color:var(--ac)} button.on{background:#7a3b1e}
 </style>
 <header>
 <button onclick="post('calibrate')">Calibrate now (C)</button>
-<button onclick="post('reset')">Reset (R)</button>
+<button onclick="post('reset')">Reset / home (H)</button>
+<button id=fol onclick="post('follow')">Start robot (R)</button>
 <button id=eng onclick="post('engage')">Pause / engage (Space)</button>
 <button id=rec onclick="post('record')">&#9679; Record 3-panel mp4 (V)</button>
 <label>k <input id=k type=range min=0.3 max=1.5 step=0.05 value=0.8 oninput="kv.textContent=this.value" onchange="post('k',{k:+this.value})"> <span id=kv>0.8</span></label>
@@ -62,7 +70,7 @@ button:hover{border-color:var(--ac)} button.on{background:#7a3b1e}
 <div class=grid>
 <div class=p><h3>WiLoR (server overlay)</h3><img id=ov></div>
 <div class=p><h3>Floating hands</h3><img src="/mid.mjpg"></div>
-<div class=p><h3>G1 (xr_teleoperate IK + Dex3)</h3><img src="/g1.mjpg"></div>
+<div class=p><h3>G1 preview (same IK + Dex3 retargeting as the robot)</h3><img src="/g1.mjpg"></div>
 </div>
 <div id=st>...</div>
 <script>
@@ -70,12 +78,14 @@ document.getElementById('ov').src='http://'+location.hostname+':__OVPORT__/overl
 async function post(a,b){await fetch('/api/'+a,{method:'POST',body:JSON.stringify(b||{})});}
 function pitch(){post('pitch',{mode:pm.value,deg:+pd.value})}
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
- if(e.key==='c'||e.key==='C')post('calibrate');else if(e.key==='r'||e.key==='R')post('reset');
+ if(e.key==='c'||e.key==='C')post('calibrate');else if(e.key==='h'||e.key==='H')post('reset');
+ else if(e.key==='r'||e.key==='R')post('follow');
  else if(e.key==='v'||e.key==='V')post('record');
  else if(e.key===' '){e.preventDefault();post('engage')}});
 async function poll(){try{const s=await (await fetch('/api/status')).json();
  const h=x=>{const v=s.hands[x];return x+': '+(v.seen?'<span class=ok>seen</span>':'<span class=warn>'+(v.detected_ever?'stale':'never')+'</span>')};
  eng.className=s.engaged?'':'on';
+ fol.className=s.follow?'on':'';fol.innerHTML=s.follow?'Stop robot (R)':'Start robot (R)';
  rec.className=s.recording?'on':''; rec.innerHTML=s.recording?'&#9632; Stop recording ('+s.recording.seconds.toFixed(0)+' s)':'&#9679; Record 3-panel mp4 (V)';
  st.innerHTML=(s.calibrated?'<span class=ok>CALIBRATED</span>':'<span class=warn>waiting: hold both hands still 1 s (both inside the frame, closer than 0.9 m)</span>')
  +(s.engaged?'':' | <span class=warn>PAUSED</span>')+' | '+h('left')+' '+h('right')
@@ -83,6 +93,7 @@ async function poll(){try{const s=await (await fetch('/api/status')).json();
  +'<br>fps: WiLoR '+s.fps.overlay.toFixed(1)+' | hands '+s.fps.mid.toFixed(1)+' | G1 '+s.fps.g1.toFixed(1)+' | pipeline '+s.fps.pipeline.toFixed(0)+' Hz'
  +' | latency capture&rarr;render '+s.latency_ms.toFixed(0)+' ms (server '+s.server_latency_ms.toFixed(0)+' ms)'
  +(s.self_collision?'<br>self-collision: '+(s.self_collision.on?'<span class=ok>ON</span>'+(s.self_collision.mode&&s.self_collision.mode!='track'?' <span class=warn>'+(s.self_collision.mode=='home'?'returning home':'switching arm branch')+'</span>':'')+' constrained '+s.self_collision.constrained+' / '+s.self_collision.solves+' solves, gated '+s.self_collision.gated+', escapes '+s.self_collision.escapes+', homes '+s.self_collision.homes+', IK '+s.self_collision.last_ms.toFixed(1)+' ms':'<span class=warn>OFF</span>'):'')
+ +'<br>'+(s.follow?'<span class=ok>ROBOT FOLLOWS</span> ':'<span class=warn>robot holds</span> ')+s.robot_text
  +(s.last_recording?'<br>last recording: '+s.last_recording:'')
  +(s.error?'<br><span class=warn>'+s.error+'</span>':'');}catch(e){st.textContent='UI backend unreachable'}}
 setInterval(poll,500);poll();
@@ -151,6 +162,8 @@ class LiveUI:
         self.k = args.k
         self.engaged = True
         self.cmds = []
+        self.link = None
+        self.last_td = None
         self.error = None
         self.fps = {"mid": Rate(), "g1": Rate(), "pipe": Rate()}
         self.mid_jpg, self.g1_jpg = Latest(), Latest()
@@ -197,7 +210,12 @@ class LiveUI:
         self.sim = G1Sim(arm_names, hand_names)
         wrapper = WiLoRTeleWrapper(client=ClientProxy(HandStreamClient(a.addr), self), k=a.k,
                                    neutral=neutral_from_ik_fk(ik), auto_calibrate=True)
-        connect_ik(ik, wrapper)       # Reset / L-R swap -> arms back to q=0 in joint space
+
+        def on_home():                # Reset / L-R swap: local preview AND the robot go back to q=0 in joint space
+            if hasattr(ik, "reset_to_home"):
+                ik.reset_to_home()
+            self.link.request_home()
+        wrapper.on_home_request = on_home
         waist_h = 1.5 - WAIST_DROP
         self.waist_h = waist_h
         mapper = HandMapper("relative", a.k, 1.5, neutral_rot="ref", anchors=robot_anchors(waist_h), max_depth=0.9)
@@ -223,12 +241,17 @@ class LiveUI:
                 elif c == "engage":
                     self.engaged = not self.engaged
                     wrapper.set_engaged(self.engaged)
+                elif c == "follow":
+                    self.link.set_follow(not self.link.follow)
+                    print(f"[live_ui] robot follow {'ON' if self.link.follow else 'OFF'}", flush=True)
                 elif c == "k":
                     self.k = float(np.clip(v, 0.3, 1.5))
                     wrapper.set_k(self.k)
                     mapper.scale = self.k
             wrapper.cam_pitch_deg = self.pitch_deg
             td = wrapper.get_tele_data()
+            self.link.send(td)
+            self.last_td = td
             msg = wrapper.last_msg
             if msg is not None and msg.get("frame_id") != last_fid:      # new frame: floating hands + fingers
                 last_fid = msg.get("frame_id")
@@ -371,6 +394,8 @@ class LiveUI:
 
     def status(self):
         return {"calibrated": self.calibrated, "swapped": self.swapped, "engaged": self.engaged, "k": self.k,
+                "follow": self.link.follow, "robot_text": self.link.robot_summary(),
+                "robot": {"connected": self.link.robot()["connected"]},
                 "hands": {h: dict(self.hand_seen[h]) for h in SIDES}, "tilt": self.tilt,
                 "pitch_mode": self.pitch_mode, "latency_ms": self.latency_ms,
                 "server_latency_ms": self.server_latency_ms, "error": self.error,
@@ -387,7 +412,7 @@ class LiveUI:
     def toggle_record(self):
         with self.rec_lock:
             if self.rec_proc is None:
-                out = ROOT / "data/sessions" / time.strftime("live_%Y%m%d_%H%M%S.mp4")
+                out = DATA / "sessions" / time.strftime("live_%Y%m%d_%H%M%S.mp4")
                 out.parent.mkdir(parents=True, exist_ok=True)
                 self.rec_path, self.rec_t0, self.rec_left = str(out), time.monotonic(), None
                 self.rec_proc = subprocess.Popen(
@@ -527,7 +552,7 @@ class LiveUI:
                 p = self.path.split("?")[0]
                 if p == "/api/record":
                     threading.Thread(target=ui.toggle_record, daemon=True).start()
-                elif p in ("/api/calibrate", "/api/reset", "/api/engage"):
+                elif p in ("/api/calibrate", "/api/reset", "/api/engage", "/api/follow"):
                     with ui.lock:
                         ui.cmds.append((p[5:], None))
                 elif p == "/api/k":
@@ -556,6 +581,11 @@ class LiveUI:
         except KeyboardInterrupt:
             pass
         self._rec_close()                 # finish the mp4 before the hard exit
+        self.link.set_follow(False)       # robot: hold + home request (it would time out into home anyway)
+        self.link.request_home()
+        for _ in range(5):
+            self.link.send(self.last_td, force=True) if self.last_td is not None else None
+            time.sleep(0.05)
         self.stop.set()
         time.sleep(0.2)
         os._exit(0)     # avoid noisy EGL teardown
@@ -571,12 +601,22 @@ def main(argv=None):
     ap.add_argument("--fps", type=float, default=30.0, help="target render fps of the two MuJoCo panels")
     ap.add_argument("--dds", action="store_true", help="(not implemented) show the DDS sim instead of the kinematic G1")
     ap.add_argument("--no-self-collision", dest="self_collision", action="store_false", default=None,
-                    help="original G1_29_ArmIK without self-collision protection (default: env "
-                         "WILOR_XR_SELF_COLLISION, on)")
+                    help="plain upstream IK without self-collision protection (default: env "
+                         "XRCAM_SELF_COLLISION, on)")
+    ap.add_argument("--ee-bind", default=f"tcp://*:{EE_PORT}", help="ee_cmd PUB bind address")
+    ap.add_argument("--robot", default=f"tcp://127.0.0.1:{STATUS_PORT}", help="robot_status PUB address of the robot")
+    ap.add_argument("--rate", type=float, default=30.0, help="ee_cmd rate [Hz]")
+    ap.add_argument("--no-publish", action="store_true", help="preview only: do not publish ee_cmd")
     a = ap.parse_args(argv)
     if a.dds:
         ap.error("--dds is not implemented; the kinematic G1Sim is used")
-    LiveUI(a).run()
+    ui = LiveUI(a)
+    try:
+        ui.link = OperatorLink(a.ee_bind, a.robot, a.rate, publish=not a.no_publish)
+    except zmq.ZMQError as e:
+        ap.error(f"cannot bind the ee_cmd publisher on {a.ee_bind}: {e} (another xrcam-operator/xrcam-ui running? "
+                 "use --no-publish for a preview-only UI)")
+    ui.run()
 
 
 if __name__ == "__main__":

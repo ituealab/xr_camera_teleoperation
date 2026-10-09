@@ -143,6 +143,11 @@ class SafeG1_29_ArmIK(G1_29_ArmIK):
         it only sets a flag consumed by the next solve_ik()."""
         self._home_request = True
 
+    def reset_tracking(self, q):
+        """Restart tracking from the posture q (warm start, smoothing filter, last safe q, escape state), e.g. when
+        the robot starts following again after holding. Do not call while busy (it would abort a home move)."""
+        self._reset_state(q)
+
     @property
     def busy(self) -> bool:
         return self.mode != "track" or self._home_request
