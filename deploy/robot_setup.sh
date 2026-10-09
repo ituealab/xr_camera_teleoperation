@@ -9,6 +9,7 @@
 #   3. `uv pip` into that env: this package (editable, --no-deps), cyclonedds 0.10.2 (built against the CycloneDDS
 #      in ~/cyclonedds_ws, PyPI has no aarch64 wheel), unitree_sdk2py, dex_retargeting (silencht fork) + torch CPU
 #   4. import check (no DDS traffic)
+# Laptop (operator) with the same recipe:  XRCAM_ENV=$PWD/data/xr-env XRCAM_OPERATOR=1 TORCH_INDEX=https://download.pytorch.org/whl/cpu bash deploy/robot_setup.sh
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,6 +59,9 @@ DEXRT_REF=d7753d38c9ff11f80bafea6cd168351fd3db9b0e
 "$UV" pip install --python "$PY" --no-deps "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python@${UNITREE_REF}"
 "$UV" pip install --python "$PY" --no-deps "dex_retargeting @ git+https://github.com/silencht/dex-retargeting@${DEXRT_REF}"
 "$UV" pip install --python "$PY" "${TORCH_ARGS[@]}" "torch==2.3.0"
+if [ "${XRCAM_OPERATOR:-0}" = 1 ]; then      # operator laptop: UI / sim extras (same recipe, own env dir)
+  "$UV" pip install --python "$PY" "mujoco>=3.1" opencv-python-headless pillow pytest
+fi
 
 echo "== 4/4 import check (no DDS traffic)"
 "$PY" - <<'PYEOF'

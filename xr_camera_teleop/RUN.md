@@ -1,68 +1,100 @@
-# Running WiLoR -> xr_teleoperate -> G1 (sim and real: same code path)
+# Running WiLoR -> operator -> ee_cmd -> robot node -> G1 (sim and real: same code path)
 
-Canli web arayuzu (3 panel) ve Turkce kullanim rehberi: [GUIDE.md](GUIDE.md) (`xr_camera_teleop/ui/live_ui.py`, port 8780).
+Live web UI (3 panels) and the Turkish usage guide: [GUIDE.md](GUIDE.md) (`operator/live_ui.py`, port 8780).
+Wire formats: [CONTRACT.md](CONTRACT.md). Overview / install: [../README.md](../README.md).
 
-`xr_camera_teleop/launch_xr_teleop.py` runs the UNMODIFIED `third_party/xr_teleoperate/teleop/teleop_hand_and_arm.py`
-with `televuer.TeleVuerWrapper` replaced by `WiLoRTeleWrapper` and the head-camera ImageClient replaced by a
-no-camera stub. DDS, G1_29_ArmController (rt/lowcmd or rt/arm_sdk), Dex3 controller (rt/dex3/*), IK and
-"go home on exit" are the original code. `--sim` only selects DDS domain 1 (real: domain 0).
+Two programs talk over ZMQ (no DDS between them):
 
-Env: `PY=data/xr-env/bin/python` (has unitree_sdk2py, cyclonedds 0.10.2, sshkeyboard, rerun, mujoco, pinocchio).
-Hand stream: `xr_camera_teleop/api/server.py` (live, wilor-venv) or `replay.py --synthetic` / `sim/latency_probe.py publish`.
+* **operator** (laptop): `xrcam-operator` (headless) or `xrcam-ui` (web UI): WiLoR stream -> `WiLoRTeleWrapper` ->
+  `ee_cmd` PUB `tcp://*:5591`; subscribes to the robot's `robot_status` (`:5592`).
+* **robot node** (`xrcam-robot`, on PC2 or on the laptop with `--sim`): SUB `ee_cmd` -> watchdog gate -> safe IK +
+  Dex3 retargeting -> `G1_29_ArmController` (`rt/lowcmd` or `rt/arm_sdk`) + `Dex3_1_Controller` (`rt/dex3/*`);
+  PUB `robot_status`. `--sim` only selects DDS domain 1 (real: domain 0).
+
+Env: `PY=data/xr-env/bin/python` (laptop; python 3.10, pinocchio 3.1.0 + casadi, unitree_sdk2py, cyclonedds 0.10.2,
+dex_retargeting, mujoco). Hand stream: `operator/perception/server.py` (live, `data/wilor-venv`) or
+`operator/perception/replay.py --synthetic` / `sim/latency_probe.py publish`. Every command below is `$PY -m <module>` from the repo
+root (or the console script after `pip install -e .`).
 
 ## Simulation (loopback, domain 1)
 
 ```bash
 # terminal 1: simulator (viewer window, 60 Hz passive viewer; add --headless for none)
-$PY xr_camera_teleop/sim/g1_dds_mujoco.py --domain 1 --iface lo
+$PY -m xr_camera_teleop.sim.g1_dds_mujoco --domain 1 --iface lo
 # terminal 2: hand stream (live WiLoR server, or synthetic)
-$PY xr_camera_teleop/api/replay.py --synthetic
-# terminal 3: teleop (needs a real TTY for the keyboard)
-$PY xr_camera_teleop/launch_xr_teleop.py --arm=G1_29 --ee=dex3 --input-mode=hand --sim --network-interface=lo
+$PY -m xr_camera_teleop.operator.perception.replay --synthetic
+# terminal 3: robot node: holds the current posture, waits for the operator
+$PY -m xr_camera_teleop.robot.node --sim --network-interface lo
+# terminal 4: operator (needs a TTY for the keys; else use xrcam-ctl)
+$PY -m xr_camera_teleop.operator.node            # or: $PY -m xr_camera_teleop.operator.live_ui
 ```
-Keys (sshkeyboard, terminal 3): `r` start following (clutch calibrates on the first frame with both
-hands, so hold a comfortable neutral, hands near the home pose, then press `r`), `q` stop: arms
-go home, process exits. Without a TTY add `--ipc` and use `$PY xr_camera_teleop/xr_ctl.py start|stop|status`.
-Our extra args (stripped before the original parser): `--addr tcp://127.0.0.1:5590` (or `WILOR_XR_ADDR`),
-`--k 0.8` (`WILOR_XR_K`), `--no-auto-calibrate`, `--arm-vel-limit RAD_S`,
-`--no-self-collision` (`WILOR_XR_SELF_COLLISION=0`; see "Self-collision protection" below).
-Sim options: `--report-self-collision` (checks the arm q on the URDF meshes every 50 ms and prints contacts;
-the MJCF has contype=0, so the sim itself never blocks them), `--elastic-band` (free base hung from a virtual spring instead of welded pelvis),
+
+Operator keys (terminal 4): `r` start following (the clutch calibrates when both hands are seen still for 1 s - or press `c` -
+so hold a comfortable neutral, hands near the home pose, then `r`), `s` stop (robot holds where it is), `h` home / reset
+(clutch uncalibrated + robot IK joint-space home), `c` calibrate, `space` pause the clutch, `q` quit (robot gets a home request).
+Robot keys: `q` stop (arms go home, clean exit), `h` home. The robot only follows when `follow` AND fresh `ee_cmd`:
+it ignores `follow=true` until it has seen `follow=false` after start-up, a link timeout or an operator restart (the operator
+releases its own follow flag in that case and prints why).
+Without a TTY: `$PY -m xr_camera_teleop.ctl operator start|stop|home|calibrate|pause|quit|status`, `... ctl robot stop|home|status`.
+
+Operator options: `--addr tcp://127.0.0.1:5590` (hand stream), `--robot tcp://<robot>:5592` (status), `--ee-bind tcp://*:5591`,
+`--rate 30`, `--k 0.8`, `--no-auto-calibrate`, `--cam-pitch-deg`, `--start` (engage 1 s after start). `operator.live_ui` takes the
+same link options plus `--no-publish` (preview only) and `--no-self-collision`.
+Robot options: `--sim`, `--motion`, `--network-interface`, `--operator tcp://<laptop>:5591`, `--status-bind`, `--frequency 30`,
+`--arm-vel-limit 3.0`, `--stale-timeout 0.3`, `--home-timeout 1.5`, `--no-hands`, `--no-self-collision`, `--robot-camera` (optional, off).
+Sim options: `--headless`, `--report-self-collision` (checks the arm q on the URDF meshes every 50 ms and prints contacts; the MJCF
+has contype=0, so the sim itself never blocks them), `--elastic-band` (free base hung from a virtual spring instead of welded pelvis),
 `--dt 0.0005`, `--view-hz 30`, `--trace f.npz`, `--summary f.json`, `--duration S`.
-Debug-only kinematic tool (no DDS): `xr_camera_teleop/teleop/g1_mujoco_teleop.py`.
+Debug-only kinematic tool (no DDS): `$PY -m xr_camera_teleop.sim.g1_kinematic`.
+
+Automated: `$PY -m xr_camera_teleop.tools.e2e_loopback` runs sim + robot node + synthetic stream + operator headless
+on private ports, SIGKILLs the operator and checks follow / hold / watchdog-home / clean exit from the sim trace.
 
 Notes: `--motion` in sim = rt/arm_sdk with the weight in motor_cmd[29].q; Unitree's locomotion/balance
 controller is closed source, so the sim holds the legs (and un-blended joints) with a PD hold at q=0.
-The sim prints RTF and step-time p50/p99 every 5 s. The `MotionSwitcher` call of the script (non-motion
-mode) fails with "Failed" in sim (no service) - harmless.
+The sim prints RTF and step-time p50/p99 every 5 s. The MotionSwitcher call (debug mode) is skipped in `--sim`.
+
+## Watchdog and start/stop semantics (robot side)
+
+| Situation | Robot |
+| --- | --- |
+| start-up, `follow=false`, latched, no `ee_cmd` yet | holds the current posture (hands hold too) |
+| `follow=true`, last accepted `ee_cmd` < 0.3 s old | follows: IK on the wrist targets, Dex3 retargeting |
+| 0.3 s < age < 1.5 s | holds the last safe target (resumes without a latch if `ee_cmd` return before 1.5 s) |
+| age > 1.5 s | IK `reset_to_home` (collision-free, 2 rad/s), then holds; **latched** until `follow=false` is seen |
+| `home_seq` increased (UI Reset, handedness-swap latch) | IK `reset_to_home`, same as above, no latch |
+| rejected message (version, NaN, range, seq not increasing) | counted (`rejected` in `robot_status`), does not feed the watchdog |
+| local `q` / SIGINT / SIGTERM / `xrcam-ctl robot stop` | IK home move, then `ctrl_dual_arm_go_home` (+ arm_sdk weight ramp 1 -> 0 with `--motion`), threads stopped, exit code 0 |
 
 ## Real robot (domain 0)
 
 ```bash
-ip a   # find the NIC on the robot network (192.168.123.x), e.g. enp3s0
-$PY xr_camera_teleop/launch_xr_teleop.py --arm=G1_29 --ee=dex3 --input-mode=hand \
-    --motion --network-interface=enp3s0 --arm-vel-limit 3.0
+# on PC2 (find the NIC on 192.168.123.x with `ip a`)
+~/xrcam-env/bin/xrcam-robot --motion --network-interface eth0 --arm-vel-limit 1.5 --operator tcp://<laptop-ip>:5591
+# on the laptop
+$PY -m xr_camera_teleop.operator.node --robot tcp://192.168.123.164:5592
 ```
-- `--motion`: arms via rt/arm_sdk blended with the robot's own controller (robot in regular "Regular mode", R1+X, not debug).
-  Without `--motion` the script enters debug mode (releases the Unitree controller; the robot will NOT balance by itself:
+- `--motion`: arms via rt/arm_sdk blended with the robot's own controller (robot in "Regular mode", R1+X, not debug).
+  Without `--motion` the node enters debug mode (releases the Unitree controller; the robot will NOT balance:
   only with the robot hung/supported).
-- Safety: the real path clips arm targets to `arm_velocity_limit` (default 30 rad/s - far too high for first tests):
-  use `--arm-vel-limit 2..3`. Start with arms near home (q=0, arms hanging/neutral) because the clutch maps to the IK
-  home pose and the first command is the neutral pose. Keep `--k` <= 0.8. Use the robot's e-stop / remote damping
-  (L2+B on the remote) at any time; `q` makes arms go home then ramps the arm_sdk weight 1 -> 0.
-- Dry run the same command first with the sim on domain 0 (loopback): `g1_dds_mujoco.py --domain 0 --iface lo`
-  and `--network-interface=lo` on the launcher (do not do this with the real robot connected).
+- Safety: the arm controller clips arm targets to `--arm-vel-limit` (default 3.0 rad/s; upstream's default was 30). Use
+  1.5..3 for first tests. The node starts at the CURRENT posture (upstream drove the arms to q=0 on start). Start with arms
+  near home because the clutch maps to the IK home pose and the first command is the neutral pose. Keep `--k` <= 0.8. Use
+  the robot's e-stop / remote damping (L2+B) at any time.
+- Dry run the same commands first against the sim on domain 0 (loopback): `g1_dds_mujoco.py --domain 0 --iface lo` and
+  `--network-interface lo` on the node, without `--sim` (do not do this with the real robot connected).
+- Deployment: `bash deploy/push_to_robot.sh` (rsync + setup, see ../README.md). IK timing must be re-measured on PC2:
+  `~/xrcam-env/bin/python -m xr_camera_teleop.tools.bench_ik`.
 
 ## Self-collision protection, branch escape, reset to home (default ON)
 
 The upstream `G1_29_ArmIK` has no self-collision handling (arm into torso / hand into hand). Every IK user
-(`launch_xr_teleop.py`, `ui/live_ui.py`, `teleop/g1_mujoco_teleop.py`, `tools/render_session.py`) now gets
-`xr_camera_teleop/teleop/safe_arm_ik.SafeG1_29_ArmIK` (subclass; `third_party/` is untouched): `xrt_compat.make_arm_ik()`
-returns it, and the launcher replaces `teleop.robot_control.robot_arm_ik.G1_29_ArmIK` before running the script
-(stderr: `self-collision protection ON`).
+(`robot/node.py`, `operator/live_ui.py`, `sim/g1_kinematic.py`, `tools/render_session.py`) now gets
+`xr_camera_teleop/robot/ik.SafeG1_29_ArmIK` (a plain subclass of the vendored `G1_29_ArmIK`): `robot.ik.make_arm_ik()` returns it
+(the robot node and the UI's local preview use it; `--no-self-collision` / `XRCAM_SELF_COLLISION=0` give the plain vendored IK).
 
 1. **IK constraints**: arm links as 25 spheres per arm, body (torso 5 slabs, head, pelvis, hips/thighs) as 15 capsules,
-   fitted to the URDF collision meshes (`tools/fit_self_collision.py` -> `teleop/g1_collision_spheres.py`, every mesh
+   fitted to the URDF collision meshes (`tools/fit_self_collision.py` -> `robot/g1_collision_spheres.py`, every mesh
    vertex covered); margin 5 mm vs body, 1 cm arm vs arm. 818 pairs (each arm vs body; left vs right arm EXCEPT
    hand/wrist vs hand/wrist: hands may touch / clap / rest wrist on wrist), soft-min aggregated into 73 smooth IPOPT
    inequalities. Fast path: upstream's unconstrained problem first; if its result satisfies the constraints it is the
@@ -80,13 +112,15 @@ returns it, and the launcher replaces `teleop.robot_control.robot_arm_ik.G1_29_A
    tracking resumes. 0/40 stuck with it.
 4. **Reset to home**: `SafeG1_29_ArmIK.reset_to_home()` drives both arms to q=0 in joint space (2 rad/s, collision-free,
    targets ignored meanwhile), then clears warm start / filter / last safe q / escape state. Hooked to
-   `wrapper.reset()` and to the L/R swap latch via `xrt_compat.connect_ik(ik, wrapper)`: live UI **Reset** button (R),
-   `g1_mujoco_teleop.py`, `render_session.py`; launcher: `$PY xr_camera_teleop/xr_ctl.py reset` (SIGUSR1 via
-   `data/xr_run/launch_xr_teleop.pid`, works with or without `--ipc`). Recalibrate afterwards (auto-calibration).
+   `wrapper.reset()` and to the L/R swap latch: on the laptop via `robot.ik.connect_ik(ik, wrapper)` (local preview), on the
+   robot through the `home_seq` counter of `ee_cmd` (operator `on_home_request` -> `link.request_home()` -> node
+   `reset_to_home`): live UI **Reset** (H), operator key `h` / `xrcam-ctl operator home`, the watchdog timeout and
+   `xrcam-ctl robot home` (robot local). Recalibrate afterwards (auto-calibration).
 
-Timing (this machine): free space median 1.1 ms; in contact median ~11 ms, p95 ~25 ms; an escape check that needs a
-cold constrained solve costs 20-55 ms (at most every 2 s while the target is held inside the body).
-Disable (debug only): launcher `--no-self-collision`, `live_ui.py --no-self-collision`, or `WILOR_XR_SELF_COLLISION=0`
+Timing: see `tools/bench_ik` and the README ("IK timing"): free space ~1.7 ms median, in contact (constrained) ~15 ms median /
+~50 ms p95 on the (loaded) laptop; an escape check that needs a cold constrained solve costs 20-55 ms (at most every 2 s while
+the target is held inside the body). Re-measure on PC2.
+Disable (debug only): `xrcam-robot --no-self-collision`, `live_ui --no-self-collision`, or `XRCAM_SELF_COLLISION=0` (`WILOR_XR_SELF_COLLISION=0` still works)
 for everything (upstream IK: no escape, no joint-space reset). Tests: `$PY -m pytest -q xr_camera_teleop/tests/test_self_collision.py -s`.
 The live UI status line shows `self-collision: ON ...` with constrained / gated / escapes / homing.
 Limitations: the IK model has legs/waist locked at 0 and the Dex3 fingers straight; the upper arm may not come closer to
