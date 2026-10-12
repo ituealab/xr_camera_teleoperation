@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Run on PC2. Two-stage lowcmd session for a supported robot; never selects motion mode implicitly.
 set -euo pipefail
+unset PYTHONPATH PYTHONHOME
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_DIR="${XRCAM_ENV:-$HOME/xrcam-env}"
 PY="$ENV_DIR/bin/python"
 LOG_DIR="${XRCAM_SESSION_DIR:-$REPO/data/session-20261009}"
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 cd "$REPO"
-case "${XRCAM_SPEED_PROFILE:-slow}" in
+case "${XRCAM_SPEED_PROFILE:-preview}" in
   slow) ;;
   preview) source "$REPO/deploy/preview-speed.env" ;;
   *) echo "unknown speed profile; choose slow or preview" >&2; exit 2 ;;
@@ -32,7 +33,7 @@ case "${1:-status}" in
     echo "Prepare process started: $(cat "$LOG_DIR/robot.pid"); inspect $LOG_DIR/robot.log and status"
     ;;
   settings)
-    printf "profile=%s arm_rad_s=%s hand_rad_s=%s control_hz=%s operator_hz=%s\n" "${XRCAM_SPEED_PROFILE:-slow}" "${XRCAM_ARM_VEL_LIMIT:-0.3}" "${XRCAM_HAND_VEL_LIMIT:-8}" "${XRCAM_IK_HZ:-5}" "${XRCAM_OPERATOR_HZ:-30}"
+    printf "profile=%s arm_rad_s=%s hand_rad_s=%s control_hz=%s operator_hz=%s\n" "${XRCAM_SPEED_PROFILE:-preview}" "${XRCAM_ARM_VEL_LIMIT:-0.3}" "${XRCAM_HAND_VEL_LIMIT:-8}" "${XRCAM_IK_HZ:-5}" "${XRCAM_OPERATOR_HZ:-30}"
     ;;
   enable|hold|home|stop|status)
     "$PY" -m xr_camera_teleop.ctl robot "$1"

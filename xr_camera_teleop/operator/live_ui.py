@@ -10,7 +10,7 @@ floating hands via HandMapper (shared anchor). The left panel is the server's ow
 Robot link: the wrapper's TeleData is also published as ee_cmd (tcp://*:5591, operator/link.py) to xrcam-robot, and
 the robot's status (mode, watchdog, IK ms) is shown on the status line. The robot holds until "Start robot" (R).
 --no-publish: preview only (no ee_cmd socket).
-Threads: pipeline (60 Hz, ZMQ conflated latest) | render (EGL offscreen, ~30 fps, MJPEG) | HTTP.
+Threads: pipeline (100 Hz default, ZMQ conflated latest) | render (EGL offscreen, ~30 fps, MJPEG) | HTTP.
 Camera tilt: the per-message cam_R_level (ZED IMU) is used automatically; the page can override it
 with a manual pitch. Keys on the page: C calibrate, H reset/home, R start/stop robot, Space pause/engage clutch.
 """
@@ -233,7 +233,7 @@ class LiveUI:
         cur_dq = np.zeros(14)
         last_fid = None
         hand_q = {}
-        period = 1 / 60.0
+        period = 1 / a.rate
         nxt = prev = time.monotonic()
         self.ready.set()
         while not self.stop.is_set():
@@ -615,9 +615,11 @@ def main(argv=None):
                          "XRCAM_SELF_COLLISION, on)")
     ap.add_argument("--ee-bind", default=f"tcp://*:{EE_PORT}", help="ee_cmd PUB bind address")
     ap.add_argument("--robot", default=f"tcp://127.0.0.1:{STATUS_PORT}", help="robot_status PUB address of the robot")
-    ap.add_argument("--rate", type=float, default=60.0, help="ee_cmd rate [Hz], matching the preview pipeline")
+    ap.add_argument("--rate", type=float, default=100.0, help="ee_cmd and preview pipeline rate [Hz]")
     ap.add_argument("--no-publish", action="store_true", help="preview only: do not publish ee_cmd")
     a = ap.parse_args(argv)
+    if not np.isfinite(a.rate) or a.rate <= 0:
+        ap.error("--rate must be positive and finite")
     if a.dds:
         ap.error("--dds is not implemented; the kinematic G1Sim is used")
     ui = LiveUI(a)
