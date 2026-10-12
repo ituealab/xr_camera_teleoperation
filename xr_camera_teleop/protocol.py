@@ -200,6 +200,10 @@ class RobotStatus:
     q: list = field(default_factory=lambda: [0.0] * 14)
     motion: bool = False
     sim: bool = False
+    dry_run: bool = False
+    targets_enabled: bool = True
+    stage: str = "tracking_enabled"
+    hands: dict = field(default_factory=dict)
     vel_limit: float = 0.0
     t_send: float = 0.0
     v: int = VERSION
@@ -207,7 +211,7 @@ class RobotStatus:
 
 _STATUS_FIELDS = ("session", "seq", "mode", "latched", "connected", "age_ms", "watchdog", "ee_session", "ee_seq",
                   "follow", "rejected", "last_reject", "ik_ms", "ik_mode", "q", "motion", "sim", "vel_limit",
-                  "t_send")
+                  "t_send", "dry_run", "targets_enabled", "stage", "hands")
 
 
 def pack_status(st: RobotStatus) -> bytes:

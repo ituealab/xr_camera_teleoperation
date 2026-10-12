@@ -33,10 +33,20 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
+
 import zmq  # noqa: E402
 
 from xr_camera_teleop.operator.link import OperatorLink  # noqa: E402
 from xr_camera_teleop.protocol import EE_PORT, STATUS_PORT  # noqa: E402
+
+
+def _json_scalar(value):
+    """Normalize numpy scalar values in UI status without masking other type errors."""
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 
 PW, PH = 640, 480
 HIDE_AFTER, STALE_AFTER = 2.0, 0.3
@@ -537,7 +547,7 @@ class LiveUI:
                 elif p == "/g1.mjpg":
                     self._stream(ui.g1_jpg)
                 elif p == "/api/status":
-                    self._send(200, json.dumps(ui.status()).encode(), "application/json")
+                    self._send(200, json.dumps(ui.status(), default=_json_scalar).encode(), "application/json")
                 elif p == "/snapshot.jpg":
                     self._send(200, ui.snapshot(), "image/jpeg")
                 else:
@@ -605,7 +615,7 @@ def main(argv=None):
                          "XRCAM_SELF_COLLISION, on)")
     ap.add_argument("--ee-bind", default=f"tcp://*:{EE_PORT}", help="ee_cmd PUB bind address")
     ap.add_argument("--robot", default=f"tcp://127.0.0.1:{STATUS_PORT}", help="robot_status PUB address of the robot")
-    ap.add_argument("--rate", type=float, default=30.0, help="ee_cmd rate [Hz]")
+    ap.add_argument("--rate", type=float, default=60.0, help="ee_cmd rate [Hz], matching the preview pipeline")
     ap.add_argument("--no-publish", action="store_true", help="preview only: do not publish ee_cmd")
     a = ap.parse_args(argv)
     if a.dds:

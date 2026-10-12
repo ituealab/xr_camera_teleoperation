@@ -57,6 +57,8 @@ TORCH_ARGS=()
 UNITREE_REF=814556d15970dd2ecf1c9984e845ca02ab07e206
 DEXRT_REF=d7753d38c9ff11f80bafea6cd168351fd3db9b0e
 "$UV" pip install --python "$PY" --no-deps "unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python@${UNITREE_REF}"
+# SDK wheels omit native CRC package data; fetch the exact pinned, checksummed library into this env only.
+"$PY" "$REPO/deploy/install_sdk_crc.py"
 "$UV" pip install --python "$PY" --no-deps "dex_retargeting @ git+https://github.com/silencht/dex-retargeting@${DEXRT_REF}"
 "$UV" pip install --python "$PY" "${TORCH_ARGS[@]}" "torch==2.3.0"
 if [ "${XRCAM_OPERATOR:-0}" = 1 ]; then      # operator laptop: UI / sim extras (same recipe, own env dir)

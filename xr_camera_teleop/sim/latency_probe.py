@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """End-to-end latency probe: step input on the hand stream -> sim joint response.
 
-  latency_probe.py publish --step-at 12 --out step.json   # replaces replay.py; static hands, then a step
-  latency_probe.py analyze trace.npz step.json            # trace from g1_dds_mujoco.py --trace
+  python -m xr_camera_teleop.sim.latency_probe publish --step-at 12 --out step.json   # replaces replay.py; static hands, then a step
+  python -m xr_camera_teleop.sim.latency_probe analyze trace.npz step.json            # trace from g1_dds_mujoco --trace
 
 All timestamps are time.monotonic() (CLOCK_MONOTONIC, shared by processes on one host).
 Reported (relative to the t_publish of the first stepped message):

@@ -13,11 +13,18 @@ from xr_camera_teleop.robot.node import EeCmdReceiver, StatusPublisher
 
 
 def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
+    import random
+    for _ in range(100):                      # below the ephemeral range (see test_perception_client.free_addr)
+        p = random.randint(20000, 30000)
+        s = socket.socket()
+        try:
+            s.bind(("127.0.0.1", p))
+            return p
+        except OSError:
+            continue
+        finally:
+            s.close()
+    raise RuntimeError("no free port")
 
 
 def td(x=0.2, ready=True):
@@ -76,11 +83,13 @@ def test_robot_status_reaches_operator(pair):
     assert link.robot()["connected"] is False and "no status" in link.robot_summary()
     for i in range(10):
         st.send(P.pack_status(P.RobotStatus(session=1, seq=i, mode="follow", latched=False, connected=True,
-                                            age_ms=5.0, watchdog="ok", ik_ms=1.2, sim=True)))
+                                            age_ms=5.0, watchdog="ok", ik_ms=1.2, sim=True,
+                                            hands={"publish_hz":100.0, "retarget_hz":54.0, "workers_alive":True})))
         time.sleep(0.03)
     r = link.robot()
     assert r["connected"] and r["status"].mode == "follow"
     assert "follow" in link.robot_summary() and "sim" in link.robot_summary()
+    assert "hands publish 100Hz retarget 54Hz" in link.robot_summary()
 
 
 def test_latched_robot_releases_follow(pair):

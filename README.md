@@ -191,3 +191,38 @@ data/xr-env/bin/python -m pytest -q xr_camera_teleop/tests          # ~2 min, no
 Covers the protocol (round trip, version, NaN, ranges, seq/session), the watchdog gate and the robot node with fake
 hardware, the operator link over loopback ZMQ, wrapper / clutch / filters / frames, self-collision and IK behaviour,
 perception schema and client. Hardware, real DDS and the Jetson are **not** covered by any automated test.
+
+### Offline robot check (no DDS)
+
+```bash
+xrcam-robot --dry-run --operator tcp://192.168.123.100:5591 --status-bind tcp://*:5592
+```
+
+Runs the real collision-checked IK, command validation, watchdog and status publisher with in-memory arms
+starting at zero. Does not initialize DDS, switch robot modes, subscribe to the robot camera, or build the
+Dex3 controller. Status includes `dry_run=true`; joint values are virtual, not measured robot state.
+This checks arm IK and transport only; Dex3 retargeting and physical tracking require separate checks.
+`--dry-run` rejects `--motion`, `--sim`, and `--robot-camera`.
+
+### Two-stage session on PC2 (supported robot, explicit lowcmd)
+
+The lowcmd path requires the Unitree motion service to be released first. The node checks this before
+creating any motor publishers. It holds leg/waist joints at their measured startup posture; it provides
+no balance controller. A person must have the remote ready (L2+B damping).
+
+```bash
+cd ~/xr_camera_teleoperation
+bash deploy/robot_session.sh prepare           # stage 1: arms q=0, then ready; target acceptance OFF
+bash deploy/robot_session.sh status            # wait for stage=ready
+bash deploy/robot_session.sh enable            # stage 2: allow target acceptance
+# Then engage Raider's operator/UI after it has sent follow=false.
+bash deploy/robot_session.sh hold              # disable target acceptance, hold last targets
+bash deploy/robot_session.sh home              # return arms home; disables target acceptance
+bash deploy/robot_session.sh stop              # home and exit
+```
+
+For offline validation: `prepare --dry-run`. Status carries `stage` and `targets_enabled`;
+`enable` is rejected before measured arm home is within 0.03 rad. The old operator follow state
+cannot trigger movement immediately after enabling: it must first release follow, then engage again.
+`XRCAM_IK_HZ` sets the IK loop rate and `XRCAM_ARM_VEL_LIMIT` sets the arm speed limit.
+Real hardware always needs explicit `--debug` (lowcmd) or `--motion` (arm_sdk).

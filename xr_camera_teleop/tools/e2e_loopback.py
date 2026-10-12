@@ -51,6 +51,7 @@ def main(argv=None):
     ap.add_argument("--step-at", type=float, default=14.0, help="s after the stream start")
     ap.add_argument("--kill-at", type=float, default=28.0, help="s after the stream start")
     ap.add_argument("--arm-vel-limit", type=float, default=3.0)
+    ap.add_argument("--frequency", type=float, default=30.0, help="requested robot control loop rate [Hz]")
     a = ap.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True)
     trace, summary, step_json = a.out / "trace.npz", a.out / "sim.json", a.out / "step.json"
@@ -64,7 +65,7 @@ def main(argv=None):
         assert wait_for(a.out / "sim.log", "[sim] running", 30), "sim did not start"
         robot, f = spawn(["xr_camera_teleop.robot.node", "--sim", "--network-interface", "lo",
                           "--operator", f"tcp://127.0.0.1:{EE}", "--status-bind", f"tcp://127.0.0.1:{ST}",
-                          "--arm-vel-limit", str(a.arm_vel_limit)], a.out / "robot.log")
+                          "--arm-vel-limit", str(a.arm_vel_limit), "--frequency", str(a.frequency)], a.out / "robot.log")
         procs.append((robot, f))
         assert wait_for(a.out / "robot.log", "ready: holding", 60), "robot node did not come up (see robot.log)"
         t_pub = time.monotonic()

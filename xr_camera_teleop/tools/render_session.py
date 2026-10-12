@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Offline render of a recorded session into ONE side-by-side mp4 (run with data/xr-env).
 
-    data/xr-env/bin/python xr_camera_teleop/tools/render_session.py \
+    data/xr-env/bin/python -m xr_camera_teleop.tools.render_session \
         --session data/sessions/20261009_105318 [--out X.mp4] [--k 0.8] [--start S --duration S]
 
 <session> is the base timestamp (or a path ending in it; cam_/hands_ prefixes are found in the directory).

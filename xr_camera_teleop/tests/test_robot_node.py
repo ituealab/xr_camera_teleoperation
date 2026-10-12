@@ -221,3 +221,67 @@ def test_tick_survives_ik_garbage():
     ik.solve_ik = lambda L, R, q, dq: (np.full(14, np.nan), None)
     feed(node, clk, rx, cmd(3, follow=True))
     assert len(arm.targets) == n                              # NaN q never reaches the arm controller
+
+
+def test_prepare_blocks_targets_until_home_and_explicit_enable():
+    import pytest
+    node, clk, arm, hand, ik, rx, sink = make(prepare=True)
+    assert not node.targets_enabled
+    with pytest.raises(RuntimeError):
+        node.enable_targets()
+    idle(node, clk, .5)
+    assert node.prepared and not node.preparing and node.stage == "ready"
+    feed(node, clk, rx, cmd(1, follow=False))
+    feed(node, clk, rx, cmd(2, follow=True))
+    assert node.mode == "hold" and not hand.calls[-1]
+    node.enable_targets()
+    feed(node, clk, rx, cmd(3, follow=True))
+    assert node.mode == "hold"  # old follow request cannot start stage two
+    feed(node, clk, rx, cmd(4, follow=False))
+    feed(node, clk, rx, cmd(5, follow=True))
+    assert node.mode == "follow" and node.targets_enabled
+    node.request("home")
+    idle(node, clk, .5)
+    assert node.stage == "ready" and not node.targets_enabled
+
+
+def test_prepare_requires_measured_home_before_enabling():
+    import pytest
+    node, clk, arm, hand, ik, rx, sink = make(prepare=True)
+    arm.get_current_dual_arm_q = lambda: np.ones(14) * .1
+    idle(node, clk, .5)
+    assert node.preparing and not node.prepared
+    with pytest.raises(RuntimeError):
+        node.enable_targets()
+
+
+def test_startup_contact_home_is_slow_and_does_not_accept_targets():
+    node, clk, arm, hand, ik, rx, sink = make(prepare=True, startup_contact=True, arm_vel_limit=.3)
+    feed(node, clk, rx, cmd(1, follow=False))
+    feed(node, clk, rx, cmd(2, follow=True))
+    assert node.mode == "homing" and not node.targets_enabled and not hand.calls[-1]
+    assert .07 < arm.q.max() < .1
+    idle(node, clk, 1.0)
+    assert node.stage == "ready" and not node.targets_enabled and not node.contact_home
+
+
+def test_hold_cancels_contact_home_and_cannot_enable_unprepared_arms():
+    import pytest
+    node, clk, arm, hand, ik, rx, sink = make(prepare=True, startup_contact=True)
+    node.tick()
+    node.request("hold")
+    idle(node, clk, .2)
+    assert node.stage == "hold_unprepared" and not node.targets_enabled
+    with pytest.raises(RuntimeError):
+        node.enable_targets()
+
+
+def test_contact_home_at_60hz_accumulates_command_for_initially_stuck_motor():
+    node, clk, arm, hand, ik, rx, sink = make(prepare=True, startup_contact=True, frequency=60, arm_vel_limit=4)
+    arm.get_current_dual_arm_q = lambda: np.ones(14) * .5
+    for _ in range(10):
+        clk.t += 1 / 60
+        node.tick()
+    assert np.allclose(arm.targets[0], .495)
+    assert np.allclose(arm.targets[-1], .45)
+    assert not node.targets_enabled and node.contact_home

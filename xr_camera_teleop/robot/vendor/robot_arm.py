@@ -2,7 +2,8 @@
 # Source file: teleop/robot_control/robot_arm.py (MotorState, G1_29_LowState, DataBuffer, G1_29_ArmController,
 # G1_29_JointArmIndex, G1_29_JointIndex; the other robots / the Dex1 controller are not vendored)
 # MODIFIED: (1) arm_velocity_limit is a constructor argument (default 3.0 rad/s, conservative) and is applied in
-# simulation too; (2) the arm target starts at the CURRENT arm posture (upstream: q=0, i.e. the arms jump to the
+# simulation too; command slew accumulates from the previous command with a 0.05 rad measured-position
+# lead cap (upstream repeatedly limited against measured q, preventing motion at low speed); (2) the arm target starts at the CURRENT arm posture (upstream: q=0, i.e. the arms jump to the
 # home pose on start); (3) stop() ends the two worker threads, optional robot-side
 # hold/go-home helpers; (4) logging_mp -> logging, unitree_sdk2py imports are lazy-free but local to this module.
 import logging
@@ -18,6 +19,7 @@ from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
 from unitree_sdk2py.utils.crc import CRC
 
 from xr_camera_teleop.robot.vendor.dds_utils import wait_for_dds
+from xr_camera_teleop.robot.limits import JointTargetLimiter
 
 logger_mp = logging.getLogger(__name__)
 
@@ -91,6 +93,7 @@ class G1_29_ArmController:
         wait_for_dds(lambda: self.lowstate_sub_ready, "G1_29_ArmController")
         # hold the CURRENT arm posture until the first command (upstream: q_target = 0 -> arms jump to home)
         self.q_target = self.get_current_dual_arm_q().copy()
+        self._target_limiter = JointTargetLimiter(self.q_target)
 
         # initialize hg's lowcmd msg
         self.crc = CRC()
@@ -145,11 +148,8 @@ class G1_29_ArmController:
             time.sleep(0.002)
 
     def clip_arm_q_target(self, target_q, velocity_limit):
-        current_q = self.get_current_dual_arm_q()
-        delta = target_q - current_q
-        motion_scale = np.max(np.abs(delta)) / (velocity_limit * self.control_dt)
-        cliped_arm_q_target = current_q + delta / max(motion_scale, 1.0)
-        return cliped_arm_q_target
+        return self._target_limiter.step(target_q, self.get_current_dual_arm_q(),
+                                         velocity_limit, self.control_dt)
 
     def _ctrl_motor_state(self):
         if self.motion_mode:

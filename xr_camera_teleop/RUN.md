@@ -126,3 +126,85 @@ The live UI status line shows `self-collision: ON ...` with constrained / gated 
 Limitations: the IK model has legs/waist locked at 0 and the Dex3 fingers straight; the upper arm may not come closer to
 the torso than at q=0 (mesh gap there 8.6 mm); hands are NOT kept apart at all (they can also be pushed into each
 other); escape/home transitions are joint-space moves the operator did not command (2 rad/s).
+
+### Offline robot check (no DDS)
+
+```bash
+xrcam-robot --dry-run --operator tcp://192.168.123.100:5591 --status-bind tcp://*:5592
+```
+
+Runs the real collision-checked IK, command validation, watchdog and status publisher with in-memory arms
+starting at zero. Does not initialize DDS, switch robot modes, subscribe to the robot camera, or build the
+Dex3 controller. Status includes `dry_run=true`; joint values are virtual, not measured robot state.
+This checks arm IK and transport only; Dex3 retargeting and physical tracking require separate checks.
+`--dry-run` rejects `--motion`, `--sim`, and `--robot-camera`.
+
+### Two-stage session on PC2 (supported robot, explicit lowcmd)
+
+The lowcmd path requires the Unitree motion service to be released first. The node checks this before
+creating any motor publishers. It holds leg/waist joints at their measured startup posture; it provides
+no balance controller. A person must have the remote ready (L2+B damping).
+
+```bash
+cd ~/xr_camera_teleoperation
+bash deploy/robot_session.sh prepare           # stage 1: arms q=0, then ready; target acceptance OFF
+bash deploy/robot_session.sh status            # wait for stage=ready
+bash deploy/robot_session.sh enable            # stage 2: allow target acceptance
+# Then engage Raider's operator/UI after it has sent follow=false.
+bash deploy/robot_session.sh hold              # disable target acceptance, hold last targets
+bash deploy/robot_session.sh home              # return arms home; disables target acceptance
+bash deploy/robot_session.sh stop              # home and exit
+```
+
+For offline validation: `prepare --dry-run`. Status carries `stage` and `targets_enabled`;
+`enable` is rejected before measured arm home is within 0.03 rad. The old operator follow state
+cannot trigger movement immediately after enabling: it must first release follow, then engage again.
+`XRCAM_IK_HZ` sets the IK loop rate and `XRCAM_ARM_VEL_LIMIT` sets the arm speed limit.
+Real hardware always needs explicit `--debug` (lowcmd) or `--motion` (arm_sdk).
+
+### Initial contact and low-speed startup
+
+The first supported-robot test may start with wrists touching the hips. Only after explicit user consent,
+`XRCAM_ALLOW_STARTUP_CONTACT=1 bash deploy/robot_session.sh prepare` uses a joint-space home at no more
+than 0.3 rad/s for this initial phase. Target acceptance stays OFF. After home, SafeG1 IK checks apply again.
+The arm publisher slews from its previous command, with at most 0.05 rad lead over measured position;
+limiting every command against measured position instead would send only 0.0012 rad error at 0.3 rad/s
+and 250 Hz, preventing target accumulation when the motor initially sticks. Hardware verification of
+this fix remains necessary; the offline limiter tests do not demonstrate actual motor tracking.
+
+### Preview speed profile (requires deliberate restart)
+
+`XRCAM_SPEED_PROFILE=preview bash deploy/robot_session.sh settings` prints settings without any DDS
+traffic. The profile selects arms 4 rad/s, Dex3 targets 8 rad/s, and a 60 Hz requested robot control loop,
+matching the live UI kinematic preview. The UI publisher now defaults to 60 Hz (`--rate 60`).
+Arm slew limits each joint independently, with the existing 0.05 rad measured-position lead cap.
+Dex3 publishes at 100 Hz and limits targets at 8 rad/s; hand input updates before arm IK.
+Gains, robot modes, collision checks and the startup-contact home cap (0.3 rad/s) stay as configured.
+
+To select it on the next explicitly announced real launch:
+`XRCAM_SPEED_PROFILE=preview bash deploy/robot_session.sh prepare`. Then complete stage 1,
+explicitly enable stage 2, and engage the operator. Writing/deploying these files alone changes no
+running process. The Orin may miss 60 Hz during expensive IK solves; a configured rate is not a
+verified achieved rate, and physical speed differs from a kinematic preview due to actuator dynamics.
+
+
+### Independent Dex3 pipeline
+
+The robot uses two spawned hand workers: latest-input DexPilot retargeting and
+100 Hz DDS publication. Neither shares the arm IK interpreter. Retargeting
+processes each received input version at most once and skips intermediate
+frames; it does not queue old gestures. DDS domain/interface are passed
+explicitly from the robot configuration (real: domain 0; sim: domain 1).
+
+Publication starts from the latest measured hand posture after both workers
+initialize. The preview profile retains the 8 rad/s per-joint hand target limit.
+Pause, re-engage epoch changes, expired input/targets (`--stale-timeout`) and a
+failed retarget worker hold the last published position. A result computed
+before a pause cannot be applied after re-engaging. Shutdown joins both workers.
+
+`xrcam-ctl robot status` includes `hands`: measured publication/retarget rates,
+latest solve duration, target age, worker health and worker errors. The UI status
+line displays publication and retarget rates after the UI and robot are restarted.
+Copying these files does not activate them in a running session. Restarting the
+robot uses the existing two-stage prepare/home and then enable/follow flow;
+it can move the robot and must be announced to the operator before execution.

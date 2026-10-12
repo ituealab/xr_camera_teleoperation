@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Fit the IK self-collision primitives to the G1 URDF collision meshes -> teleop/g1_collision_spheres.py.
 
-    data/xr-env/bin/python xr_camera_teleop/tools/fit_self_collision.py [--margin 0.01] [--check]
+    data/xr-env/bin/python -m xr_camera_teleop.tools.fit_self_collision [--margin 0.01] [--check]
 
 Arm links: per group (parent joint, list of meshes) k-means spheres (init along the PCA axis, Lloyd
 iterations), radius = max distance of the cluster's vertices -> every vertex is covered.

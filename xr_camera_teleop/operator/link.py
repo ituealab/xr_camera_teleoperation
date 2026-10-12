@@ -114,10 +114,13 @@ class OperatorLink:
             return "robot link: off (--no-publish)"
         if not r["connected"] or s is None:
             return "robot: no status (robot node not running / not connected)"
+        hands = (f" hands publish {s.hands.get('publish_hz', 0):.0f}Hz"
+                 f" retarget {s.hands.get('retarget_hz', 0):.0f}Hz"
+                 + (" WORKER FAILED" if not s.hands.get('workers_alive', True) else "")) if s.hands else ""
         flags = ("LATCHED " if s.latched else "") + ("" if s.watchdog == "ok" else f"watchdog={s.watchdog} ")
         return (f"robot: {s.mode} {flags}link={'ok' if s.connected else 'LOST'} age={s.age_ms or 0:.0f}ms "
-                f"IK {s.ik_ms:.1f}ms ({s.ik_mode}) {'sim' if s.sim else 'REAL'}{' motion' if s.motion else ''}"
-                + (f" rejected={s.rejected}" if s.rejected else "") + (f" | {self.notice}" if self.notice else ""))
+                f"stage={s.stage} targets={'on' if s.targets_enabled else 'off'} IK {s.ik_ms:.1f}ms ({s.ik_mode}) {'DRY RUN' if s.dry_run else ('sim' if s.sim else 'REAL')}{' motion' if s.motion else ''}"
+                + hands + (f" rejected={s.rejected}" if s.rejected else "") + (f" | {self.notice}" if self.notice else ""))
 
     def close(self):
         for s in (self._pub, self._sub):

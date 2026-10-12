@@ -1,7 +1,5 @@
-import sys
 import threading
 import time
-from pathlib import Path
 
 import msgpack
 import pytest
@@ -13,10 +11,19 @@ from test_perception_schema import validate  # noqa: E402
 
 
 def free_addr():
-    s = zmq.Context.instance().socket(zmq.REP)
-    port = s.bind_to_random_port("tcp://127.0.0.1")
-    s.close(0)
-    return f"tcp://127.0.0.1:{port}"
+    import random
+    import socket
+    # Close a synchronous OS socket before the replay thread binds its ZMQ publisher.
+    # A ZMQ close queues cleanup and may leave the probe bound when replay starts.
+    for _ in range(100):
+        port = random.randint(20000, 30000)
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+        return f"tcp://127.0.0.1:{port}"
+    raise RuntimeError("no free replay port")
 
 
 class Args:
@@ -85,9 +92,9 @@ def test_file_replay(tmp_path):
     a, th = start_replay(synthetic=False, file=str(path), duration=None, hz=100.0)
     c = HandStreamClient(a.addr)
     got = wait_msg(c)
-    if got is not None:
-        validate(got)
-        assert got["source"] == "replay"
+    assert got is not None
+    validate(got)
+    assert got["source"] == "replay"
     c.close()
     th.join(3)
 

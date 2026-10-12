@@ -30,7 +30,7 @@ RTF and per-step time percentiles are printed every --report seconds.
 meshes (xr_camera_teleop/robot/self_collision.MeshGate, ~0.2 ms); contacts are REPORTED (not blocked: the
 MJCF geoms have contype=0) - rate-limited line on contact + counts in the periodic report.
 
-    data/xr-env/bin/python xr_camera_teleop/sim/g1_dds_mujoco.py [--headless] [--domain 1 --iface lo]
+    data/xr-env/bin/python -m xr_camera_teleop.sim.g1_dds_mujoco [--headless] [--domain 1 --iface lo]
 """
 from __future__ import annotations
 
