@@ -61,11 +61,12 @@ header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 12px;
 button{background:#2a3038;color:var(--fg);border:1px solid #3a424c;border-radius:6px;padding:6px 12px;cursor:pointer}
 button:hover{border-color:var(--ac)} button.on{background:#7a3b1e}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
+.floating{grid-column:2}
 .p{background:#000;position:relative}.p h3{margin:0;padding:4px 8px;font-size:13px;background:#1c2026;color:var(--mut)}
 .p img{width:100%;display:block;aspect-ratio:4/3;object-fit:contain;background:#000}
 #st{padding:8px 12px;font:13px ui-monospace,monospace;line-height:1.6}
 .ok{color:var(--ok)}.warn{color:var(--warn)} input[type=range]{vertical-align:middle}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.floating{grid-column:1}}
 </style>
 <header>
 <button onclick="post('calibrate')">Calibrate now (C)</button>
@@ -79,12 +80,25 @@ button:hover{border-color:var(--ac)} button.on{background:#7a3b1e}
 </header>
 <div class=grid>
 <div class=p><h3>WiLoR (server overlay)</h3><img id=ov></div>
-<div class=p><h3>Floating hands</h3><img src="/mid.mjpg"></div>
+<div class=p><h3>RealSense RGB <span id=rgbst>— bağlanıyor</span></h3><img id=rgb></div>
 <div class=p><h3>G1 preview (same IK + Dex3 retargeting as the robot)</h3><img src="/g1.mjpg"></div>
+<div class="p floating"><h3>Floating hands</h3><img src="/mid.mjpg"></div>
 </div>
 <div id=st>...</div>
 <script>
 document.getElementById('ov').src='http://'+location.hostname+':__OVPORT__/overlay.mjpg';
+async function rgbLoop(){
+ const image=document.getElementById('rgb'),status=document.getElementById('rgbst');
+ try{
+  const response=await fetch('/robot-rgb.jpg',{cache:'no-store',signal:AbortSignal.timeout(2000)});
+  if(!response.ok)throw new Error('no frame');
+  const url=URL.createObjectURL(await response.blob()),old=image.dataset.url;
+  image.src=url;image.dataset.url=url;image.style.visibility='visible';
+  if(old)URL.revokeObjectURL(old);status.textContent='— canlı';
+ }catch(e){image.style.visibility='hidden';status.textContent='— görüntü yok';}
+ setTimeout(rgbLoop,100);
+}
+rgbLoop();
 async function post(a,b){await fetch('/api/'+a,{method:'POST',body:JSON.stringify(b||{})});}
 function pitch(){post('pitch',{mode:pm.value,deg:+pd.value})}
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
@@ -548,6 +562,13 @@ class LiveUI:
                     self._stream(ui.g1_jpg)
                 elif p == "/api/status":
                     self._send(200, json.dumps(ui.status(), default=_json_scalar).encode(), "application/json")
+                elif p == "/robot-rgb.jpg":
+                    try:
+                        with urllib.request.urlopen(ui.a.robot_rgb, timeout=1.5) as response:
+                            jpg = response.read(2 * 1024 * 1024)
+                        self._send(200, jpg, "image/jpeg")
+                    except (OSError, urllib.error.URLError):
+                        self._send(503, b"No fresh robot RGB frame", "text/plain")
                 elif p == "/snapshot.jpg":
                     self._send(200, ui.snapshot(), "image/jpeg")
                 else:
@@ -615,6 +636,8 @@ def main(argv=None):
                          "XRCAM_SELF_COLLISION, on)")
     ap.add_argument("--ee-bind", default=f"tcp://*:{EE_PORT}", help="ee_cmd PUB bind address")
     ap.add_argument("--robot", default=f"tcp://127.0.0.1:{STATUS_PORT}", help="robot_status PUB address of the robot")
+    ap.add_argument("--robot-rgb", default="http://192.168.123.164:8768/rgb.jpg",
+                    help="robot RGB snapshot URL over Ethernet")
     ap.add_argument("--rate", type=float, default=100.0, help="ee_cmd and preview pipeline rate [Hz]")
     ap.add_argument("--no-publish", action="store_true", help="preview only: do not publish ee_cmd")
     a = ap.parse_args(argv)
