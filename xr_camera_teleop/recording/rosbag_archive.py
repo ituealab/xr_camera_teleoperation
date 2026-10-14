@@ -172,9 +172,9 @@ class RosbagArchive(LocalArchive):
                     report = build_report(in_window,*config["ros2"]["required_image_topics"].values(),
                         limits={"state_age_ms":config.get("state_age_limit_ms",20),"action_age_ms":config.get("action_age_limit_ms",100),
                         "pair_ratio":config.get("pair_ratio_limit",.99),"required_rate_ratio":.7,"expected_rates_hz":{}},
-                        state_topics=("/teleop/state/arms","/teleop/state/left_hand","/teleop/state/right_hand"),
-                        action_topics=("/teleop/action/arms","/teleop/action/left_hand","/teleop/action/right_hand"),
-                        require_actions=True)
+                        state_topics=tuple(config.get("state_topics") or ("/teleop/state/arms","/teleop/state/left_hand","/teleop/state/right_hand")),
+                        action_topics=tuple(config.get("action_topics") or ("/teleop/action/arms","/teleop/action/left_hand","/teleop/action/right_hand")),
+                        require_actions=bool(config.get("require_actions",True)))
                     (active/"sync_report.json").write_text(json.dumps(report,indent=2))
                     lower = manifest.get("capture_start_monotonic_ns") or 0
                     with self.lock:

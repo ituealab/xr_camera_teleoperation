@@ -24,11 +24,11 @@ case "${1:-help}" in
     exec "$HOME/.local/share/xrcam-ros-env/bin/python" "$REPO/deploy/zed_preview.py" "$@"
     ;;
   bag)
-    # rosbag2 episode recorder: needs ROS env (ros2 bag record) and the DDS
-    # telemetry reader running separately (recording_sources.sh telemetry).
+    # rosbag2 episode recorder: reads the robot's native DDS topics AND ZED
+    # topics directly over ROS 2 (CycloneDDS), so it sources the robot env.
     shift
     set +u
-    source /opt/ros/foxy/setup.bash
+    source "$HOME/g1_ros_env/env.sh"
     set -u
     export PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}"
     cd "$REPO"

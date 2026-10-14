@@ -172,8 +172,13 @@ class DatasetBackend:
         camera_stamp = self.latest.get(image_topic,{}).get("stamp",{})
         dds_stamp = self.latest.get("robot_telemetry",{}).get("stamp",{})
         camera_boot = camera_stamp.get("collector_boot_id")
+        bridge = bool(self.config.get("bridge_enabled",False))
+        # Native mode has no 5600 telemetry; the bag recorder's own status carries the PC2 boot.
+        reference_boot = (dds_stamp.get("collector_boot_id") if bridge
+                          else (self.pc2_status or {}).get("boot_id"))
         timing_status = {"camera_clock_valid":bool(camera_stamp.get("capture_clock_valid",False)),
-                         "same_pc2_monotonic_epoch":bool(camera_boot and camera_boot==dds_stamp.get("collector_boot_id")),
+                         "same_pc2_monotonic_epoch":bool(camera_boot and camera_boot==reference_boot),
+                         "bridge_enabled":bridge,
                          "camera_clock_uncertainty_ms":camera_stamp.get("capture_clock_uncertainty_ns",0)/1e6,
                          "camera_clock_errors":camera_stamp.get("capture_clock_errors",[]),
                          "dds_time_semantics":"listener_receipt_not_sensor_measurement"}
@@ -228,17 +233,28 @@ class DatasetBackend:
     def _remote_boundary(self, local_ns):
         camera = self.latest.get(self.config["ros2"]["required_image_topics"]["observation.images.cam_left_high"],{})
         camera_stamp = camera.get("stamp",{})
+        bridge = bool(self.config.get("bridge_enabled",False))
         telemetry_stamp = self.latest.get("robot_telemetry",{}).get("stamp",{})
         if not camera_stamp.get("capture_clock_valid",False):
             raise ValueError("ZED image timestamp is not aligned with PC2 system clock; check time sync/camera startup")
         now = time.monotonic_ns()
-        for name,stamp in (("camera",camera_stamp),("DDS",telemetry_stamp)):
-            received = stamp.get("msi_receive_monotonic_ns")
-            if received is None or now-received>2_000_000_000:
-                raise ValueError(name+" collector data is stale")
+        received = camera_stamp.get("msi_receive_monotonic_ns")
+        if received is None or now-received>2_000_000_000:
+            raise ValueError("camera collector data is stale")
         boot = camera_stamp.get("collector_boot_id")
-        if not boot or boot!=telemetry_stamp.get("collector_boot_id"):
-            raise ValueError("Camera/DDS collectors must be live on the same PC2 boot before recording")
+        if bridge:
+            received = telemetry_stamp.get("msi_receive_monotonic_ns")
+            if received is None or now-received>2_000_000_000:
+                raise ValueError("DDS collector data is stale")
+            if not boot or boot!=telemetry_stamp.get("collector_boot_id"):
+                raise ValueError("Camera/DDS collectors must be live on the same PC2 boot before recording")
+        else:
+            # Native mode: no 5600 telemetry; rely on the bag recorder's own status.
+            status = self.pc2_status or {}
+            if not status.get("ready"):
+                raise ValueError("PC2 bag recorder not ready: "+json.dumps(status))
+            if not boot or boot!=status.get("boot_id"):
+                raise ValueError("Camera/PC2 boot mismatch before recording")
         with self.clock_lock:
             mapper = self.clocks["camera"]
             model = mapper.calibration()
@@ -454,8 +470,11 @@ class DatasetBackend:
     def _clock(self):
         sockets = {}
         host = self.config["robot_host"]
+        probes = [("camera",5603)]
+        if self.config.get("bridge_enabled",False):
+            probes.insert(0,("telemetry",5601))
         try:
-            for name,port in (("telemetry",5601),("camera",5603)):
+            for name,port in probes:
                 sock = self.context.socket(zmq.REQ)
                 sock.setsockopt(zmq.LINGER,0)
                 sock.connect(f"tcp://{host}:{port}")

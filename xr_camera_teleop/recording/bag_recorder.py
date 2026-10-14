@@ -13,11 +13,30 @@ import threading
 import time
 import uuid
 
+from .bag_process import BagProcess,record_command
 from .images import image_header
 from .local_archive import archive_http
 from .ros_bridge import DDSRosBridge,PARTS
 from .rosbag_archive import RosbagArchive,string_cdr,file_manifest
 from .timing import HeaderClockBridge,clock_pair
+
+# Plain `ros2 bag record` comparison capture: main training topics only.
+DEFAULT_RECOMMENDED_TOPICS = [
+    "/zed2i/zed_node/left/image_rect_color",
+    "/zed2i/zed_node/right/image_rect_color",
+    "/zed2i/zed_node/left/camera_info",
+    "/zed2i/zed_node/right/camera_info",
+    "/teleop/state/arms",
+    "/teleop/state/left_hand",
+    "/teleop/state/right_hand",
+    "/teleop/action/arms",
+    "/teleop/action/left_hand",
+    "/teleop/action/right_hand",
+    "/teleop/robot_state",
+    "/teleop/robot_action",
+    "/teleop/timing",
+    "/teleop/recording_events",
+]
 
 
 class BagRecorder:
@@ -41,6 +60,17 @@ class BagRecorder:
         self.last_dds = 0
         self.errors = []
         self.source_gap_since = None
+        # Native ROS topics read directly from the robot's DDS-visible publishers
+        # (no DDS->ZMQ->ROS bridge). Types are discovered at runtime.
+        self.bridge_enabled = bool(config.get("bridge_enabled",False))
+        self.native_topics = list(config.get("native_ros_topics",[]))
+        self.required_fresh = list(config.get("required_fresh_topics",self.native_topics))
+        self.last_topic = {}
+        # Optional plain `ros2 bag record` alongside the managed archive (comparison).
+        self.recommended_enabled = bool(config.get("recommended_rosbag",True))
+        self.recommended_topics = list(config.get("recommended_topics") or DEFAULT_RECOMMENDED_TOPICS)
+        self.recommended = None
+        self.recommended_status = {"state":"idle"}
         self.sequences = {}
         self.metadata_queue = queue.Queue(maxsize=4096)
         self.context = zmq.Context()
@@ -53,8 +83,11 @@ class BagRecorder:
                         ("/teleop/timing","/teleop/dds_raw","/teleop/operator","/teleop/end_effector")}
         self.subscriptions = {}
         self.threads = []
-        for name,target in (("ros",self._ros_loop),("dds",self._dds_loop),("metadata",self._metadata_loop),
-                            ("control",self._control_loop),("operator",self._operator_loop)):
+        workers = [("ros",self._ros_loop),("metadata",self._metadata_loop),
+                   ("control",self._control_loop),("operator",self._operator_loop)]
+        if self.bridge_enabled:
+            workers.insert(1,("dds",self._dds_loop))
+        for name,target in workers:
             thread = threading.Thread(target=self._guard,args=(name,target),daemon=True,name="bag-"+name)
             self.threads.append(thread)
             thread.start()
@@ -80,6 +113,7 @@ class BagRecorder:
     def _raw_ros(self,topic,kind,cdr):
         pair = self._pair()
         stamp = self._stamp(topic,pair)
+        self.last_topic[topic] = time.monotonic()
         images = self.config["ros2"]["required_image_topics"].values()
         is_image = kind=="sensor_msgs/msg/Image"
         meta = {"topic":topic,"ros_type":kind,"stamp":stamp,"is_image":is_image,
@@ -109,7 +143,7 @@ class BagRecorder:
         from rosidl_runtime_py.utilities import get_message
         config = self.config["ros2"]
         topics = (list(config["required_image_topics"].values())+config["camera_info_topics"]+
-                  config["optional_topics"]+config.get("robot_topics",[]))
+                  config["optional_topics"]+config.get("robot_topics",[])+self.native_topics)
         next_discovery,next_sample = 0,0
         while not self._stop_event.is_set():
             now = time.monotonic()
@@ -218,6 +252,39 @@ class BagRecorder:
         finally:
             socket.close()
 
+    def _start_recommended(self, episode_dir):
+        if not self.recommended_enabled:
+            self.recommended_status = {"state":"disabled"}
+            return
+        if self.recommended is not None:
+            self.recommended_status = {"state":"error","error":"already running"}
+            return
+        output = Path(episode_dir)/"recommended_rosbag"
+        command = record_command(self.config.get("ros2_bin","/opt/ros/foxy/bin/ros2"),
+                                 self.recommended_topics, output)
+        try:
+            self.recommended = BagProcess(command, env=dict(__import__("os").environ),
+                log_path=str(Path(episode_dir)/"recommended_rosbag.log")).start()
+            self.recommended_status = {"state":"recording","path":str(output),
+                                       "topics":list(self.recommended_topics)}
+        except Exception as exc:
+            self.recommended = None
+            self.recommended_status = {"state":"error","error":repr(exc)}
+
+    def _stop_recommended(self):
+        if self.recommended is None:
+            if self.recommended_status.get("state")=="recording":
+                self.recommended_status["state"]="stopped"
+            return
+        try:
+            code = self.recommended.stop()
+            self.recommended_status = {"state":"stopped","exit_code":code,
+                                       "path":self.recommended_status.get("path")}
+        except Exception as exc:
+            self.recommended_status = {"state":"error","error":repr(exc)}
+        finally:
+            self.recommended = None
+
     def status_value(self):
         now = time.monotonic()
         cameras = {topic:{"valid":bool(value["stamp"].get("capture_clock_valid")),
@@ -226,10 +293,19 @@ class BagRecorder:
         required = self.config["ros2"]["required_image_topics"].values()
         ready = all(t in cameras and cameras[t]["valid"] and cameras[t]["age_seconds"]<2 for t in required)
         dds_age = max(0,now-self.last_dds) if self.last_dds else None
-        ready = ready and dds_age is not None and dds_age<2 and Path(self.archive.binary).is_file() and not self.errors
+        if self.bridge_enabled:
+            stream_ready = dds_age is not None and dds_age<2
+        else:
+            states = {t:round(now-self.last_topic[t],3) if t in self.last_topic else None for t in self.required_fresh}
+            stream_ready = all(age is not None and age<2 for age in states.values())
+        ready = ready and stream_ready and Path(self.archive.binary).is_file() and not self.errors
         return dict(self.archive.status(),ready=bool(ready),cameras=cameras,
                     dds_age_seconds=dds_age,
+                    bridge_enabled=self.bridge_enabled,
+                    source_topic_age_seconds={t:round(now-self.last_topic[t],3) if t in self.last_topic else None
+                                              for t in self.required_fresh},
                     writer_available=Path(self.archive.binary).is_file(),worker_errors=list(self.errors),
+                    recommended_rosbag=dict(self.recommended_status),
                     mode="rosbag2",session=self.session,boot_id=self.boot_id)
 
     def _control_loop(self):
@@ -242,12 +318,14 @@ class BagRecorder:
                 if not socket.poll(100):
                     status = self.status_value()
                     if status.get("recording"):
-                        healthy = (status["ready"] and status.get("queue_losses",0)==0)
+                        # Only stop on real source staleness; queue losses are flagged, not fatal.
+                        healthy = bool(status["ready"])
                         if healthy:
                             self.source_gap_since = None
                         elif self.source_gap_since is None:
                             self.source_gap_since = time.monotonic()
                         elif time.monotonic()-self.source_gap_since>=self.config.get("required_source_timeout_seconds",2):
+                            self._stop_recommended()
                             self.archive.command("stop",{"episode_id":status["episode_id"],
                                 "capture_stop_monotonic_ns":time.monotonic_ns(),"reason":"required_source_timeout","incomplete":True})
                             self.source_gap_since = None
@@ -262,10 +340,19 @@ class BagRecorder:
                                  "status":self.status_value()}
                     elif operation=="status":
                         reply = {"ok":True,"result":self.status_value()}
-                    elif operation in ("start","stop"):
-                        if operation=="start" and not self.status_value()["ready"]:
+                    elif operation=="start":
+                        if not self.status_value()["ready"]:
                             raise RuntimeError("Recorder not ready: "+json.dumps(self.status_value()))
-                        reply = {"ok":True,"result":self.archive.command(operation,request)}
+                        result = self.archive.command("start",request)
+                        self._start_recommended(result.get("path"))
+                        result["recommended_rosbag"] = dict(self.recommended_status)
+                        reply = {"ok":True,"result":result}
+                        self.source_gap_since = None
+                    elif operation=="stop":
+                        # Finalize the plain bag first so its files are included in the
+                        # managed archive's top-level file manifest used for transfer.
+                        self._stop_recommended()
+                        reply = {"ok":True,"result":self.archive.command("stop",request)}
                         self.source_gap_since = None
                     else:
                         raise ValueError("unknown operation")
@@ -278,6 +365,7 @@ class BagRecorder:
             socket.close()
 
     def close(self):
+        self._stop_recommended()
         status = self.archive.status()
         if status.get("recording"):
             self.archive.command("stop",{"episode_id":status["episode_id"],"reason":"manager_shutdown",
