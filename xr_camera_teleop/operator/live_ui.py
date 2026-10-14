@@ -27,7 +27,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from xr_camera_teleop.paths import DATA  # noqa: E402
+from xr_camera_teleop.paths import DATA, CONFIGS  # noqa: E402
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 
@@ -62,12 +62,28 @@ button{background:#2a3038;color:var(--fg);border:1px solid #3a424c;border-radius
 button:hover{border-color:var(--ac)} button.on{background:#7a3b1e}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px}
 .floating{grid-column:2}
+.taskbar{position:sticky;top:0;z-index:20;display:flex;gap:10px;align-items:center;padding:10px;background:#1c2026;flex-wrap:wrap}
+#taskprompt{flex:1;min-width:220px;background:#101318;color:var(--fg);border:1px solid #3a424c;padding:8px;border-radius:6px}
+#recbadge{display:none;color:#ff5555;font-weight:bold;margin-left:auto}
+.recdot{display:inline-block;width:11px;height:11px;background:#ff3333;border-radius:50%;animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.15}}
+body.dataset-recording #zedpanel{grid-column:1/-1;grid-row:1;box-shadow:0 0 16px #ff333355;border:1px solid #ff5555}
+body.dataset-recording #zedpanel img{height:65vh;aspect-ratio:auto}
+body.dataset-recording #recbadge{display:inline-block}
+#datasetstatus{padding:6px 12px;color:var(--mut)}
 .p{background:#000;position:relative}.p h3{margin:0;padding:4px 8px;font-size:13px;background:#1c2026;color:var(--mut)}
 .p img{width:100%;display:block;aspect-ratio:4/3;object-fit:contain;background:#000}
 #st{padding:8px 12px;font:13px ui-monospace,monospace;line-height:1.6}
 .ok{color:var(--ok)}.warn{color:var(--warn)} input[type=range]{vertical-align:middle}
 @media(max-width:900px){.grid{grid-template-columns:1fr}.floating{grid-column:1}}
 </style>
+<div class=taskbar>
+<label for=taskprompt>Task prompt</label><input id=taskprompt type=text maxlength=4096 placeholder="Put the apple into the plate" oninput="savePrompt()">
+<button id=datasetrec onclick="datasetToggle()">Start dataset recording</button>
+<label><input id=gesture type=checkbox onchange="post('dataset/gesture',{enabled:this.checked})"> Palm gesture</label>
+<span id=recbadge><span class=recdot></span> REC <span id=rectime>0 s</span></span>
+</div>
+<div id=datasetstatus>Dataset: ready — both open palms facing the camera to start/stop</div>
 <header>
 <button onclick="post('calibrate')">Calibrate now (C)</button>
 <button onclick="post('reset')">Reset / home (H)</button>
@@ -80,26 +96,37 @@ button:hover{border-color:var(--ac)} button.on{background:#7a3b1e}
 </header>
 <div class=grid>
 <div class=p><h3>WiLoR (server overlay)</h3><img id=ov></div>
-<div class=p><h3>RealSense RGB <span id=rgbst>— bağlanıyor</span></h3><img id=rgb></div>
+<div class=p id=zedpanel><h3>ZED left RGB <span id=rgbst>— bağlanıyor</span></h3><img id=rgb src="/zed.mjpg"></div>
 <div class=p><h3>G1 preview (same IK + Dex3 retargeting as the robot)</h3><img src="/g1.mjpg"></div>
 <div class="p floating"><h3>Floating hands</h3><img src="/mid.mjpg"></div>
 </div>
 <div id=st>...</div>
 <script>
 document.getElementById('ov').src='http://'+location.hostname+':__OVPORT__/overlay.mjpg';
-async function rgbLoop(){
- const image=document.getElementById('rgb'),status=document.getElementById('rgbst');
- try{
-  const response=await fetch('/robot-rgb.jpg',{cache:'no-store',signal:AbortSignal.timeout(2000)});
-  if(!response.ok)throw new Error('no frame');
-  const url=URL.createObjectURL(await response.blob()),old=image.dataset.url;
-  image.src=url;image.dataset.url=url;image.style.visibility='visible';
-  if(old)URL.revokeObjectURL(old);status.textContent='— canlı';
- }catch(e){image.style.visibility='hidden';status.textContent='— görüntü yok';}
- setTimeout(rgbLoop,100);
+document.getElementById('rgb').onerror=function(){setTimeout(()=>{this.src='/zed.mjpg?t='+Date.now()},1000)};
+async function post(a,b){
+ const response=await fetch('/api/'+a,{method:'POST',body:JSON.stringify(b||{})});
+ const value=await response.json().catch(()=>({}));
+ if(!response.ok)throw new Error(value.error||'Request failed');
+ return value;
 }
-rgbLoop();
-async function post(a,b){await fetch('/api/'+a,{method:'POST',body:JSON.stringify(b||{})});}
+const taskInput=document.getElementById('taskprompt');
+let taskInitialized=false,taskRevision=null,taskDirty=false,promptWrites=Promise.resolve(),taskError='';
+function savePrompt(){
+ const value=taskInput.value;taskDirty=true;localStorage.setItem('xrcam-task-prompt',value);
+ promptWrites=promptWrites.catch(()=>{}).then(async()=>{
+  try{
+   const result=await post('dataset/prompt',{prompt:value,expected_revision:taskRevision});
+   taskRevision=result.prompt_revision;taskError='';
+   if(taskInput.value===value)taskDirty=false;
+  }catch(error){taskError=error.message;throw error;}
+ });
+ promptWrites.catch(()=>{});return promptWrites;
+}
+async function datasetToggle(){
+ try{await savePrompt();await post('dataset/toggle');taskError='';}
+ catch(error){taskError=error.message;}
+}
 function pitch(){post('pitch',{mode:pm.value,deg:+pd.value})}
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
  if(e.key==='c'||e.key==='C')post('calibrate');else if(e.key==='h'||e.key==='H')post('reset');
@@ -107,6 +134,33 @@ document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.
  else if(e.key==='v'||e.key==='V')post('record');
  else if(e.key===' '){e.preventDefault();post('engage')}});
 async function poll(){try{const s=await (await fetch('/api/status')).json();
+ const d=s.dataset||{};
+ if(!taskInitialized&&d.prompt_revision!=null){
+  taskInitialized=true;taskRevision=d.prompt_revision;taskInput.value=d.task_prompt||'';
+  const cached=localStorage.getItem('xrcam-task-prompt')||'';
+  if(!taskInput.value&&cached){taskInput.value=cached;savePrompt();}
+ }else if(taskInitialized&&!taskDirty&&document.activeElement!==taskInput){
+  taskInput.value=d.task_prompt||'';taskRevision=d.prompt_revision;
+ }
+ document.getElementById('datasetrec').disabled=!taskInitialized||d.phase==='starting'||d.phase==='stopping';
+ document.getElementById('gesture').checked=!!d.gesture_enabled;
+ const zedLive=d.preview_age_seconds!=null&&d.preview_age_seconds<2;
+ document.getElementById('rgb').style.visibility=zedLive?'visible':'hidden';
+ document.getElementById('rgbst').textContent=zedLive?'— '+(d.preview_fps||0).toFixed(1)+' FPS':'— görüntü yok';
+ document.body.classList.toggle('dataset-recording',!!d.recording);
+ document.getElementById('datasetrec').textContent=d.recording?'Stop dataset recording':'Start dataset recording';
+ document.getElementById('rectime').textContent=(d.seconds||0).toFixed(1)+' s';
+ document.getElementById('datasetstatus').textContent='Dataset: '+(d.state||'disabled')
+  +(d.recording?' | '+d.prompt:'')+' | target '+(d.target_hz||100)+' Hz'
+  +(d.path?' | '+d.path:'')+(d.last_path?' | saved '+d.last_path:'')
+  +(d.export?' | export: '+d.export.state:'')
+  +(d.transfer?' | PC2 → MSI: '+d.transfer.state:'')
+  +(d.pc2?' | rosbag2: '+(d.pc2.ready?'READY':'WAITING'):'')
+  +(d.sync_report&&d.sync_report.camera_state_match?' | state age p95: '+Number(d.sync_report.camera_state_match.state_age_ms_p95||0).toFixed(2)+' ms':'')
+  +(d.timing?' | camera/DDS clock: '+(d.timing.camera_clock_valid&&d.timing.same_pc2_monotonic_epoch?'OK (±'+d.timing.camera_clock_uncertainty_ms.toFixed(3)+' ms software clock)':'NOT VALID'):'')
+  +(d.gesture&&d.gesture.release_required?' | Release the palm gesture before the next trigger':'')
+  +(taskError?' | '+taskError:'')
+  +(d.quality&&d.quality.incomplete?' | INCOMPLETE':'')+(d.error?' | '+d.error:'');
  const h=x=>{const v=s.hands[x];return x+': '+(v.seen?'<span class=ok>seen</span>':'<span class=warn>'+(v.detected_ever?'stale':'never')+'</span>')};
  eng.className=s.engaged?'':'on';
  fol.className=s.follow?'on':'';fol.innerHTML=s.follow?'Stop robot (R)':'Start robot (R)';
@@ -205,6 +259,7 @@ class LiveUI:
         self.hand_seen = {h: {"seen": False, "detected_ever": False} for h in SIDES}
         self.ready = threading.Event()
         self.ik = None
+        self.dataset = None
 
     # ------------------------------------------------------------ pipeline thread
     def pipeline(self):
@@ -277,6 +332,8 @@ class LiveUI:
             self.link.send(td)
             self.last_td = td
             msg = wrapper.last_msg
+            if self.dataset:
+                self.dataset.observe_hands(msg)
             if msg is not None and msg.get("frame_id") != last_fid:      # new frame: floating hands + fingers
                 last_fid = msg.get("frame_id")
                 R_lv = level_rotation(msg, self.pitch_deg)
@@ -426,6 +483,7 @@ class LiveUI:
                 "recording": ({"path": self.rec_path, "seconds": time.monotonic() - self.rec_t0}
                               if self.rec_proc is not None else None),
                 "last_recording": self.last_rec,
+                "dataset": self.dataset.status() if self.dataset else {"state":"disabled"},
                 "self_collision": (None if self.ik is None else
                                    dict(getattr(self.ik, "stats", {}), on=hasattr(self.ik, "stats"),
                                         mode=getattr(self.ik, "mode", None))),
@@ -569,6 +627,27 @@ class LiveUI:
                         self._send(200, jpg, "image/jpeg")
                     except (OSError, urllib.error.URLError):
                         self._send(503, b"No fresh robot RGB frame", "text/plain")
+                elif p == "/zed-rgb.jpg":
+                    jpg = ui.dataset.preview_jpg() if ui.dataset else None
+                    self._send(200 if jpg else 503, jpg or b"No fresh ZED frame", "image/jpeg" if jpg else "text/plain")
+                elif p == "/zed.mjpg":
+                    if not ui.dataset:
+                        return self._send(503,b"ZED preview unavailable","text/plain")
+                    self.send_response(200)
+                    self.send_header("Content-Type","multipart/x-mixed-replace; boundary=frame")
+                    self.send_header("Cache-Control","no-store")
+                    self.end_headers()
+                    sequence = 0
+                    try:
+                        while not ui.stop.is_set():
+                            jpg,sequence = ui.dataset.wait_preview(sequence)
+                            if jpg is None:
+                                continue
+                            self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                                             +str(len(jpg)).encode()+b"\r\n\r\n"+jpg+b"\r\n")
+                            self.wfile.flush()
+                    except (BrokenPipeError,ConnectionResetError):
+                        pass
                 elif p == "/snapshot.jpg":
                     self._send(200, ui.snapshot(), "image/jpeg")
                 else:
@@ -581,7 +660,28 @@ class LiveUI:
                 except ValueError:
                     body = {}
                 p = self.path.split("?")[0]
-                if p == "/api/record":
+                if p.startswith("/api/dataset/"):
+                    if not ui.dataset:
+                        return self._send(503,b"Dataset backend disabled","text/plain")
+                    try:
+                        if p == "/api/dataset/prompt":
+                            if "expected_revision" in body:
+                                revision = ui.dataset.set_prompt(body.get("prompt",""),body["expected_revision"])
+                            else:
+                                revision = ui.dataset.set_prompt(body.get("prompt",""))
+                            return self._send(200,json.dumps({"prompt_revision":revision}).encode(),"application/json")
+                        elif p == "/api/dataset/toggle":
+                            ui.dataset.toggle()
+                        elif p == "/api/dataset/gesture":
+                            ui.dataset.gesture_enabled = bool(body.get("enabled",True))
+                            if hasattr(ui.dataset,"gesture_lock"):
+                                with ui.dataset.gesture_lock:
+                                    ui.dataset.gesture.require_release()
+                        else:
+                            return self._send(404,b"not found","text/plain")
+                    except Exception as exc:
+                        return self._send(400,json.dumps({"error":str(exc)}).encode(),"application/json")
+                elif p == "/api/record":
                     threading.Thread(target=ui.toggle_record, daemon=True).start()
                 elif p in ("/api/calibrate", "/api/reset", "/api/engage", "/api/follow"):
                     with ui.lock:
@@ -601,6 +701,9 @@ class LiveUI:
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
     def run(self):
+        if not self.a.no_dataset:
+            from xr_camera_teleop.recording.backend import DatasetBackend
+            self.dataset = DatasetBackend(self.a.recording_config, self.a.dataset_root)
         for f in (self.pipeline, self.render, self.health_loop):
             threading.Thread(target=f, daemon=True).start()
         self.serve()
@@ -611,6 +714,8 @@ class LiveUI:
                 time.sleep(0.3)
         except KeyboardInterrupt:
             pass
+        if self.dataset:
+            self.dataset.close()
         self._rec_close()                 # finish the mp4 before the hard exit
         self.link.set_follow(False)       # robot: hold + home request (it would time out into home anyway)
         self.link.request_home()
@@ -640,6 +745,9 @@ def main(argv=None):
                     help="robot RGB snapshot URL over Ethernet")
     ap.add_argument("--rate", type=float, default=100.0, help="ee_cmd and preview pipeline rate [Hz]")
     ap.add_argument("--no-publish", action="store_true", help="preview only: do not publish ee_cmd")
+    ap.add_argument("--no-dataset", action="store_true", help="disable dataset receiver/gesture recording")
+    ap.add_argument("--recording-config", default=str(CONFIGS / "recording.json"))
+    ap.add_argument("--dataset-root", default=None, help="override configured ~/teleop_data root")
     a = ap.parse_args(argv)
     if not np.isfinite(a.rate) or a.rate <= 0:
         ap.error("--rate must be positive and finite")
