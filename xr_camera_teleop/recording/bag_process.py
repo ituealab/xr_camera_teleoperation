@@ -4,11 +4,9 @@ Foxy Python exposes only rosbag2_transport.record/play/info (no writer class), s
 the recorder manages `ros2 bag record` as a child process. Command construction
 and output handling are pure and unit-tested; process control is live-only.
 """
-import os
 from pathlib import Path
 import signal
 import subprocess
-import time
 
 
 def record_command(ros2_bin, topics, output_dir, storage_id="sqlite3", extra=None):
@@ -28,25 +26,44 @@ class BagProcess:
         self.env = env
         self.log_path = log_path
         self.proc = None
+        self.last_exit_code = None
+        self.forced_stop = False
+        self.sigint_sent = False
 
     def start(self):
-        log = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL
-        self.proc = subprocess.Popen(self.command, env=self.env, stdout=log, stderr=log,
-                                     preexec_fn=os.setsid)
+        if self.alive:
+            raise RuntimeError("recorder process already running")
+        log = open(self.log_path, "ab") if self.log_path else None
+        try:
+            self.proc = subprocess.Popen(self.command, env=self.env,
+                stdout=log if log else subprocess.DEVNULL, stderr=log if log else subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,start_new_session=True,close_fds=True)
+        finally:
+            if log:
+                log.close()
+        self.last_exit_code = None
+        self.forced_stop = self.sigint_sent = False
         return self
 
     def stop(self, timeout=15):
         if self.proc is None:
-            return 0
+            return self.last_exit_code if self.last_exit_code is not None else 0
         # rosbag2 flushes on SIGINT; SIGTERM can truncate the sqlite/metadata file.
-        self.proc.send_signal(signal.SIGINT)
+        if self.proc.poll() is None:
+            try:
+                self.proc.send_signal(signal.SIGINT)
+                self.sigint_sent = True
+            except ProcessLookupError:
+                pass
         try:
             self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            self.forced_stop = True
             self.proc.kill()
             self.proc.wait(timeout=5)
         code = self.proc.returncode
         self.proc = None
+        self.last_exit_code = code
         return code
 
     @property

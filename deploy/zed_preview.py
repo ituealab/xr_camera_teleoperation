@@ -14,9 +14,9 @@ def main():
     import rclpy
     import zmq
     from rclpy.qos import qos_profile_sensor_data
-    from sensor_msgs.msg import Image
+    from sensor_msgs.msg import Image, CompressedImage
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--topic",default="/zed2i/zed_node/left/image_rect_color")
+    parser.add_argument("--topic",default="/zed2i/zed_node/left/image_rect_color/compressed")
     parser.add_argument("--bind",default="tcp://192.168.123.164:5604")
     parser.add_argument("--fps",type=float,default=30)
     parser.add_argument("--width",type=int,default=640)
@@ -38,8 +38,10 @@ def main():
         with lock:
             newest[0],newest[1] = message,newest[1]+1
     from rclpy.qos import QoSProfile,ReliabilityPolicy
-    subscription = node.create_subscription(Image,args.topic,callback,
-        QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT),raw=True)
+    # Raw 720p BGRA frames (~3.7 MB) fragment and drop over BEST_EFFORT DDS; the JPEG topic does not.
+    compressed = args.topic.endswith("/compressed")
+    subscription = node.create_subscription(CompressedImage if compressed else Image,args.topic,callback,
+        QoSProfile(depth=1,reliability=ReliabilityPolicy.BEST_EFFORT),raw=not compressed)
 
     def publish():
         context = zmq.Context()
@@ -55,6 +57,20 @@ def main():
                     image,sequence = newest
                 if image is not None and sequence != previous:
                     previous = sequence
+                    if compressed:
+                        frame = cv2.imdecode(np.frombuffer(bytes(image.data),np.uint8),cv2.IMREAD_COLOR)
+                        if frame is None:
+                            continue
+                        if frame.shape[1] > args.width:
+                            frame = cv2.resize(frame,(args.width,round(frame.shape[0]*args.width/frame.shape[1])))
+                        stamp = image.header.stamp
+                        ok,jpg = cv2.imencode(".jpg",frame,[cv2.IMWRITE_JPEG_QUALITY,80])
+                        if ok:
+                            packet = {"sequence":sequence,"source_stamp_ns":stamp.sec*1_000_000_000+stamp.nanosec,
+                                      "jpeg":jpg.tobytes(),"width":frame.shape[1],"height":frame.shape[0]}
+                            socket.send(msgpack.packb(packet,use_bin_type=True))
+                        stop.wait(max(0,1/args.fps-(time.monotonic()-started)))
+                        continue
                     info = cdr_header(image,image=True)
                     channels = {"bgra8":4,"rgba8":4,"bgr8":3,"rgb8":3,"mono8":1}
                     if info["encoding"] not in channels:

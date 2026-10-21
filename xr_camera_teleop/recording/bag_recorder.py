@@ -6,6 +6,7 @@ Foxy C++ writer receives bytes over stdin; EOF finalizes if this manager dies.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import queue
 import signal
@@ -15,7 +16,8 @@ import uuid
 
 from .bag_process import BagProcess,record_command
 from .images import image_header
-from .local_archive import archive_http
+from .local_archive import archive_http,valid_episode
+from .plain_session import PlainBagSession
 from .ros_bridge import DDSRosBridge,PARTS
 from .rosbag_archive import RosbagArchive,string_cdr,file_manifest
 from .timing import HeaderClockBridge,clock_pair
@@ -53,7 +55,10 @@ class BagRecorder:
         self.session = uuid.uuid4().hex
         self._stop_event = threading.Event()
         self._lock,self._bridge_lock = threading.Lock(),threading.Lock()
-        self.archive = RosbagArchive(config)
+        self.mode = config.get("recorder_mode","managed")
+        self.plain = self.mode=="plain_rosbag"
+        self.plain_session = PlainBagSession(config,self.boot_id) if self.plain else None
+        self.archive = self.plain_session if self.plain else RosbagArchive(config)
         self.bridge = DDSRosBridge(self.boot_id)
         self.camera_clock = HeaderClockBridge()
         self.last_camera = {}
@@ -71,6 +76,10 @@ class BagRecorder:
         self.recommended_topics = list(config.get("recommended_topics") or DEFAULT_RECOMMENDED_TOPICS)
         self.recommended = None
         self.recommended_status = {"state":"idle"}
+        # Recorder mode. "plain_rosbag": a single stock `ros2 bag record` is the only
+        # recorder (no custom native writer, no prebuffer, no second bag).
+        self.plain_topics = list(config.get("plain_topics") or config.get("recommended_topics")
+                                 or DEFAULT_RECOMMENDED_TOPICS)
         self.sequences = {}
         self.metadata_queue = queue.Queue(maxsize=4096)
         self.context = zmq.Context()
@@ -115,11 +124,11 @@ class BagRecorder:
         stamp = self._stamp(topic,pair)
         self.last_topic[topic] = time.monotonic()
         images = self.config["ros2"]["required_image_topics"].values()
-        is_image = kind=="sensor_msgs/msg/Image"
+        is_image = kind in ("sensor_msgs/msg/Image","sensor_msgs/msg/CompressedImage")
         meta = {"topic":topic,"ros_type":kind,"stamp":stamp,"is_image":is_image,
                 "bag_timestamp_ns":stamp["collector_unix_ns"],"storage_time_semantics":"collector_receipt"}
         if is_image:
-            header = image_header(cdr)
+            header = image_header(cdr,compressed_msg=kind.endswith("CompressedImage"))
             meta.update(header)
             stamp.update(source_timestamp_ns=header["source_timestamp_ns"],source_clock_id="ros_image_header",
                          source_time_semantics="capture",**pair)
@@ -136,7 +145,8 @@ class BagRecorder:
                 self.metadata_queue.put_nowait(dict(meta,type="ros2_raw"))
             except queue.Full:
                 pass  # Preview metadata is not the authoritative training stream.
-        self.archive.submit(meta,cdr)
+        if not self.plain:
+            self.archive.submit(meta,cdr)
 
     def _ros_loop(self):
         from rclpy.qos import QoSProfile,ReliabilityPolicy,DurabilityPolicy
@@ -165,7 +175,7 @@ class BagRecorder:
                     self.subscriptions[topic] = self.node.create_subscription(get_message(kind),topic,
                         lambda data,t=topic,k=kind:self._raw_ros(t,k,data),qos,raw=True)
                 next_discovery = now+2
-            if now>=next_sample:
+            if now>=next_sample and not self.plain:
                 pair = self._pair()
                 with self._bridge_lock:
                     specifications = [self.bridge.combined(action,pair["clock_pair_monotonic_ns"],pair["clock_pair_unix_ns"])
@@ -193,6 +203,8 @@ class BagRecorder:
                                      "joint_names":spec["name"],"header_unix_ns":timestamp},stamp)
 
     def _json(self,topic,value,source_stamp=None):
+        if self.plain:
+            return  # Plain mode records only the configured native topics, without a shadow archive.
         pair = self._pair()
         stamp = self._stamp(topic,pair)
         if source_stamp:
@@ -252,7 +264,15 @@ class BagRecorder:
         finally:
             socket.close()
 
+    def _plain_start(self, request):
+        return self.plain_session.start(request)
+
+    def _plain_stop(self, request):
+        return self.plain_session.stop(request)
+
     def _start_recommended(self, episode_dir):
+        if self.plain:
+            return
         if not self.recommended_enabled:
             self.recommended_status = {"state":"disabled"}
             return
@@ -298,12 +318,23 @@ class BagRecorder:
         else:
             states = {t:round(now-self.last_topic[t],3) if t in self.last_topic else None for t in self.required_fresh}
             stream_ready = all(age is not None and age<2 for age in states.values())
+        source_topic_age = {t:round(now-self.last_topic[t],3) if t in self.last_topic else None
+                            for t in self.required_fresh}
+        if self.plain:
+            self.plain_session.check_process()
+            base = self.plain_session.status()
+            available = os.access(self.config.get("ros2_bin","/opt/ros/foxy/bin/ros2"),os.X_OK)
+            ready = ready and stream_ready and not self.errors and available
+            return dict(base, ready=bool(ready), cameras=cameras, dds_age_seconds=dds_age,
+                        bridge_enabled=self.bridge_enabled, source_topic_age_seconds=source_topic_age,
+                        writer_available=available, worker_errors=list(self.errors),
+                        recommended_rosbag={"state":"disabled"}, mode="plain_rosbag",
+                        session=self.session, boot_id=self.boot_id)
         ready = ready and stream_ready and Path(self.archive.binary).is_file() and not self.errors
         return dict(self.archive.status(),ready=bool(ready),cameras=cameras,
                     dds_age_seconds=dds_age,
                     bridge_enabled=self.bridge_enabled,
-                    source_topic_age_seconds={t:round(now-self.last_topic[t],3) if t in self.last_topic else None
-                                              for t in self.required_fresh},
+                    source_topic_age_seconds=source_topic_age,
                     writer_available=Path(self.archive.binary).is_file(),worker_errors=list(self.errors),
                     recommended_rosbag=dict(self.recommended_status),
                     mode="rosbag2",session=self.session,boot_id=self.boot_id)
@@ -325,9 +356,14 @@ class BagRecorder:
                         elif self.source_gap_since is None:
                             self.source_gap_since = time.monotonic()
                         elif time.monotonic()-self.source_gap_since>=self.config.get("required_source_timeout_seconds",2):
-                            self._stop_recommended()
-                            self.archive.command("stop",{"episode_id":status["episode_id"],
-                                "capture_stop_monotonic_ns":time.monotonic_ns(),"reason":"required_source_timeout","incomplete":True})
+                            if self.plain and status.get("episode_id"):
+                                self._plain_stop({"episode_id":status["episode_id"],
+                                    "capture_stop_monotonic_ns":time.monotonic_ns(),
+                                    "reason":"required_source_timeout","incomplete":True})
+                            else:
+                                self._stop_recommended()
+                                self.archive.command("stop",{"episode_id":status["episode_id"],
+                                    "capture_stop_monotonic_ns":time.monotonic_ns(),"reason":"required_source_timeout","incomplete":True})
                             self.source_gap_since = None
                     continue
                 received = time.monotonic_ns()
@@ -343,16 +379,22 @@ class BagRecorder:
                     elif operation=="start":
                         if not self.status_value()["ready"]:
                             raise RuntimeError("Recorder not ready: "+json.dumps(self.status_value()))
-                        result = self.archive.command("start",request)
-                        self._start_recommended(result.get("path"))
-                        result["recommended_rosbag"] = dict(self.recommended_status)
+                        if self.plain:
+                            result = self._plain_start(request)
+                        else:
+                            result = self.archive.command("start",request)
+                            self._start_recommended(result.get("path"))
+                            result["recommended_rosbag"] = dict(self.recommended_status)
                         reply = {"ok":True,"result":result}
                         self.source_gap_since = None
                     elif operation=="stop":
-                        # Finalize the plain bag first so its files are included in the
-                        # managed archive's top-level file manifest used for transfer.
-                        self._stop_recommended()
-                        reply = {"ok":True,"result":self.archive.command("stop",request)}
+                        if self.plain:
+                            reply = {"ok":True,"result":self._plain_stop(request)}
+                        else:
+                            # Finalize the plain bag first so its files are included in the
+                            # managed archive's top-level file manifest used for transfer.
+                            self._stop_recommended()
+                            reply = {"ok":True,"result":self.archive.command("stop",request)}
                         self.source_gap_since = None
                     else:
                         raise ValueError("unknown operation")
@@ -365,6 +407,8 @@ class BagRecorder:
             socket.close()
 
     def close(self):
+        if self.plain:
+            self.plain_session.close()
         self._stop_recommended()
         status = self.archive.status()
         if status.get("recording"):

@@ -164,7 +164,7 @@ class DatasetBackend:
         recorded = self.recorder.status()
         if phase in ("starting","stopping"):
             recorded["state"] = phase
-        if phase=="stopping":
+        if phase in ("starting","stopping"):
             recorded["recording"] = False
         with self.gesture_lock:
             gesture_status = self.gesture.status()
@@ -208,6 +208,8 @@ class DatasetBackend:
                         entry["finalized"] = archive_command(self.context,self.config["robot_host"],entry["command_port"],
                             "stop",{"episode_id":remote["episode_id"],"reason":reason,"incomplete":incomplete,
                                     "capture_stop_monotonic_ns":stop_boundary,"boundary_uncertainty_ns":uncertainty},timeout_ms=65000)
+                        entry["finalized"] = self._await_source(entry["command_port"],remote["episode_id"],
+                                                               "stop",entry["finalized"])
                         entry["started"] = True
                     except Exception as exc:
                         entry["stop_error"] = repr(exc)
@@ -262,6 +264,32 @@ class DatasetBackend:
                 raise ValueError("Camera clock calibration warming up; retry shortly")
             return mapper.to_remote(local_ns),model["uncertainty_estimate_ns"],boot
 
+    def _await_source(self,port,episode_id,operation,first):
+        """An accepted command is not proof of recording/finalization."""
+        timeout = self.config.get("bag_start_wait_seconds",30) if operation=="start" else self.config.get("bag_finalize_wait_seconds",120)
+        deadline = time.monotonic()+timeout
+        value = first
+        while True:
+            active = value.get("episode_id")
+            if operation=="start" and value.get("recording") and active==episode_id:
+                return value
+            if operation=="stop" and "complete" in value:
+                if not value["complete"]:
+                    raise RuntimeError("PC2 bag container incomplete: "+json.dumps(value.get("errors",value.get("error"))))
+                return value
+            if active and active!=episode_id:
+                raise RuntimeError("PC2 returned a different active episode")
+            if value.get("last_episode_id")==episode_id:
+                if operation=="start" or not value.get("last_complete",True):
+                    raise RuntimeError("PC2 recorder failed: "+str(value.get("error")))
+                return archive_command(self.context,self.config["robot_host"],port,"stop",{"episode_id":episode_id},timeout_ms=3000)
+            if value.get("state")=="error" and not active:
+                raise RuntimeError("PC2 recorder error: "+str(value.get("error")))
+            if time.monotonic()>=deadline:
+                raise TimeoutError("PC2 bag "+operation+" pending; no completion confirmation")
+            time.sleep(.1)
+            value = archive_command(self.context,self.config["robot_host"],port,"status",{},timeout_ms=3000)
+
     def _start(self, prompt, trigger_ns=None):
         trigger_ns = trigger_ns or time.monotonic_ns()
         trigger_pc2,uncertainty,boot = self._remote_boundary(trigger_ns)
@@ -288,7 +316,8 @@ class DatasetBackend:
                 entry["start_result"] = archive_command(self.context,self.config["robot_host"],command_port,"start",
                     {"episode_id":path.name,"prompt":prompt,"msi_trigger_monotonic_ns":trigger_ns,
                      "capture_start_monotonic_ns":start_pc2,"capture_clock_boot_id":boot,
-                     "boundary_uncertainty_ns":uncertainty},timeout_ms=15000)
+                      "boundary_uncertainty_ns":uncertainty},timeout_ms=15000)
+                entry["start_result"] = self._await_source(command_port,path.name,"start",entry["start_result"])
                 entry["started"] = True
             except Exception as exc:
                 entry["start_error"] = repr(exc)

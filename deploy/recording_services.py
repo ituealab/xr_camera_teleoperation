@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start/stop ONLY recording subscribers and JPEG preview, using verified PID identities."""
+"""Manage camera acquisition, recording subscribers and preview with verified PIDs."""
 import argparse
 import json
 import os
@@ -10,7 +10,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT/"data/recording-services"
-MODULES = {"telemetry":"xr_camera_teleop.recording.telemetry", "bag":"xr_camera_teleop.recording.bag_recorder",
+MODULES = {"zed":"zed_camera.launch.py", "telemetry":"xr_camera_teleop.recording.telemetry", "bag":"xr_camera_teleop.recording.bag_recorder",
            "preview":"zed_preview.py"}
 
 
@@ -76,6 +76,10 @@ def main():
     parser.add_argument("service",choices=("all",)+tuple(MODULES),default="all",nargs="?")
     args = parser.parse_args()
     names = list(MODULES) if args.service=="all" else [args.service]
+    if args.service=="all" and args.operation=="start":
+        config = json.loads((ROOT/"configs/recording.json").read_text())
+        if not config.get("bridge_enabled",False):
+            names.remove("telemetry")
     if args.operation=="stop":
         names = list(reversed(names))
     result = {}

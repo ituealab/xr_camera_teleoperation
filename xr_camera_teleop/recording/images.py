@@ -3,8 +3,8 @@ import struct
 import zlib
 
 
-def image_header(cdr, is_compressed=False):
-    """Parse only the std_msgs/Header + image metadata from a ROS Image CDR buffer."""
+def image_header(cdr, is_compressed=False, compressed_msg=False):
+    """Parse only the std_msgs/Header + image metadata from a ROS Image (or CompressedImage) CDR buffer."""
     data = zlib.decompress(cdr) if is_compressed else cdr
     if data[:2] not in (b"\x00\x01", b"\x00\x00"):
         raise ValueError("unsupported ROS CDR encapsulation")
@@ -31,6 +31,10 @@ def image_header(cdr, is_compressed=False):
     if sec >= 2**31:
         sec -= 2**32
     frame_id = string()
+    if compressed_msg:
+        # CompressedImage: header is followed by the format string (e.g. "bgra8; jpeg compressed bgr8").
+        return {"source_timestamp_ns": sec * 1_000_000_000 + nanosec, "frame_id": frame_id,
+                "height": None, "width": None, "encoding": string()}
     height, width = uint(), uint()
     encoding = string()
     return {"source_timestamp_ns": sec * 1_000_000_000 + nanosec, "frame_id": frame_id,

@@ -11,8 +11,19 @@
   "record_end_effector_fk": false,
   "gesture_enabled": false,
   "ros2_bin": "/opt/ros/foxy/bin/ros2",
-  "recommended_rosbag": true,
+  "recorder_mode": "plain_rosbag",
+  "recommended_rosbag": false,
   "bridge_enabled": false,
+  "plain_topics": [
+    "/zed2i/zed_node/left/image_rect_color/compressed",
+    "/zed2i/zed_node/left/camera_info",
+    "/lowstate",
+    "/lowcmd",
+    "/dex3/left/state",
+    "/dex3/right/state",
+    "/dex3/left/cmd",
+    "/dex3/right/cmd"
+  ],
   "native_ros_topics": [
     "/lowstate",
     "/lowcmd",
@@ -26,10 +37,8 @@
   "action_topics": ["/lowcmd", "/dex3/left/cmd", "/dex3/right/cmd"],
   "require_actions": true,
   "recommended_topics": [
-    "/zed2i/zed_node/left/image_rect_color",
-    "/zed2i/zed_node/right/image_rect_color",
+    "/zed2i/zed_node/left/image_rect_color/compressed",
     "/zed2i/zed_node/left/camera_info",
-    "/zed2i/zed_node/right/camera_info",
     "/lowstate",
     "/lowcmd",
     "/dex3/left/state",
@@ -42,10 +51,7 @@
   "bag_http_port": 5605,
   "state_names": [],
   "expected_rates_hz": {
-    "/zed2i/zed_node/left/image_rect_color": 30,
-    "/zed2i/zed_node/right/image_rect_color": 30,
-    "/teleop/robot_state": 100,
-    "/teleop/robot_action": 100
+    "/zed2i/zed_node/left/image_rect_color/compressed": 30
   },
   "state_age_limit_ms": 20.0,
   "action_age_limit_ms": 100.0,
@@ -56,7 +62,7 @@
   "dds_domain": 0,
   "record_hz": 100,
   "export_hz": 100,
-  "prebuffer_seconds": 2,
+  "prebuffer_seconds": 0,
   "gesture_hold_seconds": 1,
   "required_source_timeout_seconds": 2,
   "joint_reference_manifest": null,
@@ -64,12 +70,10 @@
   "ros2": {
     "distro": "foxy",
     "required_image_topics": {
-      "observation.images.cam_left_high": "/zed2i/zed_node/left/image_rect_color",
-      "observation.images.cam_right_high": "/zed2i/zed_node/right/image_rect_color"
+      "observation.images.cam_left_high": "/zed2i/zed_node/left/image_rect_color/compressed"
     },
     "camera_info_topics": [
-      "/zed2i/zed_node/left/camera_info",
-      "/zed2i/zed_node/right/camera_info"
+      "/zed2i/zed_node/left/camera_info"
     ],
     "robot_topics": [],
     "optional_topics": [],
