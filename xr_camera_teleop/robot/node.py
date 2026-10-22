@@ -60,6 +60,7 @@ class RobotConfig:
     stale_s: float = 0.3
     home_s: float = 1.5
     hands: bool = True
+    thumb_shaping: bool = True
     self_collision: bool | None = None       # None -> env XRCAM_SELF_COLLISION (default on)
     robot_camera: bool = False
     status_hz: float = 10.0
@@ -410,7 +411,7 @@ def build_hardware(cfg: RobotConfig):
         from xr_camera_teleop.robot.vendor.robot_hand_unitree import Dex3_1_Controller
         hand = Dex3_1_Controller(hand_velocity_limit=cfg.hand_vel_limit,
                                  dds_domain=1 if cfg.sim else 0, network_interface=cfg.network_interface,
-                                 input_timeout=cfg.stale_s)
+                                 input_timeout=cfg.stale_s, thumb_shaping=cfg.thumb_shaping)
     if cfg.robot_camera:
         from xr_camera_teleop.robot.camera import RobotCamera
         RobotCamera().start()
@@ -442,6 +443,8 @@ def parse_args(argv=None) -> RobotConfig:
     ap.add_argument("--stale-timeout", type=float, default=0.3, help="no ee_cmd for this long [s] -> hold last q")
     ap.add_argument("--home-timeout", type=float, default=1.5, help="no ee_cmd for this long [s] -> arms go home")
     ap.add_argument("--no-hands", action="store_true", help="arms only (no Dex3 / no dex_retargeting)")
+    ap.add_argument("--no-thumb-shaping", action="store_true",
+                    help="raw DexPilot hand (no robot open/pinch pose shaping, see robot/thumb_shaping.py)")
     ap.add_argument("--no-self-collision", action="store_true",
                     help="plain upstream IK without self-collision handling (debug only)")
     ap.add_argument("--robot-camera", action="store_true",
@@ -469,7 +472,7 @@ def parse_args(argv=None) -> RobotConfig:
         ap.error("--frequency must be positive")
     return RobotConfig(sim=a.sim, dry_run=a.dry_run, prepare=a.prepare, allow_startup_contact=a.allow_startup_contact, motion=a.motion, debug=a.debug, network_interface=a.network_interface, operator_addr=a.operator,
                        status_bind=a.status_bind, frequency=a.frequency, arm_vel_limit=a.arm_vel_limit, hand_vel_limit=a.hand_vel_limit,
-                       stale_s=a.stale_timeout, home_s=a.home_timeout, hands=not a.no_hands,
+                       stale_s=a.stale_timeout, home_s=a.home_timeout, hands=not a.no_hands, thumb_shaping=not a.no_thumb_shaping,
                        self_collision=False if a.no_self_collision else None, robot_camera=a.robot_camera)
 
 

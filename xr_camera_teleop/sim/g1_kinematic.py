@@ -160,11 +160,24 @@ def render_snapshot(sim, path, targets=None, w=960, h=720, azimuth=150, elevatio
     Image.fromarray(img).save(path)
 
 
-def solve_hand(hr, side, hand_pos):
+_THUMB_SHAPER = None
+
+
+def solve_hand(hr, side, hand_pos, thumb_shaping=True):
     idx = hr.left_indices if side == "left" else hr.right_indices
     rt = hr.left_retargeting if side == "left" else hr.right_retargeting
     ref = hand_pos[idx[1, :]] - hand_pos[idx[0, :]]          # vendor/robot_hand_unitree.py control_process
-    return rt.retarget(ref)                                   # order == rt.joint_names
+    q = rt.retarget(ref)                                      # order == rt.joint_names
+    if thumb_shaping:
+        # Same post-retargeting open-hand shaping as the robot node (robot/thumb_shaping.py).
+        global _THUMB_SHAPER
+        if _THUMB_SHAPER is None:
+            from xr_camera_teleop.robot.thumb_shaping import ThumbShaper
+            _THUMB_SHAPER = ThumbShaper()
+        to_api = hr.left_dex_retargeting_to_hardware if side == "left" else hr.right_dex_retargeting_to_hardware
+        q = np.array(q, dtype=float)
+        q[to_api] = _THUMB_SHAPER.shape(side, q[to_api], hand_pos)
+    return q
 
 
 def main(argv=None):

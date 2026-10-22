@@ -17,6 +17,7 @@ from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_
 
 from xr_camera_teleop.robot.vendor.hand_retargeting import HandRetargeting
 from xr_camera_teleop.robot.hand_runtime import HandRuntime
+from xr_camera_teleop.robot.thumb_shaping import ThumbShaper
 
 logger_mp = logging.getLogger(__name__)
 
@@ -50,15 +51,17 @@ class Dex3_1_Right_JointIndex(IntEnum):
 @dataclass
 class RetargetFactory:
     prebuilt: object = None
+    thumb: object = None    # optional post-retargeting shaper, e.g. ThumbShaper()
 
     def __call__(self):
         hr = self.prebuilt or HandRetargeting()
-        return DualRetarget(hr)
+        return DualRetarget(hr, self.thumb)
 
 
 class DualRetarget:
-    def __init__(self, hr):
+    def __init__(self, hr, thumb=None):
         self.hr = hr
+        self.thumb = thumb
 
     def __call__(self, hands):
         hr = self.hr
@@ -67,7 +70,8 @@ class DualRetarget:
         ref_right = right[hr.right_indices[1, :]] - right[hr.right_indices[0, :]]
         lq = hr.left_retargeting.retarget(ref_left)[hr.left_dex_retargeting_to_hardware]
         rq = hr.right_retargeting.retarget(ref_right)[hr.right_dex_retargeting_to_hardware]
-        return np.concatenate((lq, rq))
+        q = np.concatenate((lq, rq))
+        return self.thumb(q, hands) if self.thumb is not None else q
 
 
 @dataclass
@@ -95,7 +99,7 @@ class DDSSink:
 
 
 class Dex3_1_Controller:
-    def __init__(self, fps = 100.0, hand_retargeting = None, state_timeout = 5.0, hand_velocity_limit = 8.0, dds_domain = 0, network_interface = "eth0", input_timeout = 0.3):
+    def __init__(self, fps = 100.0, hand_retargeting = None, state_timeout = 5.0, hand_velocity_limit = 8.0, dds_domain = 0, network_interface = "eth0", input_timeout = 0.3, thumb_shaping = True):
         """
         fps: DDS publication rate; retargeting runs independently in a spawned process
         hand_retargeting: optional spawn-picklable retargeter; default built in worker
@@ -133,7 +137,7 @@ class Dex3_1_Controller:
         logger_mp.info("[Dex3_1_Controller] Subscribe dds ok.")
 
         try:
-            self.runtime = HandRuntime(self.get_state(), RetargetFactory(hand_retargeting),
+            self.runtime = HandRuntime(self.get_state(), RetargetFactory(hand_retargeting, ThumbShaper() if thumb_shaping else None),
                 DDSSinkFactory(dds_domain, network_interface), fps=fps, speed=hand_velocity_limit,
                 initial_supplier=self.get_state, timeout=input_timeout)
         except BaseException:
