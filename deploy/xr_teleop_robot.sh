@@ -38,7 +38,7 @@ start_runtime() {
 
 stop_runtime() {
   running || return 0
-  kill -INT "$(cat "$PID")"
+  kill -TERM "$(cat "$PID")"  # a background job of a script ignores SIGINT
   for ((i=0; i<10; i++)); do
     running || { rm -f "$PID"; return 0; }
     sleep 1
