@@ -9,7 +9,8 @@ LOG="$STATE/ee_runtime.log"
 PID="$STATE/ee_runtime.pid"
 
 ros_env() {
-  unset PYTHONPATH PYTHONHOME
+  # G1_ROS_ENV_SOURCED too: an interactive shell exports it, and env.sh would then skip the setup wiped here.
+  unset PYTHONPATH PYTHONHOME ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH G1_ROS_ENV_SOURCED
   set +u
   source "$RUNTIME/scripts/runtime-env.sh"
   set -u
@@ -57,6 +58,8 @@ case "${1:-help}" in
     ros_env
     printf 'ee_runtime başlatılıyor, kollar home konumuna gidecek...\n'
     start_runtime
+    sleep 3
+    running || { printf 'ee_runtime başlamadı. Log: %s\n' "$LOG" >&2; exit 1; }
     python3 "$REPO/deploy/ee_home.py" || { printf 'Hazır olmadı. Log: %s\n' "$LOG" >&2; exit 1; }
     printf 'Hazır. MSI arayüzünde R ile başlat.\n'
     ;;
