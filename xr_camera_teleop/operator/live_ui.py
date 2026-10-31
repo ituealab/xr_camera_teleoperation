@@ -7,8 +7,9 @@ Needs the hand server (wilor-venv):  data/wilor-venv/bin/python -m xr_camera_tel
 Pipeline (same as tools/render_session.py, live): ZMQ :5590 -> WiLoRTeleWrapper (ego clutch, filters)
 -> SafeG1_29_ArmIK (the same IK code the robot runs) -> Dex3 HandRetargeting -> G1Sim (kinematic MuJoCo, pelvis fixed);
 floating hands via HandMapper (shared anchor). The left panel is the server's own /overlay.mjpg.
-Robot link: the wrapper's TeleData is also published as ee_cmd (tcp://*:5591, operator/link.py) to xrcam-robot, and
-the robot's status (mode, watchdog, IK ms) is shown on the status line. The robot holds until "Start robot" (R).
+Robot link: the wrapper's TeleData and the Dex3 retargeting below are published as ee_cmd (tcp://*:5591,
+operator/link.py) to the ROS bridge, and ee_runtime's status is shown on the status line. The robot holds until
+"Start robot" (R). Closing or restarting this UI only stops forwarding: ee_runtime holds the arms where they are.
 --no-publish: preview only (no ee_cmd socket).
 Threads: pipeline (100 Hz default, ZMQ conflated latest) | render (EGL offscreen, ~30 fps, MJPEG) | HTTP.
 Camera tilt: the per-message cam_R_level (ZED IMU) is used automatically; the page can override it
@@ -36,6 +37,7 @@ import numpy as np  # noqa: E402
 
 import zmq  # noqa: E402
 
+from xr_camera_teleop.operator.ee_frames import TorsoPalmFrames  # noqa: E402
 from xr_camera_teleop.operator.link import OperatorLink  # noqa: E402
 from xr_camera_teleop.protocol import EE_PORT, STATUS_PORT  # noqa: E402
 
@@ -353,6 +355,9 @@ class LiveUI:
                         q = solve_hand(hr, s, hp)
                         if np.all(np.isfinite(q)):
                             hand_q[s] = q
+                    if len(hand_q) == 2:                # the robot gets exactly what the preview shows
+                        self.link.hands = np.concatenate((hand_q["left"][hr.left_dex_retargeting_to_hardware],
+                                                          hand_q["right"][hr.right_dex_retargeting_to_hardware]))
             cal = wrapper.clutch["left"].calibrated and wrapper.clutch["right"].calibrated
             if cal and not mapper.calibrated and all(h in last_cam for h in SIDES):
                 mapper.calibrate({h: (last_cam[h][0], last_cam[h][1]) for h in SIDES})
@@ -712,8 +717,7 @@ class LiveUI:
         if self.dataset:
             self.dataset.close()
         self._rec_close()                 # finish the mp4 before the hard exit
-        self.link.set_follow(False)       # robot: hold + home request (it would time out into home anyway)
-        self.link.request_home()
+        self.link.set_follow(False)
         for _ in range(5):
             self.link.send(self.last_td, force=True) if self.last_td is not None else None
             time.sleep(0.05)
@@ -735,7 +739,7 @@ def main(argv=None):
                     help="plain upstream IK without self-collision protection (default: env "
                          "XRCAM_SELF_COLLISION, on)")
     ap.add_argument("--ee-bind", default=f"tcp://*:{EE_PORT}", help="ee_cmd PUB bind address")
-    ap.add_argument("--robot", default=f"tcp://127.0.0.1:{STATUS_PORT}", help="robot_status PUB address of the robot")
+    ap.add_argument("--robot", default=f"tcp://127.0.0.1:{STATUS_PORT}", help="robot_status PUB address of the bridge")
     ap.add_argument("--robot-rgb", default="http://192.168.123.164:8768/rgb.jpg",
                     help="robot RGB snapshot URL over Ethernet")
     ap.add_argument("--rate", type=float, default=100.0, help="ee_cmd and preview pipeline rate [Hz]")
@@ -750,9 +754,9 @@ def main(argv=None):
         ap.error("--dds is not implemented; the kinematic G1Sim is used")
     ui = LiveUI(a)
     try:
-        ui.link = OperatorLink(a.ee_bind, a.robot, a.rate, publish=not a.no_publish)
+        ui.link = OperatorLink(a.ee_bind, a.robot, a.rate, publish=not a.no_publish, frames=TorsoPalmFrames())
     except zmq.ZMQError as e:
-        ap.error(f"cannot bind the ee_cmd publisher on {a.ee_bind}: {e} (another xrcam-operator/xrcam-ui running? "
+        ap.error(f"cannot bind the ee_cmd publisher on {a.ee_bind}: {e} (another xrcam-ui running? "
                  "use --no-publish for a preview-only UI)")
     ui.run()
 

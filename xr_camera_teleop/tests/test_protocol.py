@@ -7,8 +7,7 @@ from xr_camera_teleop import protocol as P
 
 
 def make_cmd(**kw):
-    d = dict(session=7, seq=1, follow=True, home_seq=0, hand_active=True,
-             left_wrist=np.eye(4), right_wrist=np.eye(4), left_hand=np.zeros((25, 3)), right_hand=np.zeros((25, 3)),
+    d = dict(session=7, seq=1, follow=True, home_seq=0, left_palm=np.eye(4), right_palm=np.eye(4), hands=np.zeros(14),
              t_send=12.5)
     d.update(kw)
     return P.EeCmd(**d)
@@ -23,16 +22,20 @@ def raw_with(**over):
 def test_ee_cmd_roundtrip():
     T = np.eye(4)
     T[:3, 3] = [0.25, 0.15, 0.1]
-    h = np.random.default_rng(0).normal(size=(25, 3)) * 0.05
-    c = P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(left_wrist=T, left_hand=h, seq=42, follow=False, home_seq=3)))
-    assert (c.session, c.seq, c.follow, c.home_seq, c.hand_active) == (7, 42, False, 3, True)
-    assert np.allclose(c.left_wrist, T) and np.allclose(c.left_hand, h) and c.left_hand.shape == (25, 3)
+    h = np.random.default_rng(0).normal(size=14) * 0.05
+    c = P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(left_palm=T, hands=h, seq=42, follow=False, home_seq=3)))
+    assert (c.session, c.seq, c.follow, c.home_seq) == (7, 42, False, 3)
+    assert np.allclose(c.left_palm, T) and np.allclose(c.hands, h) and c.hands.shape == (14,)
     assert c.t_send == 12.5
+
+
+def test_hands_may_be_absent_before_the_first_retarget():
+    assert P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(hands=None))).hands is None
 
 
 def test_wrong_version_rejected():
     with pytest.raises(P.ProtocolError, match="version"):
-        P.unpack_ee_cmd(raw_with(v=2))
+        P.unpack_ee_cmd(raw_with(v=1))
     with pytest.raises(P.ProtocolError, match="version"):
         P.unpack_ee_cmd(raw_with(v=...))
 
@@ -51,31 +54,31 @@ def test_non_finite_rejected(bad):
     w = np.eye(4).reshape(-1).tolist()
     w[3] = bad
     with pytest.raises(P.ProtocolError, match="non-finite"):
-        P.unpack_ee_cmd(raw_with(left_wrist=w))
-    h = [0.0] * 75
+        P.unpack_ee_cmd(raw_with(left_palm=w))
+    h = [0.0] * 14
     h[10] = bad
     with pytest.raises(P.ProtocolError, match="non-finite"):
-        P.unpack_ee_cmd(raw_with(right_hand=h))
+        P.unpack_ee_cmd(raw_with(hands=h))
 
 
 def test_out_of_range_rejected():
     T = np.eye(4)
     T[0, 3] = 5.0
     with pytest.raises(P.ProtocolError, match="translation"):
-        P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(right_wrist=T)))
-    with pytest.raises(P.ProtocolError, match="hand joints"):
-        P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(left_hand=np.full((25, 3), 2.0))))
+        P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(right_palm=T)))
+    with pytest.raises(P.ProtocolError, match="hand targets"):
+        P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(hands=np.full(14, 5.0))))
     R = np.eye(4)
     R[:3, :3] *= 1.5                                    # not a rotation
     with pytest.raises(P.ProtocolError, match="rotation"):
-        P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(left_wrist=R)))
+        P.unpack_ee_cmd(P.pack_ee_cmd(make_cmd(left_palm=R)))
 
 
 def test_bad_shapes_and_types_rejected():
     with pytest.raises(P.ProtocolError, match="expected list"):
-        P.unpack_ee_cmd(raw_with(left_wrist=[1.0] * 15))
+        P.unpack_ee_cmd(raw_with(left_palm=[1.0] * 15))
     with pytest.raises(P.ProtocolError, match="non-numeric"):
-        P.unpack_ee_cmd(raw_with(left_hand=["a"] * 75))
+        P.unpack_ee_cmd(raw_with(hands=["a"] * 14))
     with pytest.raises(P.ProtocolError, match="follow"):
         P.unpack_ee_cmd(raw_with(follow=1))
     with pytest.raises(P.ProtocolError, match="seq"):
@@ -83,7 +86,7 @@ def test_bad_shapes_and_types_rejected():
     with pytest.raises(P.ProtocolError, match="session"):
         P.unpack_ee_cmd(raw_with(session="x"))
     with pytest.raises(P.ProtocolError):
-        P.pack_ee_cmd(make_cmd(left_hand=np.zeros((24, 3))))    # encoder refuses wrong shapes too
+        P.pack_ee_cmd(make_cmd(hands=np.zeros(13)))    # encoder refuses wrong shapes too
 
 
 def test_seq_guard():
@@ -100,9 +103,9 @@ def test_seq_guard():
 
 def test_status_roundtrip():
     st = P.RobotStatus(session=3, seq=9, mode="follow", latched=False, connected=True, age_ms=12.0,
-                       watchdog="ok", ee_session=7, ee_seq=100, follow=True, q=[0.1] * 14, ik_ms=1.5, sim=True)
+                       watchdog="ok", follow=True, ee_enabled=True, ee_status="reached", position_error=[.001, .002])
     out = P.unpack_status(P.pack_status(st))
-    assert out.mode == "follow" and out.connected and out.q == [0.1] * 14 and out.ee_seq == 100 and out.sim
+    assert out.mode == "follow" and out.connected and out.ee_status == "reached" and out.position_error == [.001, .002]
     with pytest.raises(P.ProtocolError):
         P.unpack_status(msgpack.packb({"v": 1, "type": "robot_status", "mode": "bogus", "q": [0] * 14}))
     with pytest.raises(P.ProtocolError):

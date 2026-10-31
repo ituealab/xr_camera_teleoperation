@@ -12,18 +12,9 @@ file, the upstream commit and the modifications). The upstream repository itself
   vendor/robot_arm_ik.py             <- teleop/robot_control/robot_arm_ik.py (lines 1-311, G1_29_ArmIK only)
       MODIFIED: meshcat/visualisation removed; assets from the package instead of cwd-relative ../assets; model
       cache in the user cache dir (versioned key) instead of ./g1_29_model_cache.pkl; logging_mp -> logging.
-  vendor/robot_arm.py                <- teleop/robot_control/robot_arm.py (G1_29_ArmController, JointIndex enums,
-                                        MotorState, DataBuffer, G1_29_LowState)
-      MODIFIED: arm velocity limit is a constructor argument (default 3.0 rad/s) and applies in simulation too;
-      arm target starts at the current posture (not q=0); stop() for the worker threads; go-home warning.
-  vendor/robot_hand_unitree.py       <- teleop/robot_control/robot_hand_unitree.py (lines 1-230, Dex3_1_Controller)
-      MODIFIED: control loop is a thread (was a multiprocessing.Process) with set_input() instead of shared
-      mp Arrays; initial target = current hand state; stop(); gripper code dropped.
   vendor/hand_retargeting.py         <- teleop/robot_control/hand_retargeting.py (Dex3 branch)
       MODIFIED: Inspire/BrainCo removed; package-relative assets; dex_retargeting imported lazily.
   vendor/weighted_moving_filter.py   <- teleop/utils/weighted_moving_filter.py   (class only)
-  vendor/motion_switcher.py          <- teleop/utils/motion_switcher.py          (MotionSwitcher only, lazy SDK import)
-  vendor/dds_utils.py                <- teleop/robot_control/dds_utils.py        (logging only)
   vendor/tv_wrapper.py               <- televuer/src/televuer/tv_wrapper.py      (constants, fast_mat_inv, TeleData;
                                         controller fields and the TeleVuer machinery removed)
 

@@ -10,7 +10,7 @@ from xr_camera_teleop.recording.session import EpisodeSession,recorder_command
 from xr_camera_teleop.tests.test_recording_report import CONFIG,write_bag
 
 SESSION_CONFIG = dict(CONFIG,required_topics=CONFIG["state_topics"]+CONFIG["camera_topics"],start_timeout_seconds=.5,
-                      stop_timeout_seconds=1,record_root="unused",recorder_image="image",dds_interface="eth9",dds_domain=0)
+                      stop_timeout_seconds=1,record_root="unused",ros_image="image",dds_interface="eth9",dds_domain=0)
 
 
 class FakeRecorder:

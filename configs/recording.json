@@ -1,6 +1,6 @@
 {
   "record_root": "~/teleop_data",
-  "recorder_image": "xrcam-recorder:humble",
+  "ros_image": "xrcam-ros:humble",
   "robot_host": "192.168.123.164",
   "dds_interface": "enxc8a362efd15a",
   "dds_domain": 0,
@@ -15,7 +15,10 @@
     "/dex3/left/state",
     "/dex3/right/state",
     "/dex3/left/cmd",
-    "/dex3/right/cmd"
+    "/dex3/right/cmd",
+    "/ee/command",
+    "/ee/state",
+    "/ee/status"
   ],
   "camera_topics": [
     "/zed2i/zed_node/left/image_rect_color/compressed",

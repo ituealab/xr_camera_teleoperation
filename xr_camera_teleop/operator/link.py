@@ -1,8 +1,9 @@
-"""Operator <-> robot link: publishes ee_cmd, receives robot_status (see xr_camera_teleop/protocol.py).
+"""UI <-> ROS bridge link: publishes ee_cmd, receives robot_status (see xr_camera_teleop/protocol.py).
 
-OperatorLink is shared by the headless operator node (node.py) and the live UI (live_ui.py):
+OperatorLink, used by the live UI (live_ui.py):
     follow      the operator's "start following" flag (False at start-up: the robot holds until engaged)
-    home_seq    counter incremented by request_home() (wrapper.on_home_request): robot runs IK reset_to_home
+    home_seq    counter incremented by request_home() (wrapper.on_home_request): the bridge calls /ee/home
+    hands       latest retargeted Dex3 motor targets (None until the first retarget)
     send(td)    TeleData -> ee_cmd @ <= rate Hz
     robot()     latest robot_status + connection summary for display
 """
@@ -23,8 +24,10 @@ LATCH_GRACE_S = 0.6      # robot still reports `latched` this long after follow=
 
 class OperatorLink:
     def __init__(self, ee_bind: str = f"tcp://*:{EE_PORT}", status_addr: str = f"tcp://127.0.0.1:{STATUS_PORT}",
-                 rate: float = 30.0, publish: bool = True, clock=time.monotonic):
+                 rate: float = 30.0, publish: bool = True, clock=time.monotonic, frames=None):
         self.clock = clock
+        self.frames = frames
+        self.hands = None
         self.session = new_session_id()
         self.seq = 0
         self.follow = False
@@ -65,10 +68,9 @@ class OperatorLink:
     def build(self, td) -> EeCmd:
         self.seq += 1
         return EeCmd(session=self.session, seq=self.seq, follow=self.follow, home_seq=self.home_seq,
-                     hand_active=bool(td.motion_data_ready), left_wrist=np.asarray(td.left_wrist_pose, float),
-                     right_wrist=np.asarray(td.right_wrist_pose, float),
-                     left_hand=np.asarray(td.left_hand_pos, float), right_hand=np.asarray(td.right_hand_pos, float),
-                     t_send=self.clock())
+                     left_palm=self.frames.palm("left", td.left_wrist_pose),
+                     right_palm=self.frames.palm("right", td.right_wrist_pose),
+                     hands=self.hands, t_send=self.clock())
 
     def send(self, td, force: bool = False) -> bool:
         """Publish at most `rate` Hz. Returns True if a message went out."""
@@ -113,15 +115,14 @@ class OperatorLink:
         if not self.publish:
             return "robot link: off (--no-publish)"
         if not r["connected"] or s is None:
-            return "robot: no status (robot node not running / not connected)"
-        hands = (f" hands publish {s.hands.get('publish_hz', 0):.0f}Hz"
-                 f" retarget {s.hands.get('retarget_hz', 0):.0f}Hz"
-                 + (" WORKER FAILED" if not s.hands.get('workers_alive', True) else "")
-                 + (f" HAND MOTOR FAULT {s.hands['motor_faults']}" if s.hands.get('motor_faults') else "")) if s.hands else ""
+            return "robot: no status (bridge not running)"
+        if not s.connected:
+            return "robot: bridge up, no ee_runtime status (run xr_teleop up on the robot)"
         flags = ("LATCHED " if s.latched else "") + ("" if s.watchdog == "ok" else f"watchdog={s.watchdog} ")
-        return (f"robot: {s.mode} {flags}link={'ok' if s.connected else 'LOST'} age={s.age_ms or 0:.0f}ms "
-                f"stage={s.stage} targets={'on' if s.targets_enabled else 'off'} IK {s.ik_ms:.1f}ms ({s.ik_mode}) {'DRY RUN' if s.dry_run else ('sim' if s.sim else 'REAL')}{' motion' if s.motion else ''}"
-                + hands + (f" rejected={s.rejected}" if s.rejected else "") + (f" | {self.notice}" if self.notice else ""))
+        return (f"robot: {s.mode} {flags}ee={s.ee_status or '?'} motors={'on' if s.ee_enabled else 'off'} "
+                f"age={s.age_ms or 0:.0f}ms pos_err={1000 * max(s.position_error):.1f}mm"
+                + (f" rejected={s.rejected} ({s.last_reject})" if s.rejected else "")
+                + (f" | {self.notice}" if self.notice else ""))
 
     def close(self):
         for s in (self._pub, self._sub):

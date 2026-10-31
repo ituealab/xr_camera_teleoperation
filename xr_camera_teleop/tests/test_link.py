@@ -1,15 +1,47 @@
-"""OperatorLink <-> EeCmdReceiver over a real loopback ZMQ pair, status path, latch release, ctl server."""
+"""OperatorLink over a real loopback ZMQ pair: ee_cmd, status path, latch release, ctl server."""
 import socket
 import time
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import zmq
 
 from xr_camera_teleop import ctl
 from xr_camera_teleop import protocol as P
 from xr_camera_teleop.operator.link import OperatorLink
-from xr_camera_teleop.robot.node import EeCmdReceiver, StatusPublisher
+
+
+class Frames:
+    def palm(self, side, wrist):
+        return wrist
+
+
+class Bridge:
+    """The bridge's two sockets, as deploy/ee_bridge.py sets them up."""
+
+    def __init__(self, ee, status):
+        self.context = zmq.Context()
+        self.commands = self.context.socket(zmq.SUB)
+        self.commands.setsockopt(zmq.CONFLATE, 1)
+        self.commands.setsockopt(zmq.SUBSCRIBE, b"")
+        self.commands.connect(ee)
+        self.status = self.context.socket(zmq.PUB)
+        self.status.bind(status)
+
+    def poll(self):
+        try:
+            return self.commands.recv(zmq.NOBLOCK)
+        except zmq.Again:
+            return None
+
+    def send(self, raw):
+        self.status.send(raw)
+
+    def close(self):
+        self.commands.close(0)
+        self.status.close(0)
+        self.context.term()
 
 
 def free_port():
@@ -47,12 +79,11 @@ def recv_until(rx, timeout=2.0):
 @pytest.fixture
 def pair():
     pe, ps = free_port(), free_port()
-    link = OperatorLink(f"tcp://127.0.0.1:{pe}", f"tcp://127.0.0.1:{ps}", rate=1000.0)
-    rx = EeCmdReceiver(f"tcp://127.0.0.1:{pe}")
-    st = StatusPublisher(f"tcp://127.0.0.1:{ps}")
+    link = OperatorLink(f"tcp://127.0.0.1:{pe}", f"tcp://127.0.0.1:{ps}", rate=1000.0, frames=Frames())
+    bridge = Bridge(f"tcp://127.0.0.1:{pe}", f"tcp://127.0.0.1:{ps}")
     time.sleep(0.3)                                  # PUB/SUB slow joiner
-    yield link, rx, st
-    link.close(), rx.close(), st.close()
+    yield link, bridge, bridge
+    link.close(), bridge.close()
 
 
 def test_ee_cmd_over_zmq_with_follow_and_home_counter(pair):
@@ -62,13 +93,14 @@ def test_ee_cmd_over_zmq_with_follow_and_home_counter(pair):
         time.sleep(0.02)
     raw = recv_until(rx)
     c = P.unpack_ee_cmd(raw)
-    assert c.session == link.session and c.follow is False and c.hand_active and np.isclose(c.left_wrist[0, 3], 0.3)
+    assert c.session == link.session and c.follow is False and c.hands is None and np.isclose(c.left_palm[0, 3], 0.3)
     link.set_follow(True)
     link.request_home()
+    link.hands = np.full(14, .2)
     link.send(td(), force=True)
     time.sleep(0.1)
     c2 = P.unpack_ee_cmd(recv_until(rx))
-    assert c2.follow and c2.home_seq == 1 and c2.seq > c.seq
+    assert c2.follow and c2.home_seq == 1 and c2.seq > c.seq and np.allclose(c2.hands, .2)
 
 
 def test_rate_limit(pair):
@@ -83,13 +115,11 @@ def test_robot_status_reaches_operator(pair):
     assert link.robot()["connected"] is False and "no status" in link.robot_summary()
     for i in range(10):
         st.send(P.pack_status(P.RobotStatus(session=1, seq=i, mode="follow", latched=False, connected=True,
-                                            age_ms=5.0, watchdog="ok", ik_ms=1.2, sim=True,
-                                            hands={"publish_hz":100.0, "retarget_hz":54.0, "workers_alive":True})))
+                                            age_ms=5.0, watchdog="ok", ee_enabled=True, ee_status="reached")))
         time.sleep(0.03)
     r = link.robot()
     assert r["connected"] and r["status"].mode == "follow"
-    assert "follow" in link.robot_summary() and "sim" in link.robot_summary()
-    assert "hands publish 100Hz retarget 54Hz" in link.robot_summary()
+    assert "follow" in link.robot_summary() and "ee=reached motors=on" in link.robot_summary()
 
 
 def test_latched_robot_releases_follow(pair):

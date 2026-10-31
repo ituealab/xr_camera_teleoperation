@@ -5,7 +5,6 @@ REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LOG_DIR="$HOME/.local/state/xr_teleop"
 export WILOR_ROOT="${WILOR_ROOT:-$HOME/code/wilor_faruk/third_party/WiLoR}"
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-ROBOT="${XRCAM_ROBOT:-tcp://192.168.123.164:5592}"
 URL=http://127.0.0.1:8780/
 
 running() { tmux has-session -t "=xr-teleop-$1" 2>/dev/null; }
@@ -49,7 +48,7 @@ case "${1:-start}" in
     # Serialize repeated launches without passing the lock to the background processes.
     exec 9>"$LOG_DIR/launch.lock"
     flock -n 9 || { printf 'Başlatma zaten devam ediyor.\n'; exit 1; }
-    docker image inspect xrcam-recorder:humble > /dev/null 2>&1 || bash "$REPO/deploy/build_recorder.sh"
+    docker image inspect xrcam-ros:humble > /dev/null 2>&1 || bash "$REPO/deploy/build_ros_image.sh"
     if ! http_ok http://127.0.0.1:8766/status; then
       sudo -n systemctl start omron-camera.service || {
         printf 'Kamera köprüsünü başlat: sudo systemctl start omron-camera.service\n' >&2
@@ -67,16 +66,20 @@ case "${1:-start}" in
       launch perception "$REPO/data/wilor-venv/bin/python" -u -m xr_camera_teleop.operator.perception.server --source omron 9>&-
     fi
     wait_http perception http://127.0.0.1:8770/health
+    if ! running bridge; then
+      printf 'ROS köprüsü başlatılıyor...\n'
+      launch bridge "$REPO/data/xr-env/bin/python" -u "$REPO/deploy/run_bridge.py" 9>&-
+    fi
     if ! running ui; then
       if http_ok "$URL"; then
         printf '8780 portunda başka bir arayüz çalışıyor; önce onu durdur.\n' >&2
         exit 1
       fi
       printf 'Web arayüzü başlatılıyor...\n'
-      launch ui "$REPO/data/xr-env/bin/python" -u -m xr_camera_teleop.operator.live_ui --robot "$ROBOT" 9>&-
+      launch ui "$REPO/data/xr-env/bin/python" -u -m xr_camera_teleop.operator.live_ui 9>&-
     fi
     wait_http ui "$URL"
-    printf 'Hazır: %s\nRobot: %s\nLoglar: %s\n' "$URL" "$ROBOT" "$LOG_DIR"
+    printf 'Hazır: %s\nLoglar: %s\n' "$URL" "$LOG_DIR"
     # SSH launches can use the existing MSI desktop session to open the browser.
     if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
       while IFS='=' read -r key value; do
@@ -94,18 +97,19 @@ case "${1:-start}" in
     ;;
   stop)
     stop_one ui
+    stop_one bridge
     stop_one perception
-    printf 'WiLoR ve arayüz durduruldu.\n'
+    printf 'WiLoR, köprü ve arayüz durduruldu. Robot olduğu yerde tutuyor.\n'
     ;;
   status)
-    for name in perception ui; do
+    for name in perception bridge ui; do
       if running "$name"; then printf '%s: çalışıyor\n' "$name"; else printf '%s: kapalı\n' "$name"; fi
     done
     curl -fsS --max-time 2 http://127.0.0.1:8766/status || true
     printf '\nArayüz: %s\n' "$URL"
     ;;
   logs)
-    tail -n 40 -F "$LOG_DIR/perception.log" "$LOG_DIR/ui.log"
+    tail -n 40 -F "$LOG_DIR/perception.log" "$LOG_DIR/bridge.log" "$LOG_DIR/ui.log"
     ;;
   *) printf 'Kullanım: xr_teleop [start|stop|status|logs]\n' >&2; exit 2 ;;
 esac

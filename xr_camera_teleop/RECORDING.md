@@ -1,7 +1,7 @@
 # GUI-controlled recording
 
 One episode is one MCAP bag recorded on MSI. The MSI UI runs `ros2 bag record` (ROS 2 Humble, in the
-`xrcam-recorder` container) directly, so a finished episode is on disk the moment it stops: nothing
+`xrcam-recorder` container of the `xrcam-ros:humble` image) directly, so a finished episode is on disk the moment it stops: nothing
 is copied, and PC2 only publishes.
 
 Recording on PC2 lost about 5.5% of `/lowstate` ticks with all topics, against 0.02% on MSI. Live teleop
@@ -53,10 +53,10 @@ publisher, which is normal.
 
 ## Commands
 
-On MSI, once and after changing `deploy/recorder/`:
+On MSI, once and after changing `deploy/ros/`:
 
 ```bash
-bash deploy/build_recorder.sh
+bash deploy/build_ros_image.sh
 ```
 
 Copy the PC2 services, without starting anything:

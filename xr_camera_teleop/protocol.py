@@ -1,34 +1,33 @@
-"""Wire protocol between the operator laptop and the robot (PC2): ee_cmd (laptop -> robot) and
-robot_status (robot -> laptop). Single-part msgpack messages, ZMQ PUB/SUB (SUB with CONFLATE).
+"""Local protocol between the operator UI and the ROS bridge on the same machine: ee_cmd (UI -> bridge) and
+robot_status (bridge -> UI). Single-part msgpack messages, ZMQ PUB/SUB (SUB with CONFLATE).
 
-    laptop  ee_cmd PUB   tcp://*:5591  ->  robot SUB (latest only)
-    robot   status PUB   tcp://*:5592  ->  laptop SUB
+    UI      ee_cmd PUB   tcp://*:5591  ->  bridge SUB (latest only)
+    bridge  status PUB   tcp://*:5592  ->  UI SUB
 
-ee_cmd (v=1), one per operator control tick (~30 Hz):
+ee_cmd (v=2), one per UI pipeline tick:
 
-    {"v": 1, "type": "ee_cmd",
-     "session": int,        # random id of the operator process (a restart => new session => seq restarts)
-     "seq": int,            # +1 per message within a session; the robot rejects seq <= last accepted
-     "t_send": float,       # operator time.monotonic(); informational ONLY (never used for staleness)
+    {"v": 2, "type": "ee_cmd",
+     "session": int,        # random id of the UI process (a restart => new session => seq restarts)
+     "seq": int,            # +1 per message within a session; the bridge rejects seq <= last accepted
+     "t_send": float,       # UI time.monotonic(); informational ONLY (never used for staleness)
      "follow": bool,        # operator engaged ("r" / UI button): the robot follows only while this is true
-     "home_seq": int,       # counter, +1 per home/reset request; the robot runs IK reset_to_home on an increase
-     "hand_active": bool,   # hand-tracking data is valid (TeleData.motion_data_ready)
-     "left_wrist": [16], "right_wrist": [16],    # 4x4 SE(3), row-major, robot waist frame (IK L_ee/R_ee targets)
-     "left_hand": [75], "right_hand": [75]}      # (25,3) wrist-local joint positions, Unitree hand frame, metres
+     "home_seq": int,       # counter, +1 per home/reset request; the bridge calls /ee/home on an increase
+     "left_palm": [16], "right_palm": [16],      # 4x4 SE(3), row-major, torso_link frame (EECommand targets)
+     "hands": [14] | []}                         # Dex3 motor radians, left then right; [] before the first retarget
 
-robot_status (v=1), ~10 Hz:
+robot_status (v=2), ~10 Hz:
 
-    {"v": 1, "type": "robot_status", "session": int, "seq": int, "t_send": float,
-     "mode": "init"|"hold"|"follow"|"stale_hold"|"homing"|"stopping",
-     "latched": bool,       # watchdog/startup latch: follow=true is ignored until the operator sends follow=false
-     "connected": bool,     # an ee_cmd was accepted within the stale timeout
+    {"v": 2, "type": "robot_status", "session": int, "seq": int, "t_send": float,
+     "mode": "hold"|"follow"|"stale_hold"|"homing",
+     "latched": bool,       # startup/link-loss latch: follow=true is ignored until the UI sends follow=false
+     "connected": bool,     # ee_runtime reported status recently
      "age_ms": float|None,  # local time since the last accepted ee_cmd
      "watchdog": "ok"|"stale"|"timeout"|"none",
-     "ee_session": int|None, "ee_seq": int|None, "follow": bool, "rejected": int, "last_reject": str,
-     "ik_ms": float, "ik_mode": str, "q": [14], "motion": bool, "sim": bool, "vel_limit": float}
+     "follow": bool, "rejected": int, "last_reject": str,
+     "ee_enabled": bool, "ee_status": str,       # ee_runtime's /ee/status
+     "position_error": [2], "rotation_error": [2]}
 
-Staleness is judged ONLY with the robot's own monotonic clock at receive time (+ seq ordering): the two
-machines' clocks are never compared.
+Staleness is judged ONLY with the bridge's own monotonic clock at receive time (+ seq ordering).
 """
 from __future__ import annotations
 
@@ -39,14 +38,14 @@ from dataclasses import dataclass, field
 import msgpack
 import numpy as np
 
-VERSION = 1
+VERSION = 2
 EE_PORT = 5591
 STATUS_PORT = 5592
 
-MAX_POS = 3.0          # m, |translation| of a wrist target in the waist frame (workspace is < 1 m)
-MAX_HAND = 1.0         # m, |coordinate| of a hand joint in the wrist frame (real hands: < 0.3 m)
-ROT_TOL = 1e-2         # orthonormality tolerance of a wrist rotation
-MODES = ("init", "hold", "follow", "stale_hold", "homing", "stopping")
+MAX_POS = 3.0          # m, |translation| of a palm target in the torso frame (workspace is < 1 m)
+MAX_HAND = 4.0         # rad, |Dex3 motor target|
+ROT_TOL = 1e-2         # orthonormality tolerance of a palm rotation
+MODES = ("hold", "follow", "stale_hold", "homing")
 
 
 class ProtocolError(ValueError):
@@ -64,11 +63,9 @@ class EeCmd:
     seq: int
     follow: bool
     home_seq: int
-    hand_active: bool
-    left_wrist: np.ndarray        # (4,4)
-    right_wrist: np.ndarray       # (4,4)
-    left_hand: np.ndarray         # (25,3)
-    right_hand: np.ndarray        # (25,3)
+    left_palm: np.ndarray         # (4,4)
+    right_palm: np.ndarray        # (4,4)
+    hands: np.ndarray | None      # (14,), None before the first retarget
     t_send: float = 0.0
     v: int = VERSION
 
@@ -84,11 +81,9 @@ def pack_ee_cmd(cmd: EeCmd) -> bytes:
     return msgpack.packb({
         "v": VERSION, "type": "ee_cmd", "session": int(cmd.session), "seq": int(cmd.seq),
         "t_send": float(cmd.t_send), "follow": bool(cmd.follow), "home_seq": int(cmd.home_seq),
-        "hand_active": bool(cmd.hand_active),
-        "left_wrist": _flat("left_wrist", cmd.left_wrist, 16).tolist(),
-        "right_wrist": _flat("right_wrist", cmd.right_wrist, 16).tolist(),
-        "left_hand": _flat("left_hand", cmd.left_hand, 75).tolist(),
-        "right_hand": _flat("right_hand", cmd.right_hand, 75).tolist(),
+        "left_palm": _flat("left_palm", cmd.left_palm, 16).tolist(),
+        "right_palm": _flat("right_palm", cmd.right_palm, 16).tolist(),
+        "hands": [] if cmd.hands is None else _flat("hands", cmd.hands, 14).tolist(),
     }, use_bin_type=True)
 
 
@@ -133,7 +128,7 @@ def _vec(m, k, n):
     return a
 
 
-def _check_wrist(name, a):
+def _check_palm(name, a):
     T = a.reshape(4, 4)
     if np.abs(T[:3, 3]).max() > MAX_POS:
         raise ProtocolError(f"{name}: translation out of range (> {MAX_POS} m)")
@@ -148,22 +143,21 @@ def _check_wrist(name, a):
 def unpack_ee_cmd(raw: bytes) -> EeCmd:
     """Decode + validate (version, types, finiteness, ranges). Raises ProtocolError."""
     m = _unpack(raw, "ee_cmd")
-    lw = _check_wrist("left_wrist", _vec(m, "left_wrist", 16))
-    rw = _check_wrist("right_wrist", _vec(m, "right_wrist", 16))
-    lh, rh = _vec(m, "left_hand", 75), _vec(m, "right_hand", 75)
-    if max(np.abs(lh).max(), np.abs(rh).max()) > MAX_HAND:
-        raise ProtocolError(f"hand joints out of range (> {MAX_HAND} m)")
+    left = _check_palm("left_palm", _vec(m, "left_palm", 16))
+    right = _check_palm("right_palm", _vec(m, "right_palm", 16))
+    hands = None if m.get("hands") == [] else _vec(m, "hands", 14)
+    if hands is not None and np.abs(hands).max() > MAX_HAND:
+        raise ProtocolError(f"hand targets out of range (> {MAX_HAND} rad)")
     t = m.get("t_send", 0.0)
     return EeCmd(session=_int(m, "session"), seq=_int(m, "seq"), follow=_bool(m, "follow"),
-                 home_seq=_int(m, "home_seq"), hand_active=_bool(m, "hand_active"),
-                 left_wrist=lw, right_wrist=rw, left_hand=lh.reshape(25, 3), right_hand=rh.reshape(25, 3),
+                 home_seq=_int(m, "home_seq"), left_palm=left, right_palm=right, hands=hands,
                  t_send=float(t) if isinstance(t, (int, float)) and not isinstance(t, bool) else 0.0)
 
 
 class SeqGuard:
     """Ordering of accepted ee_cmd messages: within a session seq must strictly increase; a different
     session id is a restarted operator and starts a new sequence (the caller treats it as a new link:
-    see watchdog.CommandGate)."""
+    see operator.gate.Gate)."""
 
     def __init__(self):
         self.session = None
@@ -185,38 +179,28 @@ class SeqGuard:
 class RobotStatus:
     session: int
     seq: int
-    mode: str = "init"
+    mode: str = "hold"
     latched: bool = True
     connected: bool = False
     age_ms: float | None = None
     watchdog: str = "none"
-    ee_session: int | None = None
-    ee_seq: int | None = None
     follow: bool = False
     rejected: int = 0
     last_reject: str = ""
-    ik_ms: float = 0.0
-    ik_mode: str = "track"
-    q: list = field(default_factory=lambda: [0.0] * 14)
-    motion: bool = False
-    sim: bool = False
-    dry_run: bool = False
-    targets_enabled: bool = True
-    stage: str = "tracking_enabled"
-    hands: dict = field(default_factory=dict)
-    vel_limit: float = 0.0
+    ee_enabled: bool = False
+    ee_status: str = ""
+    position_error: list = field(default_factory=lambda: [0.0, 0.0])
+    rotation_error: list = field(default_factory=lambda: [0.0, 0.0])
     t_send: float = 0.0
     v: int = VERSION
 
 
-_STATUS_FIELDS = ("session", "seq", "mode", "latched", "connected", "age_ms", "watchdog", "ee_session", "ee_seq",
-                  "follow", "rejected", "last_reject", "ik_ms", "ik_mode", "q", "motion", "sim", "vel_limit",
-                  "t_send", "dry_run", "targets_enabled", "stage", "hands")
+_STATUS_FIELDS = ("session", "seq", "mode", "latched", "connected", "age_ms", "watchdog", "follow", "rejected",
+                  "last_reject", "ee_enabled", "ee_status", "position_error", "rotation_error", "t_send")
 
 
 def pack_status(st: RobotStatus) -> bytes:
     d = {k: getattr(st, k) for k in _STATUS_FIELDS}
-    d["q"] = [float(x) for x in d["q"]]
     d["age_ms"] = None if d["age_ms"] is None or not math.isfinite(d["age_ms"]) else float(d["age_ms"])
     d.update({"v": VERSION, "type": "robot_status"})
     return msgpack.packb(d, use_bin_type=True)
@@ -227,9 +211,4 @@ def unpack_status(raw: bytes) -> RobotStatus:
     mode = m.get("mode")
     if mode not in MODES:
         raise ProtocolError(f"unknown mode {mode!r}")
-    q = m.get("q")
-    if not isinstance(q, (list, tuple)) or len(q) != 14:
-        raise ProtocolError("q: expected 14 values")
-    kw = {k: m[k] for k in _STATUS_FIELDS if k in m}
-    kw["q"] = [float(x) for x in q]
-    return RobotStatus(**kw)
+    return RobotStatus(**{k: m[k] for k in _STATUS_FIELDS if k in m})

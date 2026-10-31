@@ -21,7 +21,7 @@ dependencies = [
 # hpp-fcl and nlopt come from conda-forge, see envs/robot-conda.yml (PyPI `pin` has no `pinocchio.casadi`);
 # deploy/robot_setup.sh installs them first and then these pip packages.
 # dex_retargeting (the silencht fork xr_teleoperate uses) itself depends on torch==2.3.0; it is imported
-# lazily by the hand controller only (importing xr_camera_teleop.robot.node needs neither).
+# lazily by the UI pipeline.
 robot = [
     "casadi==3.6.7",
     "cyclonedds==0.10.2",
@@ -48,10 +48,7 @@ perception = [
 dev = ["pytest"]
 
 [project.scripts]
-xrcam-robot = "xr_camera_teleop.robot.node:main"
-xrcam-operator = "xr_camera_teleop.operator.node:main"
 xrcam-ui = "xr_camera_teleop.operator.live_ui:main"
-xrcam-sim = "xr_camera_teleop.sim.g1_dds_mujoco:main"
 xrcam-perception = "xr_camera_teleop.operator.perception.server:main"
 xrcam-replay = "xr_camera_teleop.operator.perception.replay:main"
 xrcam-ctl = "xr_camera_teleop.ctl:main"

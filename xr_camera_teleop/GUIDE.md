@@ -63,29 +63,15 @@ Sunucuda `--source` yerine bir video dosyasi (`--source kayit.mkv`) de verilebil
 
 Durum satirinin son satiri robotu gosterir: `robot: follow link=ok age=.. IK .. ms` (mod, baglanti, IK suresi, sim/REAL).
 `LATCHED` robotun baglanti kopmasi / yeniden baslatma sonrasi guvenlik kilidi oldugunu gosterir: arayuz `follow`u kendisi birakir,
-tekrar `Start robot` deyin. Operator sureci cokerse robot 0.3 s sonra durusunu korur, 1.5 s sonra kollarini eve (q=0) goturur.
+tekrar `Start robot` deyin. Arayuz veya baglanti koparsa robot 0.3 s sonra durusunu korur; kollar eve gitmez, kilitlenir (Start robot'u birakip tekrar basin).
 
 Bir el 1 saniyeden uzun kaybolursa o kol yavasca dinlenme konumuna doner; el geri gelince ziplamadan devam eder.
 
 ## 5. Robot ve simulasyon
 
-Robot dugumu (`xrcam-robot`) ayri bir surectir; simulasyonda ayni laptopta, gercekte robotun PC2'sinde calisir:
-
-```bash
-# Simulasyon (hepsi laptopta, DDS domain 1 / lo)
-data/xr-env/bin/python -m xr_camera_teleop.sim.g1_dds_mujoco --domain 1 --iface lo        # simulator
-data/xr-env/bin/python -m xr_camera_teleop.robot.node --sim --network-interface lo        # robot dugumu (bekler)
-data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui                                # arayuz; R = Start robot
-
-# Gercek robot (PC2'de; once askida/desteklenmis, uzaktan kumanda elde, L2+B = damping)
-~/xrcam-env/bin/xrcam-robot --motion --network-interface eth0 --arm-vel-limit 1.5 --operator tcp://<laptop-ip>:5591
-data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --robot tcp://192.168.123.164:5592
-```
-
-- `--motion` icin robot Regular modda (R1+X) olmali. `--motion` olmadan robot debug moduna alinir ve **dengede durmaz**.
-- Robot dugumunde `q` = kollar eve gider ve temiz cikar; `h` = eve; `xrcam-ctl robot stop|home|status` ayni isi tus takimi olmadan yapar.
-- Hiz siniri `--arm-vel-limit` (varsayilan 3.0 rad/s); ilk denemelerde 1.5 kullanin. Tum guvenlik listesi: `../README.md`.
-- Otomatik uctan uca kontrol: `data/xr-env/bin/python -m xr_camera_teleop.tools.e2e_loopback`.
+Motorlar ve IK robot-runtime'daki `ee_runtime`'a aittir. Robotta `xr_teleop up`, MSI'da `xr_teleop start` calistirin,
+sonra arayuzde R ile baslatin. Kapatmak icin once MSI'da `xr_teleop stop`, sonra robotta `xr_teleop down`.
+Ayrintilar ve guvenlik davranisi: `RUN.md`.
 
 ## 6. Kayit ve sonradan render
 

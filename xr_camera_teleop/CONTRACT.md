@@ -1,8 +1,8 @@
 # xr_camera_teleop — interface contract
 
 Goal: WiLoR (monocular RGB hand reconstruction) replaces the VR headset input of Unitree's xr_teleoperate. The operator
-laptop produces end-effector commands; the robot node (G1's PC2) runs the IK (vendored `G1_29_ArmIK` + self-collision),
-Dex3 retargeting and DDS. Outputs of the laptop side:
+laptop produces end-effector commands and Dex3 targets; `ee_runtime` from robot-runtime (G1's PC2) runs the IK, collision
+checks and motor output. Outputs of the laptop side:
 
 1. RGB overlay (served by the perception server, `operator/perception/overlay.py`).
 2. MuJoCo "floating hands": human wrists + 21 keypoints per hand in 3D.
@@ -19,9 +19,9 @@ The WiLoR model (code + weights) is NOT part of this repo: `operator/perception/
 | --- | --- | --- |
 | Perception (torch, WiLoR, pyzed) | `data/wilor-venv` | `operator/perception/server.py` only |
 | Operator / consumers (py3.10, mujoco, pinocchio 3.1 + casadi, numpy 1.26) | `data/xr-env` (micromamba) | everything else on the laptop, sim, tests |
-| Robot (py3.10, pinocchio 3.1 + casadi, unitree_sdk2py, cyclonedds 0.10.2, dex_retargeting) | `~/xrcam-env` on PC2 | `robot/node.py` |
+| Former robot env (py3.10, pinocchio 3.1 + casadi, unitree_sdk2py, cyclonedds 0.10.2, dex_retargeting; Dex3 tools only) | `~/xrcam-env` on PC2 | `robot/node.py` |
 
-Set-up: `deploy/robot_setup.sh` (see README). Add packages to `data/xr-env` with `data/xr-env/bin/python -m pip install ...`.
+Add packages to `data/xr-env` with `data/xr-env/bin/python -m pip install ...`.
 
 ## Wire format (perception -> consumers)
 
@@ -98,58 +98,23 @@ Handedness guard: once the operator heading is known (after calibration), with b
 calibration is postponed while the labels are swapped.
 Fingers are not clutched (dex-retargeting uses hand-local vectors).
 
-## Operator -> robot: ee_cmd (protocol v1)
+## UI <-> bridge: ee_cmd and robot_status (protocol v2)
 
-Implemented and validated in `xr_camera_teleop/protocol.py`. ZMQ PUB (operator binds `tcp://*:5591`) / SUB with CONFLATE
-(robot connects). One single-part msgpack map per operator control tick (~30 Hz):
+Local ZMQ between `live_ui` and `deploy/ee_bridge.py`; the schema is the header of `protocol.py`. `ee_cmd` carries
+`torso_link` palm poses (`operator/ee_frames.py` converts the clutch's L_ee/R_ee targets) and 14 Dex3 motor radians.
 
-```text
-{
-  "v": 1, "type": "ee_cmd",
-  "session": int,       # random 52-bit id of the operator process; a restart = new session, seq restarts
-  "seq": int,           # >= 0, +1 per message within a session; the robot rejects seq <= last accepted
-  "t_send": float,      # operator time.monotonic(); informational ONLY, never compared with the robot's clock
-  "follow": bool,       # operator engaged: robot follows only while true
-  "home_seq": int,      # counter, +1 per home request; the robot runs IK reset_to_home when it increases
-  "hand_active": bool,  # TeleData.motion_data_ready: hand input valid (Dex3 retargeting enabled)
-  "left_wrist": [16], "right_wrist": [16],   # 4x4 SE(3) row-major, robot waist frame (the IK's L_ee / R_ee targets)
-  "left_hand": [75], "right_hand": [75]      # (25,3) wrist-local WebXR joints in the Unitree hand frame, metres
-}
-```
+Bridge behaviour (`operator/gate.py`, pure logic with an injectable clock; staleness = local receive time):
 
-Validation on the robot (rejected messages are counted in `robot_status.rejected` / `last_reject` and never feed the
-watchdog): msgpack decodes; `v == 1`; `type == "ee_cmd"`; ints / bools of the right type; 16 / 75 finite floats;
-|wrist translation| <= 3 m, last matrix row [0 0 0 1], rotation orthonormal with det +1 (tol 1e-2); |hand joint| <= 1 m;
-`seq` strictly increasing within a session. A different `session` is accepted as a restarted operator and re-latches the robot
-(see below).
-
-Robot behaviour (`robot/watchdog.py`, pure logic with an injectable clock; staleness = robot-local receive time):
-
-| State | Condition | Arms / hands |
+| State | Condition | Result |
 | --- | --- | --- |
-| HOLD | no command yet, `follow=false`, or latched | hold current / last target |
-| FOLLOW | `follow=true`, not latched, last accepted command < `stale` (0.3 s) | IK on the targets, Dex3 retargeting |
-| STALE_HOLD | `stale` <= age < `home` (1.5 s) | hold the last safe target |
-| HOME | age >= `home` (one-shot) | IK `reset_to_home`, latch |
+| HOLD | no command yet, `follow=false`, or latched | forwards nothing; ee_runtime holds |
+| FOLLOW | `follow=true`, not latched, last accepted command < 0.3 s old | `/ee/command`, TTL 0.3 s |
+| STALE_HOLD | 0.3 s <= age < 1.5 s | forwards nothing |
+| HOLD + latch | age >= 1.5 s | forwards nothing, latches |
 
-Latch: set at robot start-up, on a link timeout and on a new operator session; cleared only when a message with
-`follow=false` is accepted (so a robot never starts to follow because the link happens to say "follow").
-`home_seq`: the first message of a session sets the baseline; an increase triggers `reset_to_home` once.
-
-## Robot -> operator: robot_status (protocol v1)
-
-ZMQ PUB (robot binds `tcp://*:5592`), SUB with CONFLATE on the laptop, ~10 Hz, msgpack map:
-
-```text
-{"v": 1, "type": "robot_status", "session": int, "seq": int, "t_send": float,
- "mode": "init"|"hold"|"follow"|"stale_hold"|"homing"|"stopping",
- "latched": bool, "connected": bool, "age_ms": float|null, "watchdog": "ok"|"stale"|"timeout"|"none",
- "ee_session": int|null, "ee_seq": int|null, "follow": bool, "rejected": int, "last_reject": str,
- "ik_ms": float, "ik_mode": "track"|"transition"|"home", "q": [14], "motion": bool, "sim": bool, "vel_limit": float}
-```
-
-`connected` = an accepted `ee_cmd` is younger than the stale timeout. The operator treats the status as lost after 1 s
-(local receive time) and releases its `follow` flag when the robot stays `latched` for 0.6 s after `follow=true`.
+Latch: set at start-up, on a link timeout and on a new UI session; cleared only when a message with `follow=false` is
+accepted. `home_seq`: the first message of a session sets the baseline; an increase calls `/ee/home` once, skipped while
+home is active because a second call stops it. No command is forwarded while homing.
 
 ## Self-collision protection
 
@@ -172,11 +137,11 @@ motor q is held (as upstream) if it is collision-free.
 xr_camera_teleop/
   protocol.py   ctl.py   paths.py
   operator/     wrapper.py (WiLoRTeleWrapper), clutch.py, filters.py, mano_to_webxr.py, camlevel.py, synthetic_stream.py,
-                link.py, node.py, live_ui.py
+                link.py, gate.py, ee_frames.py, live_ui.py
     perception/ server.py, client.py, engine.py, sources.py, overlay.py, replay.py
     camera/     camera_*.py, preprocessing.py
-  robot/        node.py, watchdog.py, ik.py, self_collision.py, g1_collision_spheres.py (generated), camera.py (optional)
-    vendor/     robot_arm_ik.py, robot_arm.py, robot_hand_unitree.py, hand_retargeting.py, tv_wrapper.py, ... (see NOTICE)
-  sim/          g1_dds_mujoco.py, g1_kinematic.py, latency_probe.py
+  robot/        ik.py, self_collision.py, g1_collision_spheres.py (generated), thumb_shaping.py   (shared with the preview)
+    vendor/     robot_arm_ik.py, hand_retargeting.py, tv_wrapper.py, ... (see NOTICE)
+  sim/          g1_kinematic.py
   viz/  tools/  assets/  tests/   (pure-numpy unit tests, run with data/xr-env/bin/python -m pytest)
 ```

@@ -16,11 +16,16 @@ CYCLONE = ('<CycloneDDS><Domain Id="any"><General><Interfaces><NetworkInterface 
            '<MinimumSocketReceiveBufferSize>1MB</MinimumSocketReceiveBufferSize></Internal></Domain></CycloneDDS>')
 
 
-def recorder_command(config,directory):
-    return ["docker","run","--rm","--init","--name",CONTAINER,"--net=host","--user","%d:%d" % (os.getuid(),os.getgid()),
+def ros_container(config,name,*options):
+    """`docker run` up to and including the image; the caller appends the command."""
+    return ["docker","run","--rm","--init","--name",name,"--net=host","--user","%d:%d" % (os.getuid(),os.getgid()),
             "-e","HOME=/tmp","-e","RMW_IMPLEMENTATION=rmw_cyclonedds_cpp","-e","ROS_DOMAIN_ID=%d" % config["dds_domain"],
-            "-e","CYCLONEDDS_URI="+CYCLONE % config["dds_interface"],"-v","%s:/episode" % directory,
-            config["recorder_image"],"-o","/episode/bag","-s","mcap","--include-hidden-topics",*config["topics"]]
+            "-e","CYCLONEDDS_URI="+CYCLONE % config["dds_interface"],*options,config["ros_image"]]
+
+
+def recorder_command(config,directory):
+    return [*ros_container(config,CONTAINER,"-v","%s:/episode" % directory),"ros2","bag","record",
+            "-o","/episode/bag","-s","mcap","--include-hidden-topics",*config["topics"]]
 
 
 class EpisodeSession:
