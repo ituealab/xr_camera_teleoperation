@@ -1,20 +1,11 @@
 {
-  "schema_version": 1,
   "record_root": "~/teleop_data",
-  "pc2_archive_root": "~/.local/share/xrcam_capture",
-  "raw_storage": "pc2_rosbag2_verified_transfer",
-  "sources": [["bag", 5603, 5605]],
-  "pc2_bag_root": "~/.local/share/xrcam_bags",
-  "bag_storage_id": "sqlite3",
-  "bag_writer_binary": "~/xr_camera_teleoperation/data/bag-writer/xrcam_cdr_bag_writer",
-  "dds_ipc": "ipc:///tmp/xrcam_dds_recording.sock",
-  "record_end_effector_fk": false,
-  "gesture_enabled": false,
-  "ros2_bin": "/opt/ros/foxy/bin/ros2",
-  "recorder_mode": "plain_rosbag",
-  "recommended_rosbag": false,
-  "bridge_enabled": false,
-  "plain_topics": [
+  "recorder_image": "xrcam-recorder:humble",
+  "robot_host": "192.168.123.164",
+  "dds_interface": "enxc8a362efd15a",
+  "dds_domain": 0,
+  "clock_port": 5603,
+  "topics": [
     "/zed2i/zed_node/left/image_rect_color/compressed",
     "/zed2i/zed_node/left/camera_info",
     "/camera/color/image_raw/compressed",
@@ -26,83 +17,47 @@
     "/dex3/left/cmd",
     "/dex3/right/cmd"
   ],
-  "native_ros_topics": [
+  "camera_topics": [
+    "/zed2i/zed_node/left/image_rect_color/compressed",
+    "/camera/color/image_raw/compressed"
+  ],
+  "required_topics": [
+    "/zed2i/zed_node/left/image_rect_color/compressed",
+    "/camera/color/image_raw/compressed",
     "/lowstate",
-    "/lowcmd",
     "/dex3/left/state",
-    "/dex3/right/state",
+    "/dex3/right/state"
+  ],
+  "state_topics": [
+    "/lowstate",
+    "/dex3/left/state",
+    "/dex3/right/state"
+  ],
+  "action_topics": [
+    "/lowcmd",
     "/dex3/left/cmd",
     "/dex3/right/cmd"
   ],
-  "required_fresh_topics": ["/camera/color/image_raw/compressed", "/lowstate", "/dex3/left/state", "/dex3/right/state"],
-  "state_topics": ["/lowstate", "/dex3/left/state", "/dex3/right/state"],
-  "action_topics": ["/lowcmd", "/dex3/left/cmd", "/dex3/right/cmd"],
   "require_actions": true,
-  "recommended_topics": [
-    "/zed2i/zed_node/left/image_rect_color/compressed",
-    "/zed2i/zed_node/left/camera_info",
-    "/camera/color/image_raw/compressed",
-    "/camera/color/camera_info",
-    "/lowstate",
-    "/lowcmd",
-    "/dex3/left/state",
-    "/dex3/right/state",
-    "/dex3/left/cmd",
-    "/dex3/right/cmd"
-  ],
-  "telemetry_host": "127.0.0.1",
-  "bag_command_port": 5603,
-  "bag_http_port": 5605,
-  "state_names": [],
+  "tick_topic": "/lowstate",
   "expected_rates_hz": {
     "/zed2i/zed_node/left/image_rect_color/compressed": 30,
     "/camera/color/image_raw/compressed": 30
   },
-  "state_age_limit_ms": 20.0,
-  "action_age_limit_ms": 100.0,
-  "pair_ratio_limit": 0.99,
-  "robot_host": "192.168.123.164",
-  "msi_host": "192.168.123.100",
-  "dds_interface": "eth0",
-  "dds_domain": 0,
-  "record_hz": 100,
-  "export_hz": 100,
-  "prebuffer_seconds": 0,
+  "limits": {
+    "state_age_ms": 20,
+    "action_age_ms": 100,
+    "rate_ratio": 0.7,
+    "max_camera_lag_ms": 2000,
+    "tick_missing_percent": 1
+  },
+  "wall_clock_limit_ms": 5,
+  "start_timeout_seconds": 20,
+  "stop_timeout_seconds": 30,
+  "gesture_enabled": false,
   "gesture_hold_seconds": 1,
-  "required_source_timeout_seconds": 2,
-  "joint_reference_manifest": null,
-  "state_action_order": "native_dds",
-  "ros2": {
-    "distro": "foxy",
-    "required_image_topics": {
-      "observation.images.cam_left_high": "/zed2i/zed_node/left/image_rect_color/compressed"
-    },
-    "camera_info_topics": [
-      "/zed2i/zed_node/left/camera_info"
-    ],
-    "robot_topics": [],
-    "optional_topics": ["/camera/color/image_raw/compressed"],
-    "excluded_topic_prefixes": [
-      "/zed2i/zed_node/depth/",
-      "/zed2i/zed_node/disparity/",
-      "/zed2i/zed_node/confidence/",
-      "/zed2i/zed_node/point_cloud/"
-    ]
-  },
-  "dds": {
-    "required_state_topics": ["rt/lowstate", "rt/dex3/left/state", "rt/dex3/right/state"],
-    "arm_command_candidates": ["rt/lowcmd", "rt/arm_sdk"],
-    "required_hand_command_topics": ["rt/dex3/left/cmd", "rt/dex3/right/cmd"]
-  },
-  "operator": {"perception": "tcp://127.0.0.1:5590", "ee_cmd": "tcp://127.0.0.1:5591"},
-  "export": {
-    "automatic": false,
-    "format": "lerobot_v3",
-    "codec": "av1",
-    "pixel_format": "yuv420p",
-    "image_height": 480,
-    "image_width": 640,
-    "preserve_gestures": true,
-    "keep_raw": true
+  "operator": {
+    "perception": "tcp://127.0.0.1:5590",
+    "ee_cmd": "tcp://127.0.0.1:5591"
   }
 }

@@ -1,7 +1,6 @@
 import json
 import queue
 import threading
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -58,7 +57,7 @@ def make_backend(tmp_path):
     backend.lock = threading.Lock()
     backend.gesture_lock = threading.Lock()
     backend.phase = "ready"
-    backend.recorder = SimpleNamespace(status=lambda:{"recording":False})
+    backend.operator_log = None
     backend.prompt = ""
     backend.prompt_revision = 0
     backend.prompt_store = tmp_path/".gui_task.json"
@@ -90,8 +89,7 @@ def test_backend_hand_frames_trigger_exactly_one_start_then_one_stop(tmp_path):
     backend.gesture_enabled = True
     backend.error = None
     events = []
-    active = [False]
-    backend.recorder = SimpleNamespace(status=lambda:{"recording":active[0]},submit=events.append)
+    backend._log_operator = lambda source,packet:events.append(source)
     backend.set_prompt("Gesture test")
     def frame(i,kind):
         hands = {} if kind=="missing" else {side:hand(side,closed=kind=="closed") for side in ("left","right")}
@@ -103,7 +101,6 @@ def test_backend_hand_frames_trigger_exactly_one_start_then_one_stop(tmp_path):
         frame(i,"open")
     operation,request = backend.commands.get_nowait()
     assert operation=="start" and request["reason"]=="gesture"
-    active[0] = True
     backend.phase = "recording"
     for i in range(12,17):
         frame(i,"open")

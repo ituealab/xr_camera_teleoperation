@@ -35,6 +35,7 @@ operator = [
     "opencv-python-headless>=4.8",
     "pillow",
     "scipy",
+    "mcap>=1.2",
 ]
 # WiLoR perception server (GPU). The WiLoR code + weights are external ($WILOR_ROOT), see README.
 perception = [

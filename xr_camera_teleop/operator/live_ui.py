@@ -151,16 +151,11 @@ async function poll(){try{const s=await (await fetch('/api/status')).json();
  document.getElementById('datasetrec').textContent=d.recording?'Stop dataset recording':'Start dataset recording';
  document.getElementById('rectime').textContent=(d.seconds||0).toFixed(1)+' s';
  document.getElementById('datasetstatus').textContent='Dataset: '+(d.state||'disabled')
-  +(d.recording?' | '+d.prompt:'')+' | target '+(d.target_hz||100)+' Hz'
-  +(d.path?' | '+d.path:'')+(d.last_path?' | saved '+d.last_path:'')
-  +(d.export?' | export: '+d.export.state:'')
-  +(d.transfer?' | PC2 → MSI: '+d.transfer.state:'')
-  +(d.pc2?' | rosbag2: '+(d.pc2.ready?'READY':'WAITING'):'')
-  +(d.sync_report&&d.sync_report.camera_state_match?' | state age p95: '+Number(d.sync_report.camera_state_match.state_age_ms_p95||0).toFixed(2)+' ms':'')
-  +(d.timing?' | camera/DDS clock: '+(d.timing.camera_clock_valid&&d.timing.same_pc2_monotonic_epoch?'OK (±'+d.timing.camera_clock_uncertainty_ms.toFixed(3)+' ms software clock)':'NOT VALID'):'')
+  +(d.recording?' | '+d.prompt:'')+(d.path?' | '+d.path:'')
   +(d.gesture&&d.gesture.release_required?' | Release the palm gesture before the next trigger':'')
   +(taskError?' | '+taskError:'')
-  +(d.quality&&d.quality.incomplete?' | INCOMPLETE':'')+(d.error?' | '+d.error:'');
+  +(d.last?' | saved '+d.last.path+(d.last.incomplete?' INCOMPLETE: '+d.last.issues.join('; '):' ok'):'')
+  +(d.wall_clock?' | clock: '+(d.wall_clock.ok?'OK ('+d.wall_clock.offset_ms.toFixed(1)+' ms)':d.wall_clock.error):'')+(d.error?' | '+d.error:'');
  const h=x=>{const v=s.hands[x];return x+': '+(v.seen?'<span class=ok>seen</span>':'<span class=warn>'+(v.detected_ever?'stale':'never')+'</span>')};
  eng.className=s.engaged?'':'on';
  fol.className=s.follow?'on':'';fol.innerHTML=s.follow?'Stop robot (R)':'Start robot (R)';

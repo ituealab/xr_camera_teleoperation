@@ -1,10 +1,43 @@
 #!/usr/bin/env python3
-"""Independent latest-only ZED JPEG preview. Raw recording uses a separate channel."""
+"""Independent latest-only ZED JPEG preview; recording never depends on it."""
 import argparse
 import threading
 import time
 import signal
-from recording_ros2 import cdr_header
+import struct
+
+
+def cdr_header(data, image=False):
+    if data[:2] not in (b"\x00\x01",b"\x00\x00"):
+        raise ValueError("unsupported CDR encoding")
+    endian = "<" if data[1]==1 else ">"
+    offset = 4
+    def uint():
+        nonlocal offset
+        offset += (-(offset-4))%4
+        result = struct.unpack_from(endian+"I",data,offset)[0]
+        offset += 4
+        return result
+    def string():
+        nonlocal offset
+        length = uint()
+        if length<1 or offset+length>len(data):
+            raise ValueError("invalid header string")
+        result = data[offset:offset+length-1].decode()
+        offset += length
+        return result
+    sec,nanosec = uint(),uint()
+    if sec>=2**31:
+        sec -= 2**32
+    result = {"source_timestamp_ns":sec*1000000000+nanosec,"frame_id":string()}
+    if image:
+        result.update(height=uint(),width=uint(),encoding=string())
+        result["is_bigendian"] = data[offset]
+        offset += 1
+        result["step"] = uint()
+        result["data_length"] = uint()
+        result["data_offset"] = offset
+    return result
 
 
 def main():
