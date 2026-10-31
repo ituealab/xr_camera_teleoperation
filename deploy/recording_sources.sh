@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Starts camera acquisition/read-only subscribers; never starts robot motor control.
 set -euo pipefail
-unset PYTHONPATH PYTHONHOME ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH
+# G1_ROS_ENV_SOURCED too: an interactive shell exports it, and env.sh would then skip the setup wiped here.
+unset PYTHONPATH PYTHONHOME ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH G1_ROS_ENV_SOURCED
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 case "${1:-help}" in
   zed)
@@ -16,6 +17,20 @@ case "${1:-help}" in
       camera_name:=zed2i camera_model:=zed2i publish_urdf:=false \
       publish_tf:=false publish_map_tf:=false publish_imu_tf:=false \
       ros_params_override_path:="$HOME/zed_ros2_ws/config/images.yaml" "$@"
+    ;;
+  realsense)
+    # D435i RGB only. 1280x720 is the sensor's full 16:9 FOV (70 deg horizontal, 640x480 crops
+    # to 56). JPEG comes from the same compressed_image_transport plugin and default quality as
+    # the ZED. Takes the device exclusively: do not run alongside the ROS 1 `realsense` launcher.
+    shift
+    set +u
+    source "$HOME/g1_ros_env/env.sh"
+    source "$HOME/img_plugins_ws/install/local_setup.bash"
+    set -u
+    exec /opt/ros/foxy/bin/ros2 launch realsense2_camera rs_launch.py \
+      enable_color:=true rgb_camera.profile:=1280x720x30 enable_depth:=false \
+      enable_infra1:=false enable_infra2:=false enable_gyro:=false enable_accel:=false \
+      pointcloud.enable:=false initial_reset:=true "$@"
     ;;
   telemetry)
     shift
@@ -47,5 +62,5 @@ case "${1:-help}" in
     cd "$REPO"
     exec "$HOME/.local/share/xrcam-ros-env/bin/python" -m xr_camera_teleop.recording.bag_recorder --config "$REPO/configs/recording.json" "$@"
     ;;
-  *) printf 'Usage: recording_sources.sh zed | telemetry [--schema | --arm-topic rt/arm_sdk] | cameras | preview | bag\n' ;;
+  *) printf 'Usage: recording_sources.sh zed | realsense | telemetry [--schema | --arm-topic rt/arm_sdk] | cameras | preview | bag\n' ;;
 esac

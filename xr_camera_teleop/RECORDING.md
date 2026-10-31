@@ -13,6 +13,7 @@ Preview compression never modifies original stereo pixels stored in the bag.
 ## Main training topics
 
 - `/zed2i/zed_node/left/image_rect_color`, `/zed2i/zed_node/right/image_rect_color`: original CDR RGB.
+- `/camera/color/image_raw/compressed`, `/camera/color/camera_info`: D435i RGB at 1280x720 30 Hz (full 16:9 FOV), JPEG like the ZED. Required: `ready` stays false until it is fresh, and a gap ends the episode as a source timeout. It has no IMAGE clock validation; its header is kept and its rate is checked in the sync report.
 - Corresponding camera_info, existing `/joint_states`, `/lf/lowstate` recorded unchanged when present.
 - `/teleop/state/{arms,left_hand,right_hand}`: native measured DDS samples with named joints.
 - `/teleop/action/{arms,left_hand,right_hand}`: native published desired DDS commands; no fabricated labels.
@@ -74,12 +75,15 @@ On PC2:
 
 ```bash
 bash deploy/build_bag_writer.sh
-python3 deploy/recording_services.py start all   # telemetry, bag manager, JPEG preview ONLY
+python3 deploy/recording_services.py start realsense   # RealSense RGB driver (ROS 2)
+python3 deploy/recording_services.py start bag
+python3 deploy/recording_services.py start preview
 python3 deploy/recording_services.py status all
 python3 deploy/recording_services.py stop all
 ```
 
-These sources subscribe to existing cameras; they do not start the ZED driver or motor control.
+`bag` and `preview` subscribe to existing cameras and never start motor control. `realsense` opens the
+D435i exclusively, so stop the ROS 1 `realsense` launcher first; `/robot-rgb.jpg` has no frames without it.
 Managed PID state includes boot identity and process start ticks. No `pkill -f` matching broad SSH commands.
 Do not run legacy `cameras` source simultaneously with `bag` (same ports).
 

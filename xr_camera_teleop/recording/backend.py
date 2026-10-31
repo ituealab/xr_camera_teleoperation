@@ -26,7 +26,13 @@ class DatasetBackend:
         # single rosbag2 episode; "camera"+"telemetry" is the legacy split archive.
         self.sources = [list(item) for item in self.config.get(
             "sources", [["camera", 5603, 5605], ["telemetry", 5601, 5606]])]
-        self.recorder = EpisodeRecorder(root or self.config["record_root"], self.config["prebuffer_seconds"])
+        # Plain rosbag holds native state/actions on PC2 without a telemetry bridge.
+        # Local dataset rows are not the quality authority in that mode; the
+        # transferred bag's sync_report still supplies its own quality verdict.
+        validate_dataset_rows = not (self.config.get("recorder_mode") == "plain_rosbag"
+                                     and not self.config.get("bridge_enabled",False))
+        self.recorder = EpisodeRecorder(root or self.config["record_root"], self.config["prebuffer_seconds"],
+                                        validate_dataset_rows=validate_dataset_rows)
         self.stop_event = threading.Event()
         self.lock = threading.Lock()
         self.preview_cv = threading.Condition(self.lock)

@@ -17,6 +17,8 @@
   "plain_topics": [
     "/zed2i/zed_node/left/image_rect_color/compressed",
     "/zed2i/zed_node/left/camera_info",
+    "/camera/color/image_raw/compressed",
+    "/camera/color/camera_info",
     "/lowstate",
     "/lowcmd",
     "/dex3/left/state",
@@ -32,13 +34,15 @@
     "/dex3/left/cmd",
     "/dex3/right/cmd"
   ],
-  "required_fresh_topics": ["/lowstate", "/dex3/left/state", "/dex3/right/state"],
+  "required_fresh_topics": ["/camera/color/image_raw/compressed", "/lowstate", "/dex3/left/state", "/dex3/right/state"],
   "state_topics": ["/lowstate", "/dex3/left/state", "/dex3/right/state"],
   "action_topics": ["/lowcmd", "/dex3/left/cmd", "/dex3/right/cmd"],
   "require_actions": true,
   "recommended_topics": [
     "/zed2i/zed_node/left/image_rect_color/compressed",
     "/zed2i/zed_node/left/camera_info",
+    "/camera/color/image_raw/compressed",
+    "/camera/color/camera_info",
     "/lowstate",
     "/lowcmd",
     "/dex3/left/state",
@@ -51,7 +55,8 @@
   "bag_http_port": 5605,
   "state_names": [],
   "expected_rates_hz": {
-    "/zed2i/zed_node/left/image_rect_color/compressed": 30
+    "/zed2i/zed_node/left/image_rect_color/compressed": 30,
+    "/camera/color/image_raw/compressed": 30
   },
   "state_age_limit_ms": 20.0,
   "action_age_limit_ms": 100.0,
@@ -76,7 +81,7 @@
       "/zed2i/zed_node/left/camera_info"
     ],
     "robot_topics": [],
-    "optional_topics": [],
+    "optional_topics": ["/camera/color/image_raw/compressed"],
     "excluded_topic_prefixes": [
       "/zed2i/zed_node/depth/",
       "/zed2i/zed_node/disparity/",

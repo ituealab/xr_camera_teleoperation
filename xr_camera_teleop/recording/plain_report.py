@@ -182,7 +182,8 @@ def build_plain_report(directory,left_topic,right_topic=None,limits=None,state_t
         source = report["sources"].setdefault(topic,{"samples":0,"sequence_observable":False,"sequence_gaps":None})
         # Camera cadence uses original headers; receipt batching must not be
         # mistaken for capture cadence. Native messages expose receipt only.
-        camera = any(v["is_image"] for v in by_topic.get(topic,[]))
+        # Only the sync cameras have header_hz; other image topics fall back to receipt.
+        camera = any(v["is_image"] for v in by_topic.get(topic,[])) and "header_hz" in source
         basis = "header_hz" if camera else "receipt_hz"
         measured = source.get(basis)
         minimum = expected*settings["required_rate_ratio"]

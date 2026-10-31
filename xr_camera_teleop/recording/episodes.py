@@ -31,8 +31,10 @@ def iter_samples(path):
 
 
 class EpisodeRecorder:
-    def __init__(self, root, prebuffer_seconds=2, memory_bytes=256*1024*1024):
+    def __init__(self, root, prebuffer_seconds=2, memory_bytes=256*1024*1024,
+                 validate_dataset_rows=True):
         self.root = Path(root).expanduser()
+        self.validate_dataset_rows = validate_dataset_rows
         self.prebuffer_seconds, self.memory_bytes = prebuffer_seconds, memory_bytes
         self.pending = queue.Queue(maxsize=1000)
         self.buffer = deque()
@@ -119,7 +121,7 @@ class EpisodeRecorder:
                             quality["events"].append(data)
                         if data.get("collector_losses"):
                             quality["collector_losses"] = data["collector_losses"]
-                        if data.get("type") == "dataset_row":
+                        if self.validate_dataset_rows and data.get("type") == "dataset_row":
                             if data.get("missing_sources"):
                                 quality["invalid_rows"] += 1
                             if not data.get("clock_calibrated",False):
@@ -143,14 +145,15 @@ class EpisodeRecorder:
                     (path/"manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
                     quality = {"incomplete": False, "events": [], "queue_losses_at_start": self.losses,
                                "prebuffer_memory_drops": self.prebuffer_drops,
-                               "invalid_rows":0,"uncalibrated_rows":0}
+                               "invalid_rows":0,"uncalibrated_rows":0,
+                               "dataset_row_checks_applicable":self.validate_dataset_rows}
                     file = (path/"samples.msgpack").open("wb")
                     sample_count = 0
                     for packed in list(self.image_preroll.values())+[item[1] for item in self.buffer]:
                         file.write(struct.pack("<I", len(packed))+packed)
                         sample_count += 1
                         sample = msgpack.unpackb(packed,raw=False)
-                        if sample.get("type") == "dataset_row":
+                        if self.validate_dataset_rows and sample.get("type") == "dataset_row":
                             quality["invalid_rows"] += bool(sample.get("missing_sources"))
                             quality["uncalibrated_rows"] += not sample.get("clock_calibrated",False)
                     self._set(state="recording", recording=True, path=str(path), prompt=value,

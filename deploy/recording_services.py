@@ -10,7 +10,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT/"data/recording-services"
-MODULES = {"zed":"zed_camera.launch.py", "telemetry":"xr_camera_teleop.recording.telemetry", "bag":"xr_camera_teleop.recording.bag_recorder",
+MODULES = {"zed":"zed_camera.launch.py", "realsense":"rs_launch.py", "telemetry":"xr_camera_teleop.recording.telemetry", "bag":"xr_camera_teleop.recording.bag_recorder",
            "preview":"zed_preview.py"}
 
 

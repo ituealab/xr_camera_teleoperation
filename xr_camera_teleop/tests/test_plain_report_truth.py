@@ -92,6 +92,16 @@ def test_missing_rate_is_unknown_and_healthy_rate_is_accepted(tmp_path):
     assert "configured topic rate unavailable: /absent" in report["issues"]
 
 
+def test_rate_of_image_topic_outside_sync_cameras_uses_receipt(tmp_path):
+    make_bag(tmp_path,[(BASE,BASE+1_000_000),
+                       (BASE+33_000_000,BASE+34_000_000)], [BASE,BASE+33_000_000])
+    report = build_plain_report(tmp_path,LEFT,state_topics=["/lowstate"],
+        limits={"expected_rates_hz":{RIGHT:30}})
+    assert report["sources"][RIGHT]["rate_basis"]=="receipt_hz"
+    assert report["sources"][RIGHT]["rate_below_limit"] is False
+    assert not any(RIGHT in issue for issue in report["issues"])
+
+
 def test_mono_report_does_not_require_stereo(tmp_path):
     make_bag(tmp_path,[(BASE+10_000_000,BASE+20_000_000),
                        (BASE+43_000_000,BASE+53_000_000)], [BASE+8_000_000,BASE+41_000_000])
