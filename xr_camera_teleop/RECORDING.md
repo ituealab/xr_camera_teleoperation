@@ -65,7 +65,7 @@ Copy the PC2 services, without starting anything:
 XRCAM_RECORDING_TARGET=unitree-eth bash deploy/push_recording.sh
 ```
 
-On PC2:
+`xr_teleop up` on the robot starts these services. To run them alone on PC2:
 
 ```bash
 python3 deploy/recording_services.py start all

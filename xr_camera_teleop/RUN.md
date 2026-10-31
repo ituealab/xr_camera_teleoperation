@@ -68,6 +68,21 @@ The sim prints RTF and step-time p50/p99 every 5 s. The MotionSwitcher call (deb
 
 ## Real robot (domain 0)
 
+One command on each machine, with the robot supported:
+
+```bash
+xr_teleop up     # on the robot: cameras, developer mode, arms to home, enable
+xr_teleop start  # on MSI: Omron, WiLoR, UI
+```
+
+Then press R in the UI at http://127.0.0.1:8780/. `xr_teleop up` starts the cameras first, so a camera
+fault stops it before balance is released. It asks for confirmation unless the robot is already in
+developer mode; `--yes` skips that. To stop, run `xr_teleop down` on the robot and `xr_teleop stop` on
+MSI. `xr_teleop hold` freezes in place and L2+B is remote damping at any time. Install the launchers
+by symlinking `deploy/xr_teleop_robot.sh` and `deploy/xr_teleop_msi.sh` to `~/.local/bin/xr_teleop`.
+
+To run the node by hand:
+
 ```bash
 # on PC2 (find the NIC on 192.168.123.x with `ip a`)
 ~/xrcam-env/bin/xrcam-robot --motion --network-interface eth0 --arm-vel-limit 1.5 --operator tcp://<laptop-ip>:5591
