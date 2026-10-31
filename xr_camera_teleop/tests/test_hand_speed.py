@@ -6,12 +6,17 @@ import time
 import numpy as np
 import pytest
 
-from xr_camera_teleop.robot.hand_runtime import HandRuntime, SharedHand
+from xr_camera_teleop.robot.hand_runtime import MAX_LEAD, HandRuntime, SharedHand
 
 
 class SlowRetarget:
     def __call__(self, hands):
         time.sleep(.15)
+        return np.ones(14)
+
+
+class OnesRetarget:
+    def __call__(self, hands):
         return np.ones(14)
 
 
@@ -84,6 +89,56 @@ def test_stale_targets_and_pause_epoch_hold_immediately():
     shared.set_input(np.zeros((25, 3)), np.zeros((25, 3)), True)
     # A target from before pause cannot be applied after re-engaging.
     assert np.array_equal(q, shared.command(q, 8, .01, .5))
+
+
+def test_command_stays_within_lead_of_a_blocked_joint():
+    shared = SharedHand(mp.get_context('spawn'), np.zeros(14))
+    shared.set_input(np.zeros((25, 3)), np.zeros((25, 3)), True)
+    with shared.lock:
+        np.frombuffer(shared.target)[:] = 3
+        shared.target_epoch.value = shared.epoch.value
+        shared.input_time.value = shared.target_time.value = 10
+    q = np.zeros(14)
+    for _ in range(50):
+        q = shared.command(q, 8, .01, .5, now=10.1)
+    assert np.allclose(q, 3)  # no measurement yet: only the slew applies
+    shared.set_measured(np.ones(14))
+    q = shared.command(q, 8, .01, .5, now=10.1)
+    assert np.allclose(q, 1 + MAX_LEAD)
+
+
+def test_repeated_frame_is_not_new_retarget_work():
+    shared = SharedHand(mp.get_context('spawn'), np.zeros(14))
+    frame = np.ones((25, 3))
+    shared.set_input(frame, frame, True)
+    seq = shared.seq.value
+    before = shared.input_time.value
+    time.sleep(.001)
+    shared.set_input(frame, frame, True)
+    assert shared.seq.value == seq
+    assert shared.input_time.value > before  # the link is still alive
+    shared.set_input(frame + 1, frame, True)
+    assert shared.seq.value == seq + 1
+    # Pausing and re-engaging on the same frame still needs a fresh solve for the new epoch.
+    shared.set_input(frame + 1, frame, False)
+    shared.set_input(frame + 1, frame, True)
+    assert shared.seq.value == seq + 3
+
+
+def test_target_stays_valid_while_the_same_frame_keeps_arriving():
+    ctx = mp.get_context('spawn')
+    queue = ctx.Queue()
+    runtime = HandRuntime(np.zeros(14), OnesRetarget, RecordingSinkFactory(queue), timeout=.2)
+    try:
+        frame = np.zeros((25, 3))
+        end = time.monotonic() + .6
+        while time.monotonic() < end:  # three timeouts of one unchanged frame
+            runtime.set_input(frame, frame, True)
+            time.sleep(.01)
+        assert runtime.metrics()['solves'] == 1
+        assert np.allclose(runtime.get_action(), 1)
+    finally:
+        runtime.stop()
 
 
 def test_worker_startup_failure_cleans_up_without_publication():

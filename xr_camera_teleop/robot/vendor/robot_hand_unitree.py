@@ -120,6 +120,7 @@ class Dex3_1_Controller:
 
         self.left_hand_state_array = np.zeros(Dex3_Num_Motors)
         self.right_hand_state_array = np.zeros(Dex3_Num_Motors)
+        self.motor_faults = []
         self._state_rx = threading.Event()      # both hand states received (upstream: any(state) != 0)
 
         # initialize subscribe thread
@@ -159,6 +160,17 @@ class Dex3_1_Controller:
                 for idx, id in enumerate(Dex3_1_Right_JointIndex):
                     self.right_hand_state_array[idx] = right_hand_msg.motor_state[id].q
                 self._state_rx.set()
+                runtime = getattr(self, "runtime", None)
+                if runtime is not None:
+                    runtime.set_measured(self.get_state())
+                # A disabled motor stays that way until reset: report it instead of silently not moving.
+                faults = [[side, i, msg.motor_state[i].mode, msg.motor_state[i].motorstate]
+                          for side, msg in (("left", left_hand_msg), ("right", right_hand_msg))
+                          for i in range(Dex3_Num_Motors) if msg.motor_state[i].mode != 1 or msg.motor_state[i].motorstate]
+                if faults != self.motor_faults:
+                    if faults:
+                        logger_mp.error("Dex3 motor fault [side, motor, mode, motorstate]: %s", faults)
+                    self.motor_faults = faults
             time.sleep(0.002)
 
     class _RIS_Mode:
@@ -219,7 +231,7 @@ class Dex3_1_Controller:
         return self.runtime.get_action()
 
     def metrics(self):
-        return self.runtime.metrics()
+        return dict(self.runtime.metrics(), motor_faults=self.motor_faults)
 
     def stop(self):
         self.runtime.stop()

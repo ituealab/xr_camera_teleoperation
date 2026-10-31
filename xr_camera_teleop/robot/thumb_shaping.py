@@ -1,17 +1,13 @@
-"""Post-retargeting Dex3 open-hand shaping (DexPilot output is left untouched).
+"""Post-retargeting Dex3 shaping: the thumb follows taught robot poses, the fingers DexPilot.
 
-DexPilot chases the human thumb-tip position, which spins the Dex3 thumb about
-its palm-normal axis (thumb_0), mimicking the human thumb sideways. Here thumb_0
-holds the robot's own open rotation; only a pinch moves the whole thumb toward the
-robot's own taught pinch pose, so otherwise the thumb folds in one plane (thumb_1/thumb_2 share a parallel axis): from the
-open pose toward the palm. Within that plane thumb_1/thumb_2 are re-solved to get
-the thumb tip as close as possible to DexPilot's thumb tip, so pinches still close.
-Toward the flat open palm of the recording gesture (recording/gestures.py) the
-joints blend to the robot's open pose read from lowstate: the thumb by its
-clearance from the index/middle tips, the fingers by their extension.
+DexPilot chases the human thumb-tip position through a URDF whose thumb_0 is offset
+from the real joint, so its thumb neither opens nor opposes correctly. Here the thumb
+moves continuously along a path through poses taught on the real hands: open -> cup
+-> index or middle pinch, chosen by the thumb's gap to the fingertips, so a wider
+object stops it earlier on the path. Curled ring/pinky fingers (straight in a pinch)
+pull it to the fist pose instead. Toward the flat open palm of the recording gesture
+(recording/gestures.py) the fingers blend to the robot's open pose from lowstate.
 """
-from dataclasses import dataclass, field
-
 import numpy as np
 
 # WebXR 25-joint layout (operator/mano_to_webxr.py): finger MCP..tip chains.
@@ -25,11 +21,18 @@ INDEX_MCP, PINKY_MCP = 6, 21
 # preview clips it).
 OPEN_POSE = {"left": (-1.148, -0.664, -0.032, -0.029, -0.017, -0.038, -0.03),
              "right": (-1.077, 0.555, -0.093, -0.107, -0.094, 0.134, -0.103)}
-# thumb_0..2 of each robot hand held in a thumb-index pinch (lowstate, 2026-10-22). The
-# real thumb_0 is offset ~1.2 rad from DexPilot's (URDF) thumb_0, so DexPilot's thumb
-# pose does not reach a real pinch; a pinch drives the thumb toward these values instead.
-PINCH_THUMB = {"left": (-1.772, 0.564, 0.680), "right": (-1.798, -0.628, -0.898)}
-THUMB_JOINTS = ("thumb_0", "thumb_1", "thumb_2")
+# thumb_0..2 taught on both limp hands (2026-10-30) and averaged so the hands match.
+# Written for the left hand; the right mirrors thumb_1 and thumb_2.
+OPEN_THUMB = np.array((-1.11, -0.61, 0.03))
+CUP_THUMB = np.array((-0.95, 0.20, 0.79))
+INDEX_PINCH_THUMB = np.array((-1.99, 0.34, 0.79))
+MIDDLE_PINCH_THUMB = np.array((-0.37, 0.59, 0.63))
+FIST_THUMB = np.array((-1.13, 0.69, 1.54))
+# Thumb-to-nearest-fingertip gap in palm widths, live WiLoR hands (2026-10-30):
+# open 1.5-1.9, cup ~1.1, pinch contact 0.15-0.25, fist 0.6-0.8.
+OPEN_GAP, CUP_GAP, CONTACT_GAP = 1.6, 1.1, 0.3
+# Ring/pinky extension: pinch ~1.0, cup ~0.95, fist ~0.05.
+FIST_CURLED, FIST_STRAIGHT = 0.15, 0.6
 
 
 def _ramp(x, lo, hi):
@@ -37,14 +40,8 @@ def _ramp(x, lo, hi):
     return t * t * (3.0 - 2.0 * t)
 
 
-def hand_openness(webxr25):
-    """(fingers, thumb) in 0..1: continuous parts of the open-palm gesture test.
-
-    fingers = mean extension (chain straightness and reach) of the four fingers;
-    thumb = how clear the thumb tip is of both the index and the middle tip.
-    Ramps fitted on live WiLoR hands: flat open palm straightness ~0.97,
-    reach ~1.8, thumb/palm-width ~1.5; fist ~0.1 / ~0.7; pinch thumb ~0.1-0.4.
-    """
+def finger_extension(webxr25):
+    """Extension 0..1 (chain straightness and reach) of index, middle, ring, pinky."""
     w = webxr25[WRIST]
     fingers = []
     for chain in FINGER_CHAINS:
@@ -53,77 +50,42 @@ def hand_openness(webxr25):
         straight = np.min(np.sum(dirs[:-1] * dirs[1:], axis=1))
         reach = np.linalg.norm(webxr25[chain[-1]] - w) / (np.linalg.norm(webxr25[chain[0]] - w) + 1e-9)
         fingers.append(0.5 * (_ramp(straight, 0.3, 0.95) + _ramp(reach, 0.9, 1.75)))
+    return np.array(fingers)
+
+
+def thumb_gap(webxr25):
+    """Thumb tip to the nearer of the index/middle tips, in palm widths."""
     palm = np.linalg.norm(webxr25[INDEX_MCP] - webxr25[PINKY_MCP]) + 1e-9
-    thumb = min(np.linalg.norm(webxr25[THUMB_TIP] - webxr25[INDEX_TIP]),
-                np.linalg.norm(webxr25[THUMB_TIP] - webxr25[MIDDLE_TIP])) / palm
-    # Fist thumb ~0.5-0.67 must stay closed too, hence the high lower edge; the upper
-    # edge is the lowest live open-palm value, so the ramp is as wide (slow) as possible.
-    return float(np.mean(fingers)), float(_ramp(thumb, 0.7, 1.35))
+    return min(np.linalg.norm(webxr25[THUMB_TIP] - webxr25[INDEX_TIP]),
+               np.linalg.norm(webxr25[THUMB_TIP] - webxr25[MIDDLE_TIP])) / palm
 
 
-def pinch_contact(webxr25):
-    """0..1: thumb tip touching the index or middle tip (live pinch ~0.1-0.4, fist >= 0.5)."""
-    palm = np.linalg.norm(webxr25[INDEX_MCP] - webxr25[PINKY_MCP]) + 1e-9
-    thumb = min(np.linalg.norm(webxr25[THUMB_TIP] - webxr25[INDEX_TIP]),
-                np.linalg.norm(webxr25[THUMB_TIP] - webxr25[MIDDLE_TIP])) / palm
-    return float(1.0 - _ramp(thumb, 0.2, 0.5))
+def middle_share(webxr25):
+    """0..1: the thumb is nearer the middle tip (1) than the index tip (0)."""
+    di = np.linalg.norm(webxr25[THUMB_TIP] - webxr25[INDEX_TIP])
+    dm = np.linalg.norm(webxr25[THUMB_TIP] - webxr25[MIDDLE_TIP])
+    return float(_ramp(di / (di + dm + 1e-9), 0.35, 0.65))
 
 
-class _ThumbPlaneIK:
-    """thumb_1/thumb_2 (parallel axes) reaching a thumb-tip point at fixed thumb_0."""
-
-    def __init__(self, side):
-        import pinocchio as pin
-        from xr_camera_teleop.paths import ASSETS
-        self.pin = pin
-        self.model = pin.buildModelFromUrdf(str(ASSETS / f"unitree_hand/unitree_dex3_{side}.urdf"))
-        self.data = self.model.createData()
-        self.idx = [self.model.joints[self.model.getJointId(f"{side}_hand_{j}_joint")].idx_q for j in THUMB_JOINTS]
-        self.tip = self.model.getFrameId("thumb_tip")
-        self.lo = self.model.lowerPositionLimit[self.idx[1:]]
-        self.hi = self.model.upperPositionLimit[self.idx[1:]]
-
-    def tip_pos(self, thumb3):
-        q = self.pin.neutral(self.model)
-        q[self.idx] = thumb3
-        self.pin.framesForwardKinematics(self.model, self.data, q)
-        return self.data.oMf[self.tip].translation.copy()
-
-    def solve(self, thumb0, target, q12, iters=8, eps=1e-4):
-        q12 = np.clip(np.array(q12, dtype=float), self.lo, self.hi)
-        for _ in range(iters):
-            p = self.tip_pos((thumb0, *q12))
-            J = np.stack([(self.tip_pos((thumb0, *(q12 + eps * e))) - p) / eps for e in np.eye(2)], 1)
-            step = np.linalg.lstsq(J.T @ J + 1e-6 * np.eye(2), J.T @ (target - p), rcond=None)[0]
-            q12 = np.clip(q12 + step, self.lo, self.hi)
-        return q12
+def thumb_target(side, webxr25):
+    """thumb_0..2 for one hand."""
+    gap = thumb_gap(webxr25)
+    pinch = INDEX_PINCH_THUMB + middle_share(webxr25) * (MIDDLE_PINCH_THUMB - INDEX_PINCH_THUMB)
+    q = OPEN_THUMB + (1.0 - _ramp(gap, CUP_GAP, OPEN_GAP)) * (CUP_THUMB - OPEN_THUMB)
+    q = q + (1.0 - _ramp(gap, CONTACT_GAP, CUP_GAP)) * (pinch - CUP_THUMB)
+    ring_pinky = float(np.mean(finger_extension(webxr25)[2:]))
+    q = q + (1.0 - _ramp(ring_pinky, FIST_CURLED, FIST_STRAIGHT)) * (FIST_THUMB - q)
+    return q * (1.0, -1.0, -1.0) if side == "right" else q
 
 
-@dataclass
 class ThumbShaper:
-    _ik: dict = field(default_factory=dict, repr=False)
-
     def shape(self, side, q7, hand):
         """One hand: q7 in Dex3 API order, hand = (25,3) WebXR joints."""
         out = np.array(q7, dtype=float)
-        pose = np.asarray(OPEN_POSE[side])
-        fingers, thumb = hand_openness(hand)
-        if side not in self._ik:
-            self._ik[side] = _ThumbPlaneIK(side)
-        ik = self._ik[side]
-        # thumb_0 holds the open rotation; only as the human thumb tip reaches the
-        # index/middle tip (pinch_contact is smooth) does the thumb move to the robot pinch.
-        pinch = np.asarray(PINCH_THUMB[side])
-        p = pinch_contact(hand)
-        thumb0 = pose[0] + p * (pinch[0] - pose[0])
-        # Otherwise fold in that fixed plane toward DexPilot's thumb tip.
-        q12 = ik.solve(thumb0, ik.tip_pos(out[:3]), out[1:3])
-        q12 = p * pinch[1:] + (1.0 - p) * q12
-        out[0] = thumb * pose[0] + (1.0 - thumb) * thumb0
-        out[1:3] = thumb * pose[1:3] + (1.0 - thumb) * q12
-        # Fingers also wait for thumb clearance: in a pinch the ring/pinky stay straight.
-        w = fingers * thumb
-        out[3:] = w * pose[3:] + (1.0 - w) * out[3:]
+        out[:3] = thumb_target(side, hand)
+        # Only a thumb opened past the cup grip counts: a grip's nearly straight fingers stay curled.
+        w = float(np.mean(finger_extension(hand))) * _ramp(thumb_gap(hand), CUP_GAP, OPEN_GAP)
+        out[3:] = w * np.asarray(OPEN_POSE[side])[3:] + (1.0 - w) * out[3:]
         return out
 
     def __call__(self, target, hands):

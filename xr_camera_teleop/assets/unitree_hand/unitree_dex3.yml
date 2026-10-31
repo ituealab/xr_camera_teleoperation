@@ -28,8 +28,9 @@ left:
   # Scaling factor for vector retargeting only
   # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
   scaling_factor: 1.0
-  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
-  low_pass_alpha: 0.2
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency.
+  # Applied once per solve; solves run once per camera frame (~15 Hz), so 0.7 lags ~30 ms.
+  low_pass_alpha: 0.7
 
 right:
   type: DexPilot # or vector
@@ -59,5 +60,6 @@ right:
   # Scaling factor for vector retargeting only
   # For example, Allegro is 1.6 times larger than normal human hand, then this scaling factor should be 1.6
   scaling_factor: 1.0
-  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
-  low_pass_alpha: 0.2
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency.
+  # Applied once per solve; solves run once per camera frame (~15 Hz), so 0.7 lags ~30 ms.
+  low_pass_alpha: 0.7

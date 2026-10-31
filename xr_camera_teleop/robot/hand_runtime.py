@@ -13,9 +13,16 @@ import numpy as np
 from xr_camera_teleop.robot.limits import slew_targets
 
 
+# Command lead over the measured joint [rad]. A blocked joint then sees at most
+# kp * lead (1.5 * 0.5 = 0.75 Nm), half the URDF's 1.4 Nm thumb limit, instead of
+# building up torque until the motor's overcurrent protection disables it.
+MAX_LEAD = .5
+
+
 class SharedHand:
     def __init__(self, ctx, initial):
         self.lock = ctx.Lock()
+        self.measured = ctx.RawArray('d', [float('nan')] * 14)
         self.input = ctx.RawArray('d', 150)
         self.target = ctx.RawArray('d', initial)
         self.action = ctx.RawArray('d', initial)
@@ -34,12 +41,19 @@ class SharedHand:
         if not np.isfinite(values).all():
             active = False
         with self.lock:
-            if bool(active) != bool(self.active.value):
+            toggled = bool(active) != bool(self.active.value)
+            if toggled:
                 self.epoch.value += 1
             self.active.value = bool(active)
-            np.frombuffer(self.input)[:] = values
-            self.seq.value += 1
+            # ee_cmd outruns the camera: a repeated frame is not new work for the retargeter.
+            if toggled or not np.array_equal(np.frombuffer(self.input), values):
+                np.frombuffer(self.input)[:] = values
+                self.seq.value += 1
             self.input_time.value = time.monotonic()
+
+    def set_measured(self, q):
+        with self.lock:
+            np.frombuffer(self.measured)[:] = q
 
     def command(self, previous, speed, dt, timeout, now=None):
         now = time.monotonic() if now is None else now
@@ -48,7 +62,11 @@ class SharedHand:
                      and now - self.input_time.value <= timeout
                      and now - self.target_time.value <= timeout)
             target = np.frombuffer(self.target).copy() if valid else previous
-        return slew_targets(previous, target, speed, dt) if valid else previous.copy()
+            measured = np.frombuffer(self.measured).copy()
+        if not valid:
+            return previous.copy()
+        command = slew_targets(previous, target, speed, dt)
+        return np.clip(command, measured - MAX_LEAD, measured + MAX_LEAD) if np.isfinite(measured).all() else command
 
 
 def _retarget_worker(shared, stop, ready, errors, factory, timeout):
@@ -61,6 +79,11 @@ def _retarget_worker(shared, stop, ready, errors, factory, timeout):
                 seq, epoch = shared.seq.value, shared.epoch.value
                 active = shared.active.value and time.monotonic() - shared.input_time.value <= timeout
                 values = np.frombuffer(shared.input).copy()
+            if active and seq == last_seq:
+                # Input is still arriving and already solved, so the target is not stale.
+                with shared.lock:
+                    if shared.seq.value == seq and shared.target_epoch.value == shared.epoch.value:
+                        shared.target_time.value = time.monotonic()
             if not active or seq == last_seq:
                 stop.wait(.002)
                 continue
@@ -164,6 +187,9 @@ class HandRuntime:
     def set_input(self, left, right, active):
         # A dead retarget worker must cause an immediate hold, not repeat its last result.
         self.shared.set_input(left, right, active and all(p.is_alive() for p in self.processes))
+
+    def set_measured(self, q):
+        self.shared.set_measured(q)
 
     def get_action(self):
         with self.shared.lock:
