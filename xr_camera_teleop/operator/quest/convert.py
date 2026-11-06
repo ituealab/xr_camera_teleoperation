@@ -116,6 +116,39 @@ def build_message(frame_id, t_capture, t_publish, hands_value, head_flat=None, m
     return msg
 
 
+def jpeg_size(data):
+    """(width, height) from a JPEG's SOF marker without decoding, or None."""
+    b = bytes(data[:65536]) if data is not None else b""
+    if b[:2] != b"\xff\xd8":
+        return None
+    i = 2
+    while i + 9 < len(b):
+        if b[i] != 0xFF:
+            i += 1
+            continue
+        marker = b[i + 1]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7 or marker == 0xFF:
+            i += 1 if marker == 0xFF else 2
+            continue
+        length = int.from_bytes(b[i + 2:i + 4], "big")
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            h = int.from_bytes(b[i + 5:i + 7], "big")
+            w = int.from_bytes(b[i + 7:i + 9], "big")
+            return (w, h) if w > 0 and h > 0 else None
+        i += 2 + length
+    return None
+
+
+def view_plane(mode, aspect, vfov_deg=70.0, ego_height=0.9):
+    """Head-locked image plane for the robot camera: (distanceToCamera, height).
+    immersive: the plane spans the camera's vertical FOV, so objects appear at true angular size;
+    ego: a smaller window 2 m ahead, passthrough around it."""
+    if mode == "immersive":
+        d = 1.0
+        return d, 2.0 * d * float(np.tan(np.radians(vfov_deg) / 2.0))
+    return 2.0, float(ego_height)
+
+
 def project_head_view(points_xr, T_head_xr, size=(640, 480), fov_deg=90.0):
     """Project XR-world points into a pinhole view from the head pose (WebXR camera looks along its -z).
     Returns (N,2) pixels and a visibility mask."""

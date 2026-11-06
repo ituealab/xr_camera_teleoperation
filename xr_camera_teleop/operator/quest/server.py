@@ -11,6 +11,8 @@ Quest browser:  https://<this machine>:8012/?ws=wss://<this machine>:8012   (typ
 
     Vuer HTTPS/WSS :8012  --HAND_MOVE / CAMERA_MOVE-->  convert.build_message  --> ZMQ PUB :5594 (msgpack)
     HTTP :8771  /  /overlay.mjpg (hands seen from the headset)  /latest.json  /health
+    --camera: robot ZED left/right JPEGs (deploy/zed_stereo_stream.py, ZMQ) -> head-locked plane per eye in the
+    headset, forwarded without re-encoding; removed when the stream stalls so a frozen view never looks live.
 """
 from __future__ import annotations
 
@@ -57,6 +59,79 @@ class RateWin:
         return (len(self.t) - 1) / (self.t[-1] - self.t[0]) if len(self.t) > 2 and self.t[-1] > self.t[0] else 0.0
 
 
+class CameraFeed:
+    """Latest robot stereo pair from deploy/zed_stereo_stream.py (ZMQ SUB, conflated), optionally downscaled."""
+
+    def __init__(self, addr, width=0, quality=80):
+        self.addr, self.width, self.quality = addr, width, quality
+        self.lock = threading.Lock()
+        self.frame = None            # dict(seq, left, right, size, t_rx, age_ms)
+        self.rate = RateWin()
+        self.ages = deque(maxlen=300)
+        self.bytes = deque(maxlen=60)
+        self.stop = threading.Event()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _shrink(self, jpg):
+        import cv2
+        img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+        if img is None or img.shape[1] <= self.width:
+            return jpg
+        img = cv2.resize(img, (self.width, round(img.shape[0] * self.width / img.shape[1])), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+        return buf.tobytes() if ok else jpg
+
+    def _run(self):
+        from xr_camera_teleop.operator.quest.convert import jpeg_size
+        sock = zmq.Context.instance().socket(zmq.SUB)
+        sock.setsockopt(zmq.CONFLATE, 1)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.SUBSCRIBE, b"")
+        sock.setsockopt(zmq.RCVTIMEO, 500)
+        sock.connect(self.addr)
+        while not self.stop.is_set():
+            try:
+                raw = sock.recv()
+            except zmq.Again:
+                continue
+            try:
+                p = msgpack.unpackb(raw, raw=False)
+                left, right = p["left"], p.get("right")
+                if self.width:
+                    left = self._shrink(left)
+                    right = self._shrink(right) if right else None
+                size = jpeg_size(left)
+                if size is None:
+                    continue
+            except Exception as e:  # noqa: BLE001
+                print(f"[quest] bad camera packet: {e!r}", flush=True)
+                continue
+            now = time.monotonic()
+            age_ms = (time.time_ns() - int(p.get("stamp_ns", time.time_ns()))) / 1e6   # PC2 clock follows MSI
+            with self.lock:
+                self.frame = {"seq": p.get("sequence"), "left": left, "right": right, "size": size, "t_rx": now,
+                              "age_ms": age_ms}
+                self.rate.tick(now)
+                self.ages.append(age_ms)
+                self.bytes.append(len(left) + len(right or b""))
+
+    def latest(self):
+        with self.lock:
+            return self.frame
+
+    def health(self):
+        now = time.monotonic()
+        with self.lock:
+            f, ages, nb = self.frame, np.array(self.ages), np.array(self.bytes)
+            hz = self.rate.hz(now)
+        if f is None:
+            return {"addr": self.addr, "frames": False}
+        return {"addr": self.addr, "fps": hz, "size": f["size"], "stereo": f["right"] is not None,
+                "since_last_ms": (now - f["t_rx"]) * 1e3,
+                "capture_age_ms": {"p50": float(np.median(ages)), "p99": float(np.percentile(ages, 99))},
+                "kB_per_frame": float(nb.mean() / 1e3), "Mbit_s": float(nb.mean() * 8 * hz / 1e6)}
+
+
 class QuestServer:
     def __init__(self, a):
         self.a = a
@@ -77,6 +152,8 @@ class QuestServer:
         self.undecoded = {}                  # (side, type, len) -> count of payloads that are not a tracked hand
         self.jpeg, self.jpeg_seq, self.jpeg_cv = None, 0, threading.Condition()
         self.record = open(a.record, "w") if a.record else None
+        self.camera = CameraFeed(a.camera, a.view_width) if a.camera else None
+        self.view_rate = RateWin()
 
     # ------------------------------------------------------------------ vuer handlers
     async def on_hand_move(self, event, session):
@@ -125,13 +202,44 @@ class QuestServer:
             self.rate["head"].tick(time.monotonic())
 
     async def main(self, session):
+        import asyncio
         from vuer.schemas import Hands
         self.connected += 1
         print(f"[quest] headset connected (sessions so far: {self.connected})", flush=True)
         session.upsert(Hands(stream=True, key="hands", fps=self.a.hand_fps, hideLeft=not self.a.show_hands,
                              hideRight=not self.a.show_hands), to="bgChildren")
+        if self.camera is None or self.a.view == "none":
+            while True:
+                await asyncio.sleep(1.0)
+        keys = ["robot-left", "robot-right"]
+        shown, last_seq = False, None
         while True:
-            await __import__("asyncio").sleep(1.0)
+            f = self.camera.latest()
+            now = time.monotonic()
+            if f is not None and now - f["t_rx"] < self.a.camera_timeout:
+                if f["seq"] != last_seq:
+                    last_seq = f["seq"]
+                    session.upsert(self.view_elements(f), to="bgChildren")
+                    self.view_rate.tick(now)
+                    shown = True
+            elif shown:
+                # never leave a frozen robot view up: it would look live
+                session.remove @ keys
+                shown = False
+                print("[quest] robot camera stale: view removed", flush=True)
+            await asyncio.sleep(0.004)
+
+    def view_elements(self, f):
+        """Two head-locked planes, left image on the left eye's layer 1 and right on layer 2 (as TeleVuer).
+        A mono stream shows the same image to both eyes."""
+        from vuer.schemas import ImageBackground
+        from xr_camera_teleop.operator.quest.convert import view_plane
+        w, h = f["size"]
+        dist, height = view_plane(self.a.view, w / h, self.a.view_vfov_deg, self.a.ego_height)
+        right = f["right"] or f["left"]
+        common = dict(aspect=w / h, height=height, distanceToCamera=dist, interpolate=True)
+        return [ImageBackground(src=f["left"], key="robot-left", layers=1, **common),
+                ImageBackground(src=right, key="robot-right", layers=2, **common)]
 
     # ------------------------------------------------------------------ overlay + http
     def overlay_loop(self):
@@ -184,7 +292,11 @@ class QuestServer:
                 "sessions": self.connected,
                 "hand_fps_requested": self.a.hand_fps,
                 "undecoded": {f"{s}:{t}:{n}": c for (s, t, n), c in self.undecoded.items()},
+                "view": self.a.view if self.camera else "none",
+                "view_hz": self.view_rate.hz(now),
             }
+        if self.camera is not None:
+            out["camera"] = self.camera.health()
         if sk is not None and len(sk) > 5:
             # offset between the clocks is unknown, so only the spread is meaningful (network + event jitter)
             out["event_age_jitter_ms"] = {"p50_minus_min": float(np.median(sk) - sk.min()),
@@ -249,6 +361,14 @@ class QuestServer:
                   + (f"  jitter p50/p99 {h['event_age_jitter_ms']['p50_minus_min']:.0f}/"
                      f"{h['event_age_jitter_ms']['p99_minus_min']:.0f} ms" if "event_age_jitter_ms" in h else ""),
                   flush=True)
+            c = h.get("camera")
+            if c and c.get("frames") is not False:
+                print(f"[quest] camera {c['fps']:4.1f} fps {c['size'][0]}x{c['size'][1]} "
+                      f"{'stereo' if c['stereo'] else 'MONO'}  age p50/p99 {c['capture_age_ms']['p50']:.0f}/"
+                      f"{c['capture_age_ms']['p99']:.0f} ms  {c['Mbit_s']:.0f} Mbit/s  -> headset {h['view_hz']:4.1f} Hz",
+                      flush=True)
+            elif c:
+                print(f"[quest] camera: no frames from {c['addr']}", flush=True)
 
 
 def lan_ips():
@@ -272,6 +392,16 @@ def main():
     ap.add_argument("--cert", default=str(DATA / "quest-cert" / "cert.pem"))
     ap.add_argument("--key", default=str(DATA / "quest-cert" / "key.pem"))
     ap.add_argument("--record", default=None, help="append every published message to this JSONL file")
+    ap.add_argument("--camera", default=None, metavar="ZMQ",
+                    help="robot stereo stream to show in the headset (PC2: tcp://192.168.123.164:5605)")
+    ap.add_argument("--view", choices=("ego", "immersive", "none"), default="ego",
+                    help="ego: window 2 m ahead with passthrough around it; immersive: fills the camera's FOV")
+    ap.add_argument("--view-vfov-deg", type=float, default=70.0, help="camera vertical FOV for --view immersive")
+    ap.add_argument("--ego-height", type=float, default=0.9, help="window height (m) at 2 m for --view ego")
+    ap.add_argument("--view-width", type=int, default=0,
+                    help="downscale each eye to this width on MSI before sending over Wi-Fi (0 = as received)")
+    ap.add_argument("--camera-timeout", type=float, default=0.5,
+                    help="remove the view when no new frame arrived for this long (s)")
     a = ap.parse_args()
 
     from vuer import Vuer
@@ -291,12 +421,21 @@ def main():
 
     for ip in lan_ips():
         print(f"[quest] Quest browser:  https://{ip}:{a.port}/?ws=wss://{ip}:{a.port}", flush=True)
-    print(f"[quest] ZMQ {a.zmq}   HTTP http://{a.http_host}:{a.http_port}/   hand fps requested {a.hand_fps:g}",
-          flush=True)
+    print(f"[quest] ZMQ {a.zmq}   HTTP http://{a.http_host}:{a.http_port}/   hand fps requested {a.hand_fps:g}"
+          + (f"   camera {a.camera} view {a.view}" if a.camera else "   no camera"), flush=True)
 
     def _term(*_):
+        # Vuer's graceful shutdown waits for open headset websockets; nothing here needs more than a flush
+        def _force():
+            time.sleep(2.0)
+            if srv.record:
+                srv.record.flush()
+            print("[quest] stopped (forced)", flush=True)
+            os._exit(0)
+        threading.Thread(target=_force, daemon=True).start()
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, _term)
+    signal.signal(signal.SIGINT, _term)
     try:
         app.run()
     except KeyboardInterrupt:

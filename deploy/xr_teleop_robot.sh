@@ -70,9 +70,11 @@ case "${1:-help}" in
   up)
     shift
     yes=""
+    quest=""
     for arg in "$@"; do
       case "$arg" in
         --yes) yes=--yes ;;
+        --quest) quest=1 ;;
         --frax) IK_BACKEND=frax ;;
         --sqp) IK_BACKEND=sqp ;;
         *) printf 'Bilinmeyen seçenek: %s\n' "$arg" >&2; exit 2 ;;
@@ -84,6 +86,8 @@ case "${1:-help}" in
     # Cameras first: a camera fault should stop here, before balance is released.
     printf 'Kameralar başlatılıyor...\n'
     "${SERVICES[@]}" start all > /dev/null
+    # ZED left/right pairs for the Quest headset view (MSI: xr_teleop start --quest)
+    [[ -z "$quest" ]] || "${SERVICES[@]}" start stereo > /dev/null
     confirm_supported "$yes"
     "$HOME/.local/bin/developer" start
     ros_env
@@ -116,9 +120,10 @@ case "${1:-help}" in
     exec tail -n 40 -F "$LOG"
     ;;
   help|-h|--help)
-    printf 'Kullanım: xr_teleop up [--yes] [--frax|--sqp]|down|home|status|logs\n'
+    printf 'Kullanım: xr_teleop up [--yes] [--frax|--sqp] [--quest]|down|home|status|logs\n'
     printf 'up: kameralar, developer modu, ee_runtime, kollar home. Sonra MSI arayüzünde R.\n'
     printf '    --frax: frax IK (daha hassas takip), varsayılan --sqp.\n'
+    printf '    --quest: Quest gözlüğü için ZED stereo yayınını da başlatır.\n'
     printf 'down: kollar home, ee_runtime ve kameralar durur.\n'
     ;;
   *) printf 'Bilinmeyen komut: %s\n' "$1" >&2; exit 2 ;;

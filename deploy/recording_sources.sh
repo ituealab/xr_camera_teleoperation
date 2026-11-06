@@ -42,5 +42,13 @@ case "${1:-help}" in
     set -u
     exec "$HOME/.local/share/xrcam-ros-env/bin/python" "$REPO/deploy/zed_preview.py" "$@"
     ;;
-  *) printf 'Usage: recording_sources.sh clock | zed | realsense | preview\n' ;;
+  stereo)
+    # ZED left/right JPEG pairs for the Quest headset view; started by `xr_teleop up --quest` only.
+    shift
+    set +u
+    source /opt/ros/foxy/setup.bash
+    set -u
+    exec "$HOME/.local/share/xrcam-ros-env/bin/python" "$REPO/deploy/zed_stereo_stream.py" "$@"
+    ;;
+  *) printf 'Usage: recording_sources.sh clock | zed | realsense | preview | stereo\n' ;;
 esac

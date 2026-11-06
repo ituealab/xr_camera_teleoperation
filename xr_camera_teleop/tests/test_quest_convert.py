@@ -125,3 +125,15 @@ def test_wrapper_maps_quest_motion_to_robot_axes(yaw_deg):
             exp[axis] = 0.08
             assert np.allclose(dp, exp, atol=0.005), (s, axis, dp)
     assert not w.swapped
+
+
+def test_jpeg_size_and_view_plane():
+    cv2 = pytest.importorskip("cv2")
+    from xr_camera_teleop.operator.quest.convert import jpeg_size, view_plane
+    for w, h, flags in ((1280, 720, []), (640, 360, [cv2.IMWRITE_JPEG_PROGRESSIVE, 1])):
+        ok, buf = cv2.imencode(".jpg", np.zeros((h, w, 3), np.uint8), flags)
+        assert jpeg_size(buf.tobytes()) == (w, h)
+    assert jpeg_size(b"not a jpeg") is None and jpeg_size(None) is None
+    d, hh = view_plane("immersive", 16 / 9, vfov_deg=70.0)
+    assert np.degrees(2 * np.arctan(hh / 2 / d)) == pytest.approx(70.0)   # true angular size
+    assert view_plane("ego", 16 / 9, ego_height=0.9) == (2.0, 0.9)
