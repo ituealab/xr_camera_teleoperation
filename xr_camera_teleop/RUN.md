@@ -58,6 +58,28 @@ data/xr-env/bin/python -m xr_camera_teleop.operator.synthetic_stream
 data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --no-dataset
 ```
 
+## Meta Quest 3S as the hand source
+
+The Quest browser streams WebXR hand tracking to `operator/quest/server.py`, which publishes the same message as the
+WiLoR server on its own ports (ZMQ :5594, HTTP :8771), so the clutch, filters, retargeting and preview are unchanged.
+It needs its own venv (vuer pins numpy below 2): `python3 -m venv data/quest-venv`, then
+`data/quest-venv/bin/pip install -r envs/quest.freeze.txt`. `params-proto` must stay below 3, or `from vuer import Vuer`
+fails. Make a certificate for MSI's Wi-Fi address in `data/quest-cert/` (`openssl req -x509 ... -addext
+"subjectAltName=IP:192.168.1.105"`).
+
+```bash
+data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server
+```
+
+```bash
+data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --source quest --no-publish --no-dataset
+```
+
+On the Quest open `https://192.168.1.105:8012/?ws=wss://192.168.1.105:8012`, typing `https://` (the browser otherwise
+tries plain HTTP and reports that it cannot connect), accept the certificate, press Enter VR, put the controllers down.
+The server asks the browser for 90 Hz hand updates (Vuer's default is 30) and measured about 92 Hz of distinct samples.
+`tools/quest_probe.py` is the raw TeleVuer probe used to bring the headset up.
+
 ## Updating
 
 PC2 has no GitHub credentials, so copy robot-runtime with a git bundle from MSI, then on PC2:

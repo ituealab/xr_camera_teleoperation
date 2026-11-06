@@ -4,6 +4,7 @@
     data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui     # (or `xrcam-ui`), then open http://127.0.0.1:8780/
 
 Needs the hand server (wilor-venv):  data/wilor-venv/bin/python -m xr_camera_teleop.operator.perception.server --source zed
+or, with --source quest, the Quest server (quest-venv):  data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server
 Pipeline (same as tools/render_session.py, live): ZMQ :5590 -> WiLoRTeleWrapper (ego clutch, filters)
 -> SafeG1_29_ArmIK (the same IK code the robot runs) -> Dex3 HandRetargeting -> G1Sim (kinematic MuJoCo, pelvis fixed);
 floating hands via HandMapper (shared anchor). The left panel is the server's own /overlay.mjpg.
@@ -98,7 +99,7 @@ body.dataset-recording #recbadge{display:inline-block}
 <input id=pd type=number value=0 step=1 style="width:60px" onchange="pitch()"> deg (+ = looking down)</label>
 </header>
 <div class=grid>
-<div class=p><h3>WiLoR (server overlay)</h3><img id=ov></div>
+<div class=p><h3>__OVTITLE__</h3><img id=ov></div>
 <div class=p id=zedpanel><h3>ZED left RGB <span id=rgbst>— bağlanıyor</span></h3><img id=rgb src="/zed.mjpg"></div>
 <div class=p><h3>G1 preview (same IK + Dex3 retargeting as the robot)</h3><img src="/g1.mjpg"></div>
 <div class="p floating"><h3>Floating hands</h3><img src="/mid.mjpg"></div>
@@ -166,7 +167,7 @@ async function poll(){try{const s=await (await fetch('/api/status')).json();
  st.innerHTML=(s.calibrated?'<span class=ok>CALIBRATED</span>':'<span class=warn>waiting: hold both hands still 1 s (both inside the frame, closer than 0.9 m)</span>')
  +(s.engaged?'':' | <span class=warn>PAUSED</span>')+' | '+h('left')+' '+h('right')
  +'<br>tilt: '+s.tilt.source+' pitch '+s.tilt.pitch.toFixed(1)+'&deg; roll '+s.tilt.roll.toFixed(1)+'&deg; yaw '+(s.tilt.yaw||0).toFixed(0)+'&deg; | k='+s.k
- +'<br>fps: WiLoR '+s.fps.overlay.toFixed(1)+' | hands '+s.fps.mid.toFixed(1)+' | G1 '+s.fps.g1.toFixed(1)+' | pipeline '+s.fps.pipeline.toFixed(0)+' Hz'
+ +'<br>fps: __SRCNAME__ '+s.fps.overlay.toFixed(1)+' | hands '+s.fps.mid.toFixed(1)+' | G1 '+s.fps.g1.toFixed(1)+' | pipeline '+s.fps.pipeline.toFixed(0)+' Hz'
  +' | latency capture&rarr;render '+s.latency_ms.toFixed(0)+' ms (server '+s.server_latency_ms.toFixed(0)+' ms)'
  +(s.self_collision?'<br>self-collision: '+(s.self_collision.on?'<span class=ok>ON</span>'+(s.self_collision.mode&&s.self_collision.mode!='track'?' <span class=warn>'+(s.self_collision.mode=='home'?'returning home':'switching arm branch')+'</span>':'')+' constrained '+s.self_collision.constrained+' / '+s.self_collision.solves+' solves, gated '+s.self_collision.gated+', escapes '+s.self_collision.escapes+', homes '+s.self_collision.homes+', IK '+s.self_collision.last_ms.toFixed(1)+' ms':'<span class=warn>OFF</span>'):'')
  +'<br>'+(s.follow?'<span class=ok>ROBOT FOLLOWS</span> ':'<span class=warn>robot holds</span> ')+s.robot_text
@@ -287,8 +288,11 @@ class LiveUI:
         arm_names = list(ik.reduced_robot.model.names[1:])
         hand_names = {"left": list(hr.left_retargeting_joint_names), "right": list(hr.right_retargeting_joint_names)}
         self.sim = G1Sim(arm_names, hand_names)
+        # The Quest reports handedness itself; the swap guard is for WiLoR's label mix-ups and would only fire
+        # (arms to neutral + home) when a Quest operator crosses their hands.
         wrapper = WiLoRTeleWrapper(client=ClientProxy(HandStreamClient(a.addr), self), k=a.k,
-                                   neutral=neutral_from_ik_fk(ik), auto_calibrate=True)
+                                   neutral=neutral_from_ik_fk(ik), auto_calibrate=True,
+                                   handedness_guard=getattr(a, "source", "wilor") != "quest")
 
         def on_home():                # Reset / L-R swap: local preview AND the robot go back to q=0 in joint space
             if hasattr(ik, "reset_to_home"):
@@ -344,7 +348,7 @@ class LiveUI:
                 self.t_cap = float(msg.get("t_capture", now))
                 self.server_latency_ms = (float(msg.get("t_publish", now)) - self.t_cap) * 1e3
                 for h, dd in msg.get("hands", {}).items():
-                    if dd["wrist_pos"][2] > 0.9:           # same gate as the wrapper: not the operator's hand
+                    if dd["wrist_pos"][2] > msg.get("max_hand_depth", 0.9):   # same gate as the wrapper
                         continue
                     last_cam[h] = (np.asarray(dd["wrist_pos"], float), np.asarray(dd["wrist_rot"], float),
                                    np.asarray(dd["keypoints"], float))
@@ -615,7 +619,9 @@ class LiveUI:
 
     def serve(self):
         ui = self
-        page = PAGE.replace("__OVPORT__", str(self.a.server_port)).encode()
+        page = (PAGE.replace("__OVPORT__", str(self.a.server_port))
+                .replace("__OVTITLE__", "Quest hands (headset view)" if getattr(self.a, "source", "wilor") == "quest" else "WiLoR (server overlay)")
+                .replace("__SRCNAME__", "Quest" if getattr(self.a, "source", "wilor") == "quest" else "WiLoR")).encode()
 
         class H(BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -763,8 +769,12 @@ class LiveUI:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--addr", default="tcp://127.0.0.1:5590")
-    ap.add_argument("--server-port", type=int, default=8770, help="hand server HTTP port (overlay.mjpg)")
+    ap.add_argument("--source", choices=("wilor", "quest"), default="wilor",
+                    help="hand source: WiLoR perception server (:5590/:8770) or the Quest server "
+                         "(operator/quest/server.py, :5594/:8771); --addr/--server-port override")
+    ap.add_argument("--addr", default=None, help="hand stream ZMQ address (default per --source)")
+    ap.add_argument("--server-port", type=int, default=None,
+                    help="hand server HTTP port for overlay.mjpg and /health (default per --source)")
     ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to open the UI from another machine")
     ap.add_argument("--port", type=int, default=8780)
     ap.add_argument("--k", type=float, default=0.8)
@@ -783,6 +793,10 @@ def main(argv=None):
     ap.add_argument("--recording-config", default=str(CONFIGS / "recording.json"))
     ap.add_argument("--dataset-root", default=None, help="override configured ~/teleop_data root")
     a = ap.parse_args(argv)
+    if a.addr is None:
+        a.addr = "tcp://127.0.0.1:5594" if a.source == "quest" else "tcp://127.0.0.1:5590"
+    if a.server_port is None:
+        a.server_port = 8771 if a.source == "quest" else 8770
     if not np.isfinite(a.rate) or a.rate <= 0:
         ap.error("--rate must be positive and finite")
     if a.dds:

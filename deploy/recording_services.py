@@ -10,7 +10,9 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT/"data/recording-services"
-MODULES = {"clock":"clock_echo.py", "zed":"zed_camera.launch.py", "realsense":"rs_launch.py", "preview":"zed_preview.py"}
+MODULES = {"clock":"clock_echo.py", "zed":"zed_camera.launch.py", "realsense":"rs_launch.py", "preview":"zed_preview.py", "stereo":"zed_stereo_stream.py"}
+# "all" = what every session needs; the Quest stereo stream costs PC2 a right-eye JPEG per frame, so it is opt-in.
+ALL = ("clock","zed","realsense","preview")
 # RealSense startup can make the ZED fail detection, so it starts only after this line.
 READY_LINES = {"zed":"*** Subscribers ***"}
 READY_TIMEOUT_SECONDS = 40
@@ -92,9 +94,10 @@ def main():
     parser.add_argument("operation",choices=("start","stop","status"))
     parser.add_argument("service",choices=("all",)+tuple(MODULES),default="all",nargs="?")
     args = parser.parse_args()
-    names = list(MODULES) if args.service=="all" else [args.service]
+    names = (list(ALL) if args.operation=="start" else list(MODULES)) if args.service=="all" else [args.service]
     if args.operation=="stop":
-        names = list(reversed(names))
+        # stop everything that runs, the opt-in stream first (it subscribes to the ZED)
+        names = list(reversed(names)) if args.service!="all" else ["stereo"]+list(reversed(ALL))
     result = {}
     for name in names:
         result[name] = start(name) if args.operation=="start" else stop(name) if args.operation=="stop" else current(name)
