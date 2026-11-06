@@ -32,7 +32,7 @@ launch() {
 stop_one() {
   local name=$1 pid
   if running "$name"; then
-    pid=$(tmux display-message -p -t "=xr-teleop-$name" '#{pane_pid}')
+    pid=$(tmux display-message -p -t "=xr-teleop-$name:" '#{pane_pid}')
     kill -INT "$pid" 2>/dev/null || true
     for ((i=0; i<10; i++)); do
       running "$name" || return 0
@@ -43,6 +43,8 @@ stop_one() {
 }
 
 QUEST_CAMERA="${XR_QUEST_CAMERA:-tcp://192.168.123.164:5605}"
+# Each eye is shrunk on MSI to this width before Wi-Fi: full 1280 px pairs (~100 Mbit/s) slowed the Quest's hand stream.
+QUEST_VIEW_WIDTH="${XR_QUEST_VIEW_WIDTH:-960}"
 case "${1:-start}" in
   start)
     shift || true
@@ -71,7 +73,7 @@ case "${1:-start}" in
         fi
         printf 'Quest sunucusu başlatılıyor (robot kamerası: %s, %s)...\n' "$QUEST_CAMERA" "$view"
         launch quest "$REPO/data/quest-venv/bin/python" -u -m xr_camera_teleop.operator.quest.server \
-          --camera "$QUEST_CAMERA" --view "$view" 9>&-
+          --camera "$QUEST_CAMERA" --view "$view" --view-width "$QUEST_VIEW_WIDTH" 9>&-
       fi
       wait_http quest http://127.0.0.1:8771/health
     else
