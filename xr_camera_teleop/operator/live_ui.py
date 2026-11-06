@@ -11,7 +11,8 @@ Robot link: the wrapper's TeleData and the Dex3 retargeting below are published 
 operator/link.py) to the ROS bridge, and ee_runtime's status is shown on the status line. The robot holds until
 "Start robot" (R). Closing or restarting this UI only stops forwarding: ee_runtime holds the arms where they are.
 --no-publish: preview only (no ee_cmd socket).
-Threads: pipeline (100 Hz default, ZMQ conflated latest) | render (EGL offscreen, ~30 fps, MJPEG) | HTTP.
+Threads: pipeline (100 Hz default, ZMQ conflated latest; sends ee_cmd) | preview (G1 arm IK for the
+right panel, at render fps, off the command path) | render (EGL offscreen, ~30 fps, MJPEG) | HTTP.
 Camera tilt: the per-message cam_R_level (ZED IMU) is used automatically; the page can override it
 with a manual pitch. Keys on the page: C calibrate, H reset/home, R start/stop robot, Space pause/engage clutch.
 """
@@ -256,6 +257,8 @@ class LiveUI:
         self.hand_seen = {h: {"seen": False, "detected_ever": False} for h in SIDES}
         self.ready = threading.Event()
         self.ik = None
+        self.ik_lock = threading.Lock()       # preview IK: preview thread solves, pipeline may reset it
+        self.preview_in = None                # (td, hand_q) latest from the pipeline
         self.dataset = None
 
     # ------------------------------------------------------------ pipeline thread
@@ -289,23 +292,21 @@ class LiveUI:
 
         def on_home():                # Reset / L-R swap: local preview AND the robot go back to q=0 in joint space
             if hasattr(ik, "reset_to_home"):
-                ik.reset_to_home()
+                with self.ik_lock:
+                    ik.reset_to_home()
             self.link.request_home()
         wrapper.on_home_request = on_home
         waist_h = 1.5 - WAIST_DROP
         self.waist_h = waist_h
         mapper = HandMapper("relative", a.k, 1.5, neutral_rot="ref", anchors=robot_anchors(waist_h), max_depth=0.9)
         last_cam, last_seen = {}, {h: -1e9 for h in SIDES}
-        cur_dq = np.zeros(14)
         last_fid = None
         hand_q = {}
         period = 1 / a.rate
-        nxt = prev = time.monotonic()
+        nxt = time.monotonic()
         self.ready.set()
         while not self.stop.is_set():
             now = time.monotonic()
-            dt = float(np.clip(now - prev, 1 / 240, 0.1))
-            prev = now
             with self.lock:
                 cmds, self.cmds = self.cmds, []
             for c, v in cmds:
@@ -326,7 +327,6 @@ class LiveUI:
                     mapper.scale = self.k
             wrapper.cam_pitch_deg = self.pitch_deg
             td = wrapper.get_tele_data()
-            self.link.send(td)
             self.last_td = td
             msg = wrapper.last_msg
             if self.dataset:
@@ -358,6 +358,8 @@ class LiveUI:
                     if len(hand_q) == 2:                # the robot gets exactly what the preview shows
                         self.link.hands = np.concatenate((hand_q["left"][hr.left_dex_retargeting_to_hardware],
                                                           hand_q["right"][hr.right_dex_retargeting_to_hardware]))
+            # Send after this frame's Dex3 retargeting so fingers are not one tick behind the arms.
+            self.link.send(td)
             cal = wrapper.clutch["left"].calibrated and wrapper.clutch["right"].calibrated
             if cal and not mapper.calibrated and all(h in last_cam for h in SIDES):
                 mapper.calibrate({h: (last_cam[h][0], last_cam[h][1]) for h in SIDES})
@@ -370,14 +372,8 @@ class LiveUI:
                 res[h] = r
                 st[h] = "hidden" if r is None else ("live" if age < STALE_AFTER else "stale")
                 self.hand_seen[h]["seen"] = age < wrapper.hand_timeout
-            # G1
-            sol_q, _ = ik.solve_ik(td.left_wrist_pose, td.right_wrist_pose, self.sim.cur_arm.copy(), cur_dq)
-            arm_q = np.asarray(sol_q, float) if np.all(np.isfinite(sol_q)) else None
             with self.lock:
-                prev_arm = self.sim.cur_arm.copy()
-                self.sim.step_targets(arm_q, hand_q, dt)
-                cur_dq = (self.sim.cur_arm - prev_arm) / dt
-                self.qpos = self.sim.data.qpos.copy()
+                self.preview_in = (td, dict(hand_q))
                 self.hand_res, self.hand_state, self.calibrated = res, st, cal
                 self.swapped = wrapper.swapped
             self.fps["pipe"].tick()
@@ -388,6 +384,45 @@ class LiveUI:
             else:
                 nxt = time.monotonic()
         wrapper.close()
+
+    # ------------------------------------------------------------ preview thread
+    def preview(self):
+        try:
+            self._preview()
+        except Exception as e:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            self.error = f"preview crashed: {e!r}"
+
+    def _preview(self):
+        """G1 preview IK, kept off the pipeline thread: the robot runs its own IK on PC2."""
+        self.ready.wait()
+        ik, sim = self.ik, self.sim
+        cur_dq = np.zeros(14)
+        period = 1 / self.a.fps
+        nxt = prev = time.monotonic()
+        while not self.stop.is_set():
+            with self.lock:
+                latest = self.preview_in
+            now = time.monotonic()
+            dt = float(np.clip(now - prev, 1 / 240, 0.1))
+            prev = now
+            if latest is not None:
+                td, hand_q = latest
+                with self.ik_lock:
+                    sol_q, _ = ik.solve_ik(td.left_wrist_pose, td.right_wrist_pose, sim.cur_arm.copy(), cur_dq)
+                arm_q = np.asarray(sol_q, float) if np.all(np.isfinite(sol_q)) else None
+                with self.lock:
+                    prev_arm = sim.cur_arm.copy()
+                    sim.step_targets(arm_q, hand_q, dt)
+                    cur_dq = (sim.cur_arm - prev_arm) / dt
+                    self.qpos = sim.data.qpos.copy()
+            nxt += period
+            slp = nxt - time.monotonic()
+            if slp > 0:
+                time.sleep(slp)
+            else:
+                nxt = time.monotonic()
 
     # ------------------------------------------------------------ render thread
     def render(self):
@@ -704,7 +739,7 @@ class LiveUI:
         if not self.a.no_dataset:
             from xr_camera_teleop.recording.backend import DatasetBackend
             self.dataset = DatasetBackend(self.a.recording_config, self.a.dataset_root)
-        for f in (self.pipeline, self.render, self.health_loop):
+        for f in (self.pipeline, self.preview, self.render, self.health_loop):
             threading.Thread(target=f, daemon=True).start()
         self.serve()
         print(f"[live_ui] http://{self.a.host}:{self.a.port}/   (hand server expected on :{self.a.server_port}, "
