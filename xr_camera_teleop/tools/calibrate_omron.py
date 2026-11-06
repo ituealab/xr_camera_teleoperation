@@ -1,6 +1,6 @@
 """Checkerboard calibration of the overhead Omron FH camera -> configs/camera/omron-fh.json.
 
-Live:     data/wilor-venv/bin/python xr_camera_teleop/tools/calibrate_omron.py
+Live:     data/wilor-venv/bin/python -m xr_camera_teleop.tools.calibrate_omron
 Offline:  ... calibrate_omron.py --images data/camera/omron-calib --table-distance-cm 100
 
 Start with the board lying flat on the table (that view also measures camera height and tilt),
@@ -17,9 +17,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "xr_camera_teleop" / "camera"))
-from camera_omron import CALIBRATION, OmronCamera  # noqa: E402
+from xr_camera_teleop.operator.camera.camera_omron import CALIBRATION, OmronCamera  # noqa: E402
+from xr_camera_teleop.paths import DATA  # noqa: E402
 
 FLAGS = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
 
@@ -74,7 +73,7 @@ def main():
     ap.add_argument("--views", type=int, default=25, help="views to capture")
     ap.add_argument("--min-shift", type=float, default=25.0, help="px mean corner shift for a new view")
     ap.add_argument("--images", type=Path, default=None, help="calibrate from saved images instead of live")
-    ap.add_argument("--save-dir", type=Path, default=ROOT / "data/camera/omron-calib")
+    ap.add_argument("--save-dir", type=Path, default=DATA / "camera/omron-calib")
     ap.add_argument("--out", type=Path, default=CALIBRATION)
     ap.add_argument("--table-distance-cm", type=float, default=None,
                     help="tape-measured camera-to-table distance; fixes the focal length via the flat first view")

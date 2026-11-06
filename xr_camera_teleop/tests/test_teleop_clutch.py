@@ -1,7 +1,7 @@
 import numpy as np
 
-from xr_camera_teleop.teleop import filters as F
-from xr_camera_teleop.teleop.clutch import HandClutch, neutral_from_tv_wrapper_const
+from xr_camera_teleop.operator import filters as F
+from xr_camera_teleop.operator.clutch import HandClutch, neutral_from_tv_wrapper_const
 
 
 def rz(a):
@@ -97,7 +97,7 @@ def test_hold_last_valid_and_stale_reanchor():
 
 
 def test_still_detector():
-    from xr_camera_teleop.teleop.clutch import StillDetector
+    from xr_camera_teleop.operator.clutch import StillDetector
     d = StillDetector(("a",), window=1.0, radius=0.03)
     for i in range(20):
         d.push("a", i * 0.05, [0, 0, 0.005 * (i % 2)])

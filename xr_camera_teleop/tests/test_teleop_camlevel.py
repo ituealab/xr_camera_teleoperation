@@ -1,6 +1,6 @@
 import numpy as np
 
-from xr_camera_teleop.teleop.camlevel import level_from_down, level_rotation, pitch_rotation
+from xr_camera_teleop.operator.camlevel import level_from_down, level_rotation, pitch_rotation
 
 
 def test_pitch_matches_gravity_construction():

@@ -4,7 +4,6 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 mujoco = pytest.importorskip("mujoco")
 from xr_camera_teleop.viz.hands_scene import HandsScene  # noqa: E402
 from xr_camera_teleop.viz.synth import make_message  # noqa: E402

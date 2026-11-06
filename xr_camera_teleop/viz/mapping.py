@@ -22,7 +22,7 @@ ANCHOR_DZ = -0.30  # below the head
 
 
 # Robot neutral wrist positions (G1_29_ArmIK FK at q=0, pelvis/waist frame; same constants
-# the clutch in xr_camera_teleop/teleop/clutch.py starts from, neutral rotation = identity).
+# the clutch in xr_camera_teleop/operator/clutch.py starts from, neutral rotation = identity).
 ROBOT_NEUTRAL = {"left": (0.2498, 0.1487, 0.0952), "right": (0.2498, -0.1486, 0.0952)}
 WAIST_DROP = 0.50  # default waist reference height = cam_height - WAIST_DROP
 

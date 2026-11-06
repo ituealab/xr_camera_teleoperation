@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from xr_camera_teleop.viz.mapping import (HANDS, WAIST_DROP, Extrapolator, HandMapper,  # noqa: E402
                                   HandSmoother, robot_anchors)
-from xr_camera_teleop.teleop.camlevel import level_rotation  # noqa: E402
-from xr_camera_teleop.teleop.clutch import StillDetector  # noqa: E402
+from xr_camera_teleop.operator.camlevel import level_rotation  # noqa: E402
+from xr_camera_teleop.operator.clutch import StillDetector  # noqa: E402
 from xr_camera_teleop.viz.stream import make_client  # noqa: E402
 
 HIDE_AFTER = 2.0  # seconds a hand may be missing before it vanishes (grey until then)

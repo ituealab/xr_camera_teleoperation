@@ -3,7 +3,6 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from xr_camera_teleop.viz.mapping import (ANCHOR_DZ, ANCHOR_XY, BONES, R_W_CAM, HandMapper, HandSmoother,  # noqa: E402
                                   cam_to_world_points, project_so3)
 from xr_camera_teleop.viz.synth import local_hand, make_message  # noqa: E402

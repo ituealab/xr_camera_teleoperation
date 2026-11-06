@@ -1,0 +1,66 @@
+{
+  "record_root": "~/teleop_data",
+  "ros_image": "xrcam-ros:humble",
+  "robot_host": "192.168.123.164",
+  "dds_interface": "enxc8a362efd15a",
+  "dds_domain": 0,
+  "clock_port": 5603,
+  "topics": [
+    "/zed2i/zed_node/left/image_rect_color/compressed",
+    "/zed2i/zed_node/left/camera_info",
+    "/camera/color/image_raw/compressed",
+    "/camera/color/camera_info",
+    "/lowstate",
+    "/lowcmd",
+    "/dex3/left/state",
+    "/dex3/right/state",
+    "/dex3/left/cmd",
+    "/dex3/right/cmd",
+    "/ee/command",
+    "/ee/state",
+    "/ee/status"
+  ],
+  "camera_topics": [
+    "/zed2i/zed_node/left/image_rect_color/compressed",
+    "/camera/color/image_raw/compressed"
+  ],
+  "required_topics": [
+    "/zed2i/zed_node/left/image_rect_color/compressed",
+    "/camera/color/image_raw/compressed",
+    "/lowstate",
+    "/dex3/left/state",
+    "/dex3/right/state"
+  ],
+  "state_topics": [
+    "/lowstate",
+    "/dex3/left/state",
+    "/dex3/right/state"
+  ],
+  "action_topics": [
+    "/lowcmd",
+    "/dex3/left/cmd",
+    "/dex3/right/cmd"
+  ],
+  "require_actions": true,
+  "tick_topic": "/lowstate",
+  "expected_rates_hz": {
+    "/zed2i/zed_node/left/image_rect_color/compressed": 30,
+    "/camera/color/image_raw/compressed": 30
+  },
+  "limits": {
+    "state_age_ms": 20,
+    "action_age_ms": 100,
+    "rate_ratio": 0.7,
+    "max_camera_lag_ms": 2000,
+    "tick_missing_percent": 1
+  },
+  "wall_clock_limit_ms": 5,
+  "start_timeout_seconds": 20,
+  "stop_timeout_seconds": 30,
+  "gesture_enabled": false,
+  "gesture_hold_seconds": 1,
+  "operator": {
+    "perception": "tcp://127.0.0.1:5590",
+    "ee_cmd": "tcp://127.0.0.1:5591"
+  }
+}

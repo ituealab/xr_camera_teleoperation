@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Offline render of a recorded session into ONE side-by-side mp4 (run with data/xr-env).
 
-    data/xr-env/bin/python xr_camera_teleop/tools/render_session.py \
+    data/xr-env/bin/python -m xr_camera_teleop.tools.render_session \
         --session data/sessions/20261009_105318 [--out X.mp4] [--k 0.8] [--start S --duration S]
 
 <session> is the base timestamp (or a path ending in it; cam_/hands_ prefixes are found in the directory).
@@ -102,17 +102,18 @@ def main(argv=None):
     t0 = ts[0]
 
     import mujoco
-    from xr_camera_teleop.api.overlay import draw_overlay
-    from xr_camera_teleop.teleop import xrt_compat
-    from xr_camera_teleop.teleop.clutch import neutral_from_ik_fk
-    from xr_camera_teleop.teleop.g1_mujoco_teleop import G1Sim, solve_hand
-    from xr_camera_teleop.teleop.wilor_tv_wrapper import SIDES, WiLoRTeleWrapper
+    from xr_camera_teleop.operator.perception.overlay import draw_overlay
+    from xr_camera_teleop.robot.ik import connect_ik, make_arm_ik
+    from xr_camera_teleop.robot.vendor.hand_retargeting import HandRetargeting
+    from xr_camera_teleop.operator.clutch import neutral_from_ik_fk
+    from xr_camera_teleop.sim.g1_kinematic import G1Sim, solve_hand
+    from xr_camera_teleop.operator.wrapper import SIDES, WiLoRTeleWrapper
     from xr_camera_teleop.viz.hands_scene import HandsScene, default_camera
     from xr_camera_teleop.viz.mapping import WAIST_DROP, HandMapper, robot_anchors
 
     # ---- G1 pipeline (same construction as g1_mujoco_teleop.main)
-    ik = xrt_compat.make_arm_ik()
-    hr = xrt_compat.make_hand_retargeting()
+    ik = make_arm_ik()
+    hr = HandRetargeting()
     arm_names = list(ik.reduced_robot.model.names[1:])
     hand_names = {"left": list(hr.left_retargeting_joint_names), "right": list(hr.right_retargeting_joint_names)}
     sim = G1Sim(arm_names, hand_names)
@@ -120,7 +121,7 @@ def main(argv=None):
     client = ReplayClient()
     wrapper = WiLoRTeleWrapper(client=client, k=a.k, neutral=neutral_from_ik_fk(ik), clock=lambda: clk[0],
                                auto_calibrate=True, cam_pitch_deg=a.cam_pitch_deg)
-    xrt_compat.connect_ik(ik, wrapper, lambda: clk[0])
+    connect_ik(ik, wrapper, lambda: clk[0])
     sim.model.vis.global_.offwidth = max(sim.model.vis.global_.offwidth, PW)
     sim.model.vis.global_.offheight = max(sim.model.vis.global_.offheight, PH)
     r_g1 = mujoco.Renderer(sim.model, PH, PW)

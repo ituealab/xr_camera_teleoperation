@@ -1,7 +1,7 @@
 import numpy as np
 
-from xr_camera_teleop.teleop import mano_to_webxr as m
-from xr_camera_teleop.teleop.synthetic_stream import canonical_hand_mano21
+from xr_camera_teleop.operator import mano_to_webxr as m
+from xr_camera_teleop.operator.synthetic_stream import canonical_hand_mano21
 
 
 def test_shape_and_order():
