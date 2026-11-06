@@ -288,8 +288,11 @@ class LiveUI:
         arm_names = list(ik.reduced_robot.model.names[1:])
         hand_names = {"left": list(hr.left_retargeting_joint_names), "right": list(hr.right_retargeting_joint_names)}
         self.sim = G1Sim(arm_names, hand_names)
+        # The Quest reports handedness itself; the swap guard is for WiLoR's label mix-ups and would only fire
+        # (arms to neutral + home) when a Quest operator crosses their hands.
         wrapper = WiLoRTeleWrapper(client=ClientProxy(HandStreamClient(a.addr), self), k=a.k,
-                                   neutral=neutral_from_ik_fk(ik), auto_calibrate=True)
+                                   neutral=neutral_from_ik_fk(ik), auto_calibrate=True,
+                                   handedness_guard=getattr(a, "source", "wilor") != "quest")
 
         def on_home():                # Reset / L-R swap: local preview AND the robot go back to q=0 in joint space
             if hasattr(ik, "reset_to_home"):

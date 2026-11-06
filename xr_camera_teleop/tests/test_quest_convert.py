@@ -137,3 +137,31 @@ def test_jpeg_size_and_view_plane():
     d, hh = view_plane("immersive", 16 / 9, vfov_deg=70.0)
     assert np.degrees(2 * np.arctan(hh / 2 / d)) == pytest.approx(70.0)   # true angular size
     assert view_plane("ego", 16 / 9, ego_height=0.9) == (2.0, 0.9)
+
+
+@pytest.mark.parametrize("guard", [True, False])
+def test_crossed_hands_trigger_the_swap_guard_only_when_enabled(guard):
+    R = palm_down_forward()
+    base = {"left": np.array([-0.15, 1.0, -0.3]), "right": np.array([0.15, 1.0, -0.3])}
+    t = [100.0]
+    client = FakeClient()
+    w = WiLoRTeleWrapper(client=client, k=0.8, use_filters=False, clock=lambda: t[0], handedness_guard=guard)
+    fid = [0]
+
+    def step(pos):
+        value = {}
+        for s in ("left", "right"):
+            _, flat = xr_hand(s, pos[s], R)
+            value[s], value[f"{s}State"] = flat, {}
+        client.msg = build_message(fid[0], t[0], t[0], value)
+        fid[0] += 1
+        t[0] += 0.02
+        return w.get_tele_data()
+
+    step(base)
+    w.calibrate()
+    step(base)
+    crossed = {"left": np.array([0.10, 1.0, -0.3]), "right": np.array([-0.10, 1.0, -0.3])}   # 20 cm crossed
+    for _ in range(30):                                                                     # 0.6 s
+        step(crossed)
+    assert bool(w.swapped) == guard

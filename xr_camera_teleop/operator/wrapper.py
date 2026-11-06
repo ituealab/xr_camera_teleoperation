@@ -112,7 +112,7 @@ class WiLoRTeleWrapper:
                  auto_calibrate=False, clock=time.monotonic, cam_pitch_deg=0.0,
                  still_window=1.0, still_radius=0.03, mapping="ego", max_depth=0.9,
                  cal_margin_px=40, auto_yaw=True, cam_yaw_deg=None, swap_margin=0.03,
-                 swap_hold=0.15, swap_clear=0.3):
+                 swap_hold=0.15, swap_clear=0.3, handedness_guard=True):
         self._tv = tv
         self.TeleData = tv.TeleData
         if client is None:
@@ -135,6 +135,7 @@ class WiLoRTeleWrapper:
         self.auto_yaw = auto_yaw and cam_yaw_deg is None
         self.yaw = 0.0 if cam_yaw_deg is None else np.radians(cam_yaw_deg)   # operator heading in level W
         self.swap_margin, self.swap_hold, self.swap_clear = swap_margin, swap_hold, swap_clear
+        self.handedness_guard = handedness_guard   # False for sources with reliable labels (Quest): crossing allowed
         self._heading_known = not self.auto_yaw
         self.swapped = False                  # handedness conflict latched: robot held at neutral
         self._swap_t = None                   # since when the labels look swapped / correct again
@@ -335,7 +336,7 @@ class WiLoRTeleWrapper:
 
     def _update_swap(self, now, both):
         """Debounced handedness conflict latch (see module docstring)."""
-        bad = self._heading_known and both and self._sides_swapped()
+        bad = self.handedness_guard and self._heading_known and both and self._sides_swapped()
         if bad == self.swapped:
             self._swap_t = None
             return
@@ -365,7 +366,7 @@ class WiLoRTeleWrapper:
                 if y is not None:
                     self._set_yaw(y)
                     self._heading_known = True
-            if self._heading_known and self._sides_swapped():
+            if self.handedness_guard and self._heading_known and self._sides_swapped():
                 if not self._cal_swap_warned:
                     print("[xr_camera_teleop] WARNING: left/right hand labels swapped; calibration postponed",
                           file=sys.stderr, flush=True)
