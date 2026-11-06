@@ -54,6 +54,7 @@ case "${1:-start}" in
       case "$arg" in
         --quest) source_=quest ;;
         --immersive) view=immersive ;;
+        --no-view) view=none ;;
         *) printf 'Bilinmeyen seçenek: %s\n' "$arg" >&2; exit 2 ;;
       esac
     done
@@ -132,6 +133,11 @@ case "${1:-start}" in
       printf 'Tarayıcı için MSI masaüstünde %s adresini aç.\n' "$URL"
     fi
     ;;
+  view)
+    # live switch of the robot camera in the headset, no restart: none | ego | immersive
+    curl -fsS --max-time 2 "http://127.0.0.1:8771/view?mode=${2:-}" && printf '\n' || {
+      printf 'Quest sunucusu yanıt vermiyor.\n' >&2; exit 1; }
+    ;;
   stop)
     stop_one ui
     stop_one bridge
@@ -149,5 +155,5 @@ case "${1:-start}" in
   logs)
     tail -n 40 -F "$LOG_DIR/perception.log" "$LOG_DIR/quest.log" "$LOG_DIR/bridge.log" "$LOG_DIR/ui.log"
     ;;
-  *) printf 'Kullanım: xr_teleop [start [--quest [--immersive]]|stop|status|logs]\n' >&2; exit 2 ;;
+  *) printf 'Kullanım: xr_teleop [start [--quest [--immersive|--no-view]]|view none|ego|immersive|stop|status|logs]\n' >&2; exit 2 ;;
 esac

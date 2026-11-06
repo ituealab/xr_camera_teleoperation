@@ -154,6 +154,7 @@ class QuestServer:
         self.record = open(a.record, "w") if a.record else None
         self.camera = CameraFeed(a.camera, a.view_width) if a.camera else None
         self.view_rate = RateWin()
+        self.view = a.view            # live: GET /view?mode=none|ego|immersive switches it without a restart
 
     # ------------------------------------------------------------------ vuer handlers
     async def on_hand_move(self, event, session):
@@ -208,7 +209,7 @@ class QuestServer:
         print(f"[quest] headset connected (sessions so far: {self.connected})", flush=True)
         session.upsert(Hands(stream=True, key="hands", fps=self.a.hand_fps, hideLeft=not self.a.show_hands,
                              hideRight=not self.a.show_hands), to="bgChildren")
-        if self.camera is None or self.a.view == "none":
+        if self.camera is None:
             while True:
                 await asyncio.sleep(1.0)
         keys = ["robot-left", "robot-right"]
@@ -216,7 +217,11 @@ class QuestServer:
         while True:
             f = self.camera.latest()
             now = time.monotonic()
-            if f is not None and now - f["t_rx"] < self.a.camera_timeout:
+            if self.view == "none":
+                if shown:
+                    session.remove @ keys
+                    shown, last_seq = False, None
+            elif f is not None and now - f["t_rx"] < self.a.camera_timeout:
                 if f["seq"] != last_seq:
                     last_seq = f["seq"]
                     session.upsert(self.view_elements(f), to="bgChildren")
@@ -235,7 +240,7 @@ class QuestServer:
         from vuer.schemas import ImageBackground
         from xr_camera_teleop.operator.quest.convert import view_plane
         w, h = f["size"]
-        dist, height = view_plane(self.a.view, w / h, self.a.view_vfov_deg, self.a.ego_height)
+        dist, height = view_plane(self.view, w / h, self.a.view_vfov_deg, self.a.ego_height)
         right = f["right"] or f["left"]
         common = dict(aspect=w / h, height=height, distanceToCamera=dist, interpolate=True)
         return [ImageBackground(src=f["left"], key="robot-left", layers=1, **common),
@@ -292,7 +297,7 @@ class QuestServer:
                 "sessions": self.connected,
                 "hand_fps_requested": self.a.hand_fps,
                 "undecoded": {f"{s}:{t}:{n}": c for (s, t, n), c in self.undecoded.items()},
-                "view": self.a.view if self.camera else "none",
+                "view": self.view if self.camera else "none",
                 "view_hz": self.view_rate.hz(now),
             }
         if self.camera is not None:
@@ -322,6 +327,13 @@ class QuestServer:
                 path = self.path.split("?")[0]
                 if path == "/":
                     self._send(200, PAGE, "text/html")
+                elif path == "/view":
+                    from urllib.parse import parse_qs
+                    mode = parse_qs(self.path.partition("?")[2]).get("mode", [None])[0]
+                    if mode in ("none", "ego", "immersive"):
+                        srv.view = mode
+                        print(f"[quest] view -> {mode}", flush=True)
+                    self._send(200, json.dumps({"view": srv.view}).encode(), "application/json")
                 elif path == "/health":
                     self._send(200, json.dumps(srv.health()).encode(), "application/json")
                 elif path == "/latest.json":
