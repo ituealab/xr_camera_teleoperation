@@ -394,11 +394,9 @@ def normal10min(sc: Script, seconds: float = 600.0, seed: int = 7) -> Script:
 
 
 def p8_course(sc: Script, walk_s: float = 16.0) -> Script:
-    """Over an obstacle 1 m ahead and back (sim courses ramp5 ... cross5): full stick forward, release, a 180 deg
-    body turn, then forward again. Each walk crosses the whole obstacle (up and down)."""
-    sc.stick(walk_s, 0.0, 1.0, "walk out").hold(3.0, "stop out")
-    sc.ramp(4.0, "turn around", body_yaw=sc.end.body_yaw + math.pi).hold(6.0, "settle turn")
-    return sc.stick(walk_s, 0.0, 1.0, "walk back").hold(3.0, "stop back")
+    """Over an obstacle 1 m ahead (sim courses ramp5 ... cross5): full stick forward until past it (up and down),
+    release. One traversal per run: the operator does not steer, so a return walk would start off the centre line."""
+    return sc.stick(walk_s, 0.0, 1.0, "walk out").hold(3.0, "stop out")
 
 
 def acceptance(sc: Script) -> Script:

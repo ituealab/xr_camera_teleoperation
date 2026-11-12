@@ -6,9 +6,10 @@
 
 For each course of configs/sim_courses.yaml (one obstacle 1 m ahead of the start), the stack is (re)started on that
 course (deploy/xr_fullbody_sim.sh start --course C --no-viewer --no-quest), then `repeat` times the synthetic operator
-stream `p8_course` (tools/xr_synth.py: walk out with full stick, turn 180 deg with the body, walk back) is played into
-the node (tools/fullbody_sim_test.py: real QuestSource -> node -> SONIC -> MuJoCo, replay check, metrics). Each run
-gives two traversals; a traversal succeeds when the robot crosses the whole obstacle along it without falling.
+stream `p8_course` (tools/xr_synth.py: full stick forward over the obstacle, release) is played into the node
+(tools/fullbody_sim_test.py: real QuestSource -> node -> SONIC -> MuJoCo, replay check, metrics). Each run is one
+traversal from the start; it succeeds when the robot crosses the whole obstacle (up and over and down) along it
+without falling and without leaving it over a side.
 Results: data/p8/courses-<time>.json and one line per traversal. The stack is stopped at the end.
 """
 from __future__ import annotations
@@ -45,8 +46,8 @@ def obstacle(course: str) -> dict:
             "half_width": shape.width / 2}
 
 
-def traversal(odom: list, t0: float, t1: float, ob: dict, outward: bool) -> dict:
-    """One walk over the obstacle (window t0..t1): crossed it, stayed on it, fell, tilt and height on the way."""
+def traversal(odom: list, t0: float, t1: float, ob: dict) -> dict:
+    """One walk over the obstacle along +x (window t0..t1): crossed it, stayed on it, fell, tilt on the way."""
     w = [(t, p, q) for t, p, q in odom if t0 <= t <= t1]
     if len(w) < 10:
         return {"error": "no odometry"}
@@ -56,7 +57,7 @@ def traversal(odom: list, t0: float, t1: float, ob: dict, outward: bool) -> dict
     up = np.array([fm.up_z(q) for _, _, q in w])
     on = (x >= ob["x0"]) & (x <= ob["x1"])
     fell = bool(z.min() < 0.3 or up.min() < 0.5)
-    crossed = (x[-1] > ob["x1"] + 0.1) if outward else (x[-1] < ob["x0"] - 0.1)
+    crossed = x[-1] > ob["x1"] + 0.1
     off_side = bool(on.any() and np.abs(y[on] - ob["y"]).max() > ob["half_width"])
     return {"success": bool(crossed and not fell and not off_side), "crossed": bool(crossed), "fell": fell,
             "off_side": off_side, "x_start": float(x[0]), "x_end": float(x[-1]),
@@ -102,13 +103,11 @@ def main(argv=None) -> int:
                 if "run_dir" in r:
                     data = fm.load(Path(r["run_dir"]))
                     segs = {s["name"]: s for s in fm.segments(data)}
-                    for name, stop, outward in (("walk out", "stop out", True), ("walk back", "stop back", False)):
-                        if name in segs and stop in segs:
-                            t = traversal(data["odom"], segs[name]["t0"], segs[stop]["t1"], ob, outward)
-                            t["direction"] = "out" if outward else "back"
-                            run["traversals"].append(t)
-                            print(f"[course] {course} run {k + 1} {t['direction']}: "
-                                  f"{'OK' if t.get('success') else 'FAIL'} {json.dumps(t, default=float)}", flush=True)
+                    if "walk out" in segs and "stop out" in segs:
+                        t = traversal(data["odom"], segs["walk out"]["t0"], segs["stop out"]["t1"], ob)
+                        run["traversals"].append(t)
+                        print(f"[course] {course} run {k + 1}: {'OK' if t.get('success') else 'FAIL'} "
+                              f"{json.dumps(t, default=float)}", flush=True)
                 runs.append(run)
             trav = [t for r in runs for t in r["traversals"]]
             results[course] = {"obstacle": ob, "runs": runs, "traversals": len(trav),

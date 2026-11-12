@@ -112,20 +112,20 @@ def test_morning_surfaces_by_ray(morning):
     from xr_camera_teleop.sim import courses as C
 
     m, d = morning
-    ramp = C.Ramp(5.0, 0.15, 1.2, 1.2)
+    ramp = C.Ramp(5.0, 0.15, 1.2, 2.0)
     for s in np.linspace(0.05, ramp.length - 0.05, 25):                 # ramp5 runs along +y from (1.5, 0.7)
         z, name = _ray_down(m, d, 1.5, 0.7 + s)
         assert name.startswith("ramp5") and z == pytest.approx(ramp.surface(s), abs=2e-3)
-    steps = C.Steps(0.06, 2, 0.4, 0.8, 1.2)
-    for s in np.linspace(0.05, steps.length - 0.05, 15):
-        assert _ray_down(m, d, 8.7, 0.7 + s)[0] == pytest.approx(steps.surface(s), abs=1e-6)
-    hi, _ = _ray_down(m, d, 6.9 + 0.55, -2.2)                          # cross5 (yaw -90): its left edge is +x
-    lo, _ = _ray_down(m, d, 6.9 - 0.55, -2.2)
-    assert hi == pytest.approx(np.tan(np.radians(5)) * 1.15, abs=3e-3) and lo < 0.01
+    steps = C.Steps(0.06, 2, 0.4, 0.8, 2.0)
+    for s in np.linspace(0.05, steps.length - 0.05, 15):               # steps6 runs along -y from (6.7, -0.7)
+        assert _ray_down(m, d, 6.7, -0.7 - s)[0] == pytest.approx(steps.surface(s), abs=1e-6)
+    hi, _ = _ray_down(m, d, 9.3 - 0.95, 2.7)                           # cross5 (yaw 90): its left edge is -x
+    lo, _ = _ray_down(m, d, 9.3 + 0.95, 2.7)
+    assert hi == pytest.approx(np.tan(np.radians(5)) * 1.95, abs=3e-3) and lo < 0.01
     assert _ray_down(m, d, 1.5, -0.9) == (pytest.approx(0.78), "table_a_top")
     mark = m.geom("mark1_disc")                                        # marks are visual only
     assert mark.contype == 0 and mark.conaffinity == 0
-    rough = [_ray_down(m, d, 5.1 + dx, -1.9 + dy)[0] for dx in np.linspace(-0.79, 0.79, 25)
+    rough = [_ray_down(m, d, 9.3 + dx, -1.9 + dy)[0] for dx in np.linspace(-0.99, 0.99, 25)
              for dy in np.linspace(-1.19, 1.19, 25)]
     assert 0.015 < max(rough) <= 0.0201 and min(rough) >= 0.0
 
