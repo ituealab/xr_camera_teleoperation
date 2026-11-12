@@ -82,3 +82,14 @@ def test_velocity_limits():
     lim(np.zeros(3), np.eye(3), 0.0)
     pp, _ = lim(np.array([5.0, 0, 0]), np.eye(3), 0.1)
     assert np.isclose(pp[0], 0.1)
+
+
+def test_hysteresis_quantizer_keeps_a_level_until_clearly_past():
+    from xr_camera_teleop.operator.filters import HysteresisQuantizer
+    q = HysteresisQuantizer(3.0, band=0.6)
+    assert [q(x) for x in (1.4, 1.6, 1.4, 1.79, 1.81, 1.3, 1.19)] == [0.0, 0.0, 0.0, 0.0, 3.0, 3.0, 0.0]
+    q.reset()
+    assert q(1.6) == 3.0                                    # first value: plain rounding
+    import pytest
+    with pytest.raises(ValueError):
+        HysteresisQuantizer(1.0, band=0.5)

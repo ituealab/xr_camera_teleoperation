@@ -6,10 +6,14 @@ source's, fullbody/quest_source.py); the frames received meanwhile are passed to
   psi0   head heading (rad)
   p0     head position projected on the floor, (x, y)
   L      hip-to-head length used by the posture estimate, L = k_L h0
+  R_head mean head rotation (the posture estimate locates the neck pivot behind and below the eyes with it)
   wrist  per hand, its neutral pose in the neutral head yaw frame N = yaw_frame(psi0, (p0, h0)), only for a hand
          tracked through the window (two free hands: PLAN D8 TRACKED)
 A calibration belongs to one headset session and recenter epoch (`matches`); the Quest source drops it when either
 changes. Rejections raise CalibrationError with the reason, so the HUD can tell the operator what to fix.
+
+`CalibrationWindow` keeps the most recent frames so the Quest source can calibrate on "the last second" whenever the
+operator asks (button held, panel action), retrying as new frames arrive until the pose qualifies.
 """
 from __future__ import annotations
 
@@ -58,6 +62,7 @@ class Calibration:
     epoch: int
     t: float                                # sample time of the last head sample used
     wrist: dict = field(default_factory=dict)   # side -> (4, 4) wrist pose in N, absent if not tracked
+    R_head: np.ndarray = field(default_factory=lambda: np.eye(3))   # mean head rotation in F
 
     @property
     def neutral_frame(self) -> np.ndarray:
@@ -108,7 +113,8 @@ def calibrate(frames, params: CalibrationParams = CalibrationParams()) -> Calibr
     if yaw_std > params.max_yaw_std_rad:
         raise CalibrationError(f"head turned: heading spread {math.degrees(yaw_std):.1f} deg "
                                f"(max {math.degrees(params.max_yaw_std_rad):g} deg)")
-    up = mean_rotation([h.T[:3, :3] for h in heads])[:, 2]
+    R_head = mean_rotation([h.T[:3, :3] for h in heads])
+    up = R_head[:, 2]
     tilt = math.acos(min(1.0, max(-1.0, float(up[2]))))
     if tilt > params.max_tilt_rad:
         raise CalibrationError(f"head tilted {math.degrees(tilt):.0f} deg: stand upright and look forward "
@@ -134,4 +140,31 @@ def calibrate(frames, params: CalibrationParams = CalibrationParams()) -> Calibr
         wrist[s] = pose(mean_rotation([T[:3, :3] for T in local]), np.mean([T[:3, 3] for T in local], axis=0))
 
     return Calibration(h0=h0, psi0=psi0, p0=p[:2].copy(), L=params.k_L * h0, session=session, epoch=epoch,
-                       t=float(t[-1]), wrist=wrist)
+                       t=float(t[-1]), wrist=wrist, R_head=R_head)
+
+
+class CalibrationWindow:
+    """The xr_frames of the last `span_s` seconds (by frame publish time), one per distinct frame."""
+
+    def __init__(self, span_s: float = 1.0):
+        self.span_s = float(span_s)
+        self.frames: list = []
+
+    def clear(self):
+        self.frames = []
+
+    def push(self, frame: XRFrame) -> bool:
+        """Add a frame if it is new; returns True when it was."""
+        if frame is None or (self.frames and frame.seq == self.frames[-1].seq):
+            return False
+        if self.frames and (frame.session, frame.epoch) != (self.frames[-1].session, self.frames[-1].epoch):
+            self.frames = []
+        self.frames.append(frame)
+        t_min = frame.t_pub - self.span_s
+        while self.frames and self.frames[0].t_pub < t_min:
+            self.frames.pop(0)
+        return True
+
+    def calibrate(self, params: CalibrationParams = CalibrationParams()) -> Calibration:
+        """Calibration from the window (CalibrationError if the operator was not holding the neutral pose)."""
+        return calibrate(self.frames, params)

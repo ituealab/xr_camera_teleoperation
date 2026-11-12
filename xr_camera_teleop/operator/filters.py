@@ -4,6 +4,7 @@
 - SO3OneEuroFilter   : same idea on SO(3) via quaternion slerp, with
                        hemisphere (sign) continuity
 - limit_pose_step    : linear / angular velocity limits
+- HysteresisQuantizer: steps of a fixed size that do not dither at a step boundary
 """
 from __future__ import annotations
 
@@ -210,3 +211,25 @@ class PoseRateLimiter:
                                          self.max_lin, self.max_ang)
         self.t = t
         return self.p.copy(), self.R.copy()
+
+
+# ---------------------------------------------------------------- quantisation
+class HysteresisQuantizer:
+    """x -> a multiple of `step`, changing level only once x is more than `band` (in steps, > 0.5) from the current
+    level. Plain rounding dithers between two levels when x sits on a boundary; here a level, once taken, is kept
+    until x clearly belongs to another one. The first value is plain rounding."""
+
+    def __init__(self, step: float, band: float = 0.75):
+        if step <= 0 or band <= 0.5:
+            raise ValueError("step must be > 0 and band > 0.5")
+        self.step, self.band = float(step), float(band)
+        self.reset()
+
+    def reset(self):
+        self.level = None
+
+    def __call__(self, x: float) -> float:
+        k = x / self.step
+        if self.level is None or abs(k - self.level) > self.band:
+            self.level = int(round(k))
+        return self.level * self.step

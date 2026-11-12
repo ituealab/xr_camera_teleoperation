@@ -63,6 +63,7 @@ from xr_camera_teleop.robot.vendor import tv_wrapper as tv
 from .camlevel import level_rotation, yaw_in_cam
 from .clutch import HandClutch, StillDetector
 from .filters import OneEuroFilter, PoseOneEuro, PoseRateLimiter
+from .hand_geometry import ego_wrist_offset, to_unitree_hand, wrist_local
 from .mano_to_webxr import (compare_with_wilor_rot, keypoint_wrist_frame, mano21_to_webxr25,
                             pinch_distance, squeeze_value)
 
@@ -83,16 +84,6 @@ def fallback_neutral():
         T[:3, 3] = _NEUTRAL_FALLBACK[s]
         out.append(T)
     return out
-
-
-def ego_wrist_offset(side, R_neutral=np.eye(3)):
-    """C with R_kp_neutral @ C = R_neutral, R_kp_neutral = keypoint wrist frame (W) of a hand with
-    fingers forward (+x), palm facing the body midline, thumb up: x_kp = +x, z_kp (back of hand)
-    = +y for the left / -y for the right hand, y_kp = z_kp x x_kp (keypoint_wrist_frame)."""
-    z = np.array([0.0, 1.0, 0.0]) if side == "left" else np.array([0.0, -1.0, 0.0])
-    x = np.array([1.0, 0.0, 0.0])
-    R_kp = np.column_stack([x, np.cross(z, x), z])
-    return R_kp.T @ np.asarray(R_neutral, float)
 
 
 def _wrist_inside(entry, image_size, margin):
@@ -230,11 +221,7 @@ class WiLoRTeleWrapper:
     # ---------------------------------------------------------------- helpers
     def _default_hand_pos(self, side):
         from .synthetic_stream import canonical_hand_mano21
-        return self._to_unitree_hand(mano21_to_webxr25(canonical_hand_mano21(side)))
-
-    def _to_unitree_hand(self, local25):
-        T3 = self._tv.T_TO_UNITREE_HAND[:3, :3]
-        return local25 @ T3.T
+        return to_unitree_hand(mano21_to_webxr25(canonical_hand_mano21(side)))
 
     def _process_hand(self, side, entry, t):
         kp_cam = np.asarray(entry["keypoints"], float)
@@ -251,7 +238,7 @@ class WiLoRTeleWrapper:
             if self._mano_C[side] is None:
                 self._mano_C[side] = R.T @ Rm
             R = Rm @ self._mano_C[side].T
-        local = (mano21_to_webxr25(kpW) - p) @ R * self.hand_scale
+        local = wrist_local(mano21_to_webxr25(kpW), R, p) * self.hand_scale
         lp = self._last_proc_t[side]
         if lp is not None and t - lp > 0.5:
             self._pose_f[side].reset()
@@ -264,7 +251,7 @@ class WiLoRTeleWrapper:
         self._local25[side] = local
         self._pinch_m[side] = pinch_distance(local)
         self._squeeze[side] = squeeze_value(local)
-        self._hand_pos_out[side] = self._to_unitree_hand(local)
+        self._hand_pos_out[side] = to_unitree_hand(local)
         return True
 
     def _ingest(self, now):

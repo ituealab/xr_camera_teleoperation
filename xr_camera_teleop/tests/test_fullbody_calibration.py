@@ -109,3 +109,21 @@ def test_mean_rotation():
     assert np.allclose(mean_rotation(Rs), np.eye(3))
     assert np.allclose(mean_rotation([rot_x(0.7)] * 3), rot_x(0.7))
     assert isinstance(calibrate(window()), Calibration)
+
+
+def test_mean_head_rotation_is_recorded():
+    c = calibrate(window(psi=0.4, tilt=0.1, yaw_noise=0.0, noise=0.0))
+    assert np.allclose(c.R_head, rot_z(0.4) @ rot_y(0.1), atol=1e-9)
+
+
+def test_calibration_window_keeps_the_last_second_of_one_session():
+    from xr_camera_teleop.fullbody.calibration import CalibrationWindow
+    w = CalibrationWindow(1.0)
+    frames = window(n=150, dt=0.02)                         # 3 s of frames
+    assert all(w.push(f) for f in frames) and not w.push(frames[-1])     # a repeated frame is not new
+    span = w.frames[-1].t_pub - w.frames[0].t_pub
+    assert 0.95 <= span <= 1.0
+    c = w.calibrate()
+    assert c.t == pytest.approx(frames[-1].head.stamp.t)
+    w.push(window(n=1, session=4)[0])                       # a new session empties it
+    assert len(w.frames) == 1

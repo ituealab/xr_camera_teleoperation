@@ -79,15 +79,19 @@ def test_head_offset_in_body_yaw_frame():
 
 
 def test_operator_body_frame():
-    neck = np.array([0.05, 0.0, 0.25])          # head 5 cm ahead of and 25 cm above the torso origin
-    p_head = np.array([0.3, 0.0, 1.6])
-    T = operator_body_frame(p_head, math.pi / 2, neck_offset=neck)
+    neck = np.array([0.3, 0.0, 1.5])
+    T = operator_body_frame(neck, math.pi / 2, length=0.65)
     assert np.allclose(T[:3, :3], rot_z(math.pi / 2))
-    assert np.allclose(T[:3, 3], p_head - [0.0, 0.05, 0.25])
-    # leaning: rotation is yaw, then pitch, then roll; the neck offset is applied in the yaw frame only
-    T = operator_body_frame(p_head, 0.2, 0.3, -0.1, neck)
-    assert np.allclose(T[:3, :3], rot_z(0.2) @ rot_y(0.3) @ rot_x(-0.1))
-    assert np.allclose(T[:3, 3], p_head - rot_z(0.2) @ neck)
+    assert np.allclose(T[:3, 3], [0.3, 0.0, 0.85])                     # hip pivot straight below the neck
+    # leaning: yaw, then pitch, then roll; the torso segment turns with the lean
+    T = operator_body_frame(neck, 0.2, 0.3, -0.1, 0.65)
+    R = rot_z(0.2) @ rot_y(0.3) @ rot_x(-0.1)
+    assert np.allclose(T[:3, :3], R)
+    assert np.allclose(T[:3, 3] + R @ [0, 0, 0.65], neck)
+    # leaning forward puts the neck ahead of the hip: the hip stays where it was
+    hip = operator_body_frame(neck, 0.0, length=0.65)[:3, 3]
+    leaned_neck = hip + 0.65 * np.array([math.sin(0.3), 0.0, math.cos(0.3)])
+    assert np.allclose(operator_body_frame(leaned_neck, 0.0, 0.3, 0.0, 0.65)[:3, 3], hip)
 
 
 def test_relative_and_inverse():

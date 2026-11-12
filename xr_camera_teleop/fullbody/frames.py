@@ -158,10 +158,11 @@ def in_yaw_frame(p, psi, origin=(0.0, 0.0, 0.0)):
     return (np.asarray(p, dtype=float) - np.asarray(origin, dtype=float)) @ rot_z(psi)
 
 
-def operator_body_frame(p_head, psi_body, theta_pitch=0.0, theta_roll=0.0, neck_offset=(0.0, 0.0, 0.0)):
-    """Virtual operator torso frame of PLAN §5 (Bilekler):
-        T_op = ( Rz(psi_body) Ry(theta_pitch) Rx(theta_roll),  p_head - Rz(psi_body) neck_offset ).
-    `neck_offset` is the head position relative to the torso frame origin, in the yaw frame (forward, left, up)."""
-    Rz = rot_z(psi_body)
-    return pose(Rz @ rot_y(theta_pitch) @ rot_x(theta_roll),
-                np.asarray(p_head, dtype=float) - Rz @ np.asarray(neck_offset, dtype=float))
+def operator_body_frame(p_neck, psi_body, theta_pitch=0.0, theta_roll=0.0, length=0.0):
+    """Virtual operator torso frame (PLAN §5 Bilekler, D9): the torso as a rigid segment from the hip pivot up to the
+    neck pivot, leaning by pitch and roll in the body yaw frame:
+        R = Rz(psi_body) Ry(theta_pitch) Rx(theta_roll),   origin = p_neck - R [0, 0, length]   (the hip pivot).
+    Positive pitch leans forward, positive roll leans right (+Z toward -Y). Unlike a yaw-only neck offset, the offset
+    turns with the lean, so a hand held still relative to the torso stays still in this frame while leaning."""
+    R = rot_z(psi_body) @ rot_y(theta_pitch) @ rot_x(theta_roll)
+    return pose(R, np.asarray(p_neck, dtype=float) - R @ np.array([0.0, 0.0, float(length)]))

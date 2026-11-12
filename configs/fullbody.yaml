@@ -27,9 +27,6 @@ operator_settings:
   arm_tracking: true
   fingers: true
 
-quest:                           # fullbody/quest_source.py
-  head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED
-
 lifecycle:                       # sonic/lifecycle.py
   start_resend_s: 0.2
   start_timeout_s: 60.0          # a relaunch of the binary after a stop takes ~28 s (P2)
@@ -52,9 +49,94 @@ postures:
     left: {p: [0.0742, 0.1794, -0.0590], rpy_deg: [43.7, 74.8, -3.8]}
     right: {p: [0.1177, -0.2048, -0.0659], rpy_deg: [-8.0, 73.7, 41.4]}
   neutral:                       # FK of the upstream G1 at SONIC's default angles with shoulder pitch 0, shoulder
-    torso: {p: [-0.0040, 0.0, 0.0540], rpy_deg: [0.0, 0.0, 0.0]}             # roll +-0.2, elbow 0 (forearms
+    torso: &torso_neutral {p: [-0.0040, 0.0, 0.0540], rpy_deg: [0.0, 0.0, 0.0]}   # roll +-0.2, elbow 0 (forearms
     left: {p: [0.1998, 0.1870, 0.1007], rpy_deg: [11.46, 0.0, 0.0]}           # forward, hands clear of the hips)
     right: {p: [0.1998, -0.1870, 0.1007], rpy_deg: [-11.46, 0.0, 0.0]}
-  hands_open:                    # Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, index1), rad
+  hands_open: &hands_open        # Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, index1), rad
     left: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     right: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# The headset operator mapping (fullbody/quest_source.py and its modules; docs/quest-sonic/P4_P6_P7_mapping.md).
+# Below `postures` so it can alias the torso neutral and the open hands (one definition each).
+quest:
+  head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED (PLAN §6)
+  controller_timeout_s: 0.15     # controller older than this: not held (no walking, no buttons)
+  hand_timeout_s: 0.25           # hand older than this: not tracked (the arm holds, then parks)
+  calibrate_window_s: 1.0        # calibrate on the frames of the last second
+  calibrate_timeout_s: 4.0       # retry that long after the request while the operator settles
+  engage_timeout_s: 90.0         # engage after calibration waits this long for SONIC (a relaunch takes ~28 s)
+  calibration:                   # fullbody/calibration.py
+    k_L: 0.48                    # hip-to-head length L = k_L h0
+  gestures:                      # fullbody/gestures.py
+    hold_s: 1.0                  # A/X held: calibrate + engage
+    short_s: 0.5                 # A/X shorter: pause / resume
+    stop_s: 0.5                  # both grips + a trigger: STOP
+    dropout_s: 3.0               # an A/X hold survives the controller dropping out (seen on the Quest 3S while X held)
+  mode:                          # fullbody/operator_mode.py (WALK while a controller is held, else HANDS)
+    confirm_s: 0.1
+  heading:                       # fullbody/heading.py
+    hold_deg: 20.0               # a pending body turn is cancelled when the head comes back within this
+    turn_deg: 25.0               # head this far from the body for turn_delay_s: the body turned
+    turn_delay_s: 0.3
+    rate_deg_s: 60.0
+    settle_deg: 1.0              # the body-yaw slew stops this close to the head (PLAN: 5; 1 for the +-5 deg goal)
+    step_deg: 3.0                # facing quantisation (each facing change replans)
+    step_band: 0.6
+    waist_yaw_max_deg: 30.0      # glance share of the torso yaw (SONIC realises ~1/6 of it, P2)
+  locomotion:                    # fullbody/locomotion.py
+    v_fwd_max: 0.5               # m/s: stops within 0.3 m (P1: 0.25 m from 0.5 m/s, 0.48 m from 1.0)
+    v_back_max: 0.55
+    v_lat_max: 0.45
+    v_min: 0.4                   # slowest walk (SONIC barely moves below ~0.3 m/s, P1)
+    walk_above: 0.75             # SLOW_WALK below, WALK above
+    walk_band: 0.1
+    speed_step: 0.05
+    direction_step_deg: 10.0
+    band: 0.6
+  posture:                       # fullbody/posture.py
+    neck_in_head: [-0.08, 0.0, -0.10]   # neck pivot behind and below the eyes (nods do not lean the torso)
+    shoulders_below_neck: 0.09
+    torso_neutral: *torso_neutral
+    gain: 1.0                    # x settings.lean_gain
+    pitch_fwd_max_deg: 25.0      # waist limits of the torso command
+    pitch_back_max_deg: 10.0
+    roll_max_deg: 15.0
+    rate_rad_s: 0.5
+    stick_idle_s: 0.5            # crouch: the stick idle this long
+    enter_m: 0.12                # and the lean-corrected head drop above this
+    enter_hold_s: 0.25           # for this long
+    exit_m: 0.07
+    rise_s: 1.5                  # legs IDLE this long after a squat before walking (stand-up ~1.3 s, P1)
+    h_stand: 0.8                 # SONIC squat height = clamp(h_stand - k_h drop, h_min, h_max)
+    k_h: 1.0
+    h_min: 0.3
+    h_max: 0.75
+    height_step: 0.03
+    height_band: 0.6
+  arms:                          # fullbody/arms.py
+    scale: 0.7                   # robot arm / human arm (0.37 / ~0.53 m)
+    robot_shoulders: [0.004, 0.0, 0.235]   # shoulder midpoint in the torso_link frame (G1 FK)
+    robot_shoulder_y: 0.1406
+    reach_m: 0.36
+    torso_axis: [[0.0, 0.0, -0.10], [0.0, 0.0, 0.32]]
+    torso_radius_m: 0.16
+    hand_point_m: 0.10
+    hand_radius_m: 0.12
+    z_min_m: -0.15
+    wrist_gap_m: 0.10
+    hold_s: 1.0                  # a lost hand holds its target this long, then parks
+    park_s: 1.0                  # half-cosine ramps (PLAN §5)
+    track_s: 0.7
+    max_lin: 1.2
+    max_ang: 4.0
+    filter_pos_min_cutoff: 1.5
+    filter_pos_beta: 2.0
+    filter_rot_min_cutoff: 1.5
+    filter_rot_beta: 0.5
+    park:                        # wrist_yaw_link in the pelvis frame: FK at shoulder pitch 0, roll +-0.25, elbow 0.6;
+      left: {p: [0.162, 0.222, 0.004], rpy_deg: [17.2, 33.2, 9.6]}        # hands ahead of and outside the hips
+      right: {p: [0.162, -0.222, 0.004], rpy_deg: [-17.2, 33.2, -9.6]}
+  hands:                         # fullbody/hands.py
+    rest: *hands_open
+    max_rate_rad_s: 8.0
+    thumb_shaping: true
