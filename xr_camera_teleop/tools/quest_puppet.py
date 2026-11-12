@@ -222,7 +222,8 @@ class EmulatedQuest:
         self.set({"controllers": {side: {"stickPress": False}}})
         time.sleep(0.25)
 
-    def _fresh_frame(self, after: float, timeout: float = 3.0):
+    def fresh_frame(self, after: float, timeout: float = 3.0):
+        """The first xr_frame published after `after` (wall time)."""
         t_end = time.time() + timeout
         while time.time() < t_end:
             f = self.frame()
@@ -237,7 +238,7 @@ class EmulatedQuest:
         for _ in range(8):
             t = time.time()
             time.sleep(0.12)
-            f = self._fresh_frame(t)
+            f = self.fresh_frame(t)
             h = f.hands[side]
             if not h.stamp.valid or h.joints is None or f.head.T is None:
                 raise RuntimeError(f"{side} hand not tracked")
@@ -255,7 +256,7 @@ class EmulatedQuest:
         for _ in range(8):
             t = time.time()
             time.sleep(0.12)
-            f = self._fresh_frame(t)
+            f = self.fresh_frame(t)
             j = np.asarray(f.hands[side].joints)
             centre = (j[ui.WRIST] + j[ui.INDEX_MC] + j[ui.MIDDLE_MC] + j[ui.PINKY_MC]) / 4
             want = f.head.T[:3, 3] - centre

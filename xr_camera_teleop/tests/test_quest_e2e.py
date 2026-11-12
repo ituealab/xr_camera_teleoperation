@@ -158,7 +158,8 @@ def test_page_reconnects_after_a_long_outage_without_reentering_vr(tmp_path):
 
 def test_node_follows_the_emulated_quest(tmp_path):
     """The real fullbody_node (Quest source) on the emulated headset's xr_frame stream: the head makes the input live
-    while the emulator plays and not live after it leaves; every frame the node used is logged and the run replays."""
+    while the emulator plays and not live after it leaves; holding A with the head still calibrates; every frame the
+    node used is logged and the run replays."""
     import signal
 
     import yaml
@@ -199,4 +200,8 @@ def test_node_follows_the_emulated_quest(tmp_path):
     assert sum(1 for r in recs if r["k"] == "xr_frame") > 300
     assert np.mean(live) > 0.5 and not live[-1]                  # live while playing, not after the headset left
     assert all(r["state"] == "off" and "vr_position" not in r["planner"] for r in ticks)   # nobody started SONIC
+    status = [r["input"].get("status", {}) for r in ticks]
+    assert any(s.get("calibrating") for s in status)             # A held (10-11.5 s, head still from 9 s) ...
+    assert any(s.get("calibrated") for s in status)              # ... calibrates the operator
+    assert any("start" in r["input"].get("events", []) for r in ticks)    # and asks SONIC to start (nobody there)
     assert fullbody_replay.replay(run)["passed"]

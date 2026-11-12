@@ -7,7 +7,9 @@
 //
 // Needs google-chrome and Playwright (data/browser-tools: `npm install` there). The script it plays, by time t (s):
 //   always   head at 1.65 m swaying +-3 cm, yaw +-30 deg at 0.1 Hz; controllers and hands in front of the chest
-//   5-8      right stick pushed forward (WebXR y = -1)              10-11  A held on the right controller
+//   5-8      right stick pushed forward (WebXR y = -1)
+//   8-13     the sway eases out (8-9) and back in (12-13): the head is still, upright and looking ahead from 9 to 12
+//   10-11.5  A held on the right controller: a calibration (head still >= 1 s, A held >= 1 s; fullbody/calibration.py)
 //   15-25    hands instead of controllers (IWER can only switch both sides at once)
 //   20-23    head 0.2 m lower (crouch)                               28     recenter (Quest long-press)
 //   32-      left controller dropped out
@@ -25,7 +27,9 @@
 // State (WebXR world, metres, quaternions [x, y, z, w]):
 //   head {pos, quat}, mode "controller" | "hand",
 //   controllers.left|right {pos, quat, trigger, squeeze, stick: [x, y], stickPress, a, b, connected},
-//   hands.left|right {pos, quat, pinch}
+//   hands.left|right {pos, quat, pinch, pose}   pose: "default" | "point" | "grip" (IWER's own poses, plus "grip": a
+//                                               fist, its curled fingers from "point" and its thumb and index from
+//                                               "pinch", each expressed relative to its own pose's wrist)
 // Every pose gets a sub-millimetre wobble each frame: a real head or hand is never bit-identical twice, and the
 // server drops identical resends as no new sample.
 // Both modes log every image the page decodes (createImageBitmap: Vuer's path for binary textures) with its byte
@@ -147,8 +151,13 @@ await page.evaluate((seconds) => new Promise((resolve) => {
   const step = () => {
     const t = (performance.now() - t0) / 1000;
     if (t > seconds) { resolve(); return; }
-    const yaw = (30 * Math.PI / 180) * Math.sin(2 * Math.PI * 0.1 * t);
-    const hx = 0.03 * Math.sin(2 * Math.PI * 0.3 * t), hz = 0.02 * Math.cos(2 * Math.PI * 0.2 * t);
+    // sway envelope: 1, eased to 0 over 8-9 s, 0 until 12 s, back to 1 over 12-13 s; a still head still gets a
+    // sub-millimetre wobble (the server drops bit-identical resends as no new sample)
+    const ease = (u) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, u)));
+    const env = t < 9 ? 1 - ease(t - 8) : ease(t - 12);
+    const wob = 0.0003 * Math.sin(2 * Math.PI * 1.3 * t);
+    const yaw = env * (30 * Math.PI / 180) * Math.sin(2 * Math.PI * 0.1 * t);
+    const hx = env * 0.03 * Math.sin(2 * Math.PI * 0.3 * t) + wob, hz = env * 0.02 * Math.cos(2 * Math.PI * 0.2 * t);
     if (t >= 28 && !rc) { rc = { x: hx, z: hz, yaw }; dev.recenter(); }
     place(dev, hx, 1.65 - (t >= 20 && t < 23 ? 0.2 : 0), hz, yaw);
     const mode = t >= 15 && t < 25 ? 'hand' : 'controller';
@@ -156,7 +165,7 @@ await page.evaluate((seconds) => new Promise((resolve) => {
     const r = dev.controllers.right;
     place(r, 0.2 + 0.02 * Math.sin(2 * Math.PI * 0.5 * t), 1.1, -0.35);
     r.updateAxes('thumbstick', 0, t >= 5 && t < 8 ? -1 : 0);
-    const a = t >= 10 && t < 11;
+    const a = t >= 10 && t < 11.5;
     if (a !== S.aHeld) { r.updateButtonValue('a-button', a ? 1 : 0); S.aHeld = a; }
     for (const [side, h] of Object.entries(dev.hands)) {
       place(h, (side === 'left' ? -0.2 : 0.2) + 0.03 * Math.sin(2 * Math.PI * 0.5 * t), 1.1, -0.3);
@@ -182,8 +191,8 @@ async function runPuppet() {
         right: { pos: [0.2, 1.1, -0.35], quat: [0, 0, 0, 1], trigger: 0, squeeze: 0, stick: [0, 0], stickPress: false,
                  a: false, b: false, connected: true },
       },
-      hands: { left: { pos: [-0.2, 1.1, -0.3], quat: [0, 0, 0, 1], pinch: 0 },
-               right: { pos: [0.2, 1.1, -0.3], quat: [0, 0, 0, 1], pinch: 0 } },
+      hands: { left: { pos: [-0.2, 1.1, -0.3], quat: [0, 0, 0, 1], pinch: 0, pose: 'default' },
+               right: { pos: [0.2, 1.1, -0.3], quat: [0, 0, 0, 1], pinch: 0, pose: 'default' } },
     };
     window.__merge = function merge(dst, src) {
       for (const [k, v] of Object.entries(src)) {
@@ -191,7 +200,28 @@ async function runPuppet() {
         else dst[k] = v;
       }
     };
-    const last = { mode: 'controller', buttons: {}, pinch: {}, connected: { left: true, right: true } };
+    // "grip": compose a fist from IWER's own hand poses (column-major 4x4 offset matrices relative to the hand)
+    const mul = (a, b) => { const o = new Array(16).fill(0);
+      for (let c = 0; c < 4; c += 1) for (let r = 0; r < 4; r += 1) for (let k = 0; k < 4; k += 1) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+      return o; };
+    const inv = (m) => { const o = new Array(16).fill(0);            // rigid: R^T, -R^T t
+      for (let r = 0; r < 3; r += 1) for (let c = 0; c < 3; c += 1) o[c * 4 + r] = m[r * 4 + c];
+      for (let r = 0; r < 3; r += 1) o[12 + r] = -(o[r] * m[12] + o[4 + r] * m[13] + o[8 + r] * m[14]);
+      o[15] = 1; return o; };
+    for (const side of ['left', 'right']) {
+      const h = dev.hands[side];
+      const sym = Object.getOwnPropertySymbols(h).find((k) => h[k] && h[k].poses);
+      const P = h[sym].poses;
+      const fromPinch = mul(P.point.jointTransforms.wrist.offsetMatrix, inv(P.pinch.jointTransforms.wrist.offsetMatrix));
+      const joints = {};
+      for (const [j, v] of Object.entries(P.point.jointTransforms)) {
+        const pinchJ = j.startsWith('thumb') || j.startsWith('index');
+        joints[j] = pinchJ ? { ...P.pinch.jointTransforms[j], offsetMatrix: mul(fromPinch, P.pinch.jointTransforms[j].offsetMatrix) }
+          : { ...v };
+      }
+      P.grip = { ...P.point, jointTransforms: joints };
+    }
+    const last = { mode: 'controller', buttons: {}, pinch: {}, pose: {}, connected: { left: true, right: true } };
     const t0 = performance.now();
     const put = (obj, pose, k) => {
       const t = (performance.now() - t0) / 1000, w = 0.0003 * Math.sin(2 * Math.PI * (1.3 + 0.17 * k) * t);
@@ -219,6 +249,7 @@ async function runPuppet() {
         const h = dev.hands[side], hs = S.hands[side];
         put(h, hs, k++);
         if (last.pinch[side] !== hs.pinch) { h.updatePinchValue(hs.pinch); last.pinch[side] = hs.pinch; }
+        if (last.pose[side] !== hs.pose) { h.poseId = hs.pose; last.pose[side] = hs.pose; }
       }
       window.__steps = (window.__steps || 0) + 1;
       setTimeout(step, 5);
