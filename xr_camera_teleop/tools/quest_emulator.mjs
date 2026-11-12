@@ -13,6 +13,22 @@
 //   32-      left controller dropped out
 // At the end it prints the XR sessions started and ended and the page loads, so a caller can tell that the immersive
 // session lived through the whole run (e.g. a Quest server restart) without a reload or a second Enter VR.
+//
+//   node xr_camera_teleop/tools/quest_emulator.mjs --puppet 1 [--url ...]
+//
+// Puppet mode plays no script: a caller (tools/quest_puppet.py) drives the emulated operator with one JSON command
+// per stdin line and gets one reply line on stdout starting with "@@ ". Commands:
+//   {"id": n, "set": {...}}   deep-merge into the operator state (below), applied every frame from then on
+//   {"id": n, "recenter": 1}  Quest recenter          {"id": n, "bitmaps": 1}  image decode log (and clear it)
+//   {"id": n, "quit": 1}
+// State (WebXR world, metres, quaternions [x, y, z, w]):
+//   head {pos, quat}, mode "controller" | "hand",
+//   controllers.left|right {pos, quat, trigger, squeeze, stick: [x, y], stickPress, a, b, connected},
+//   hands.left|right {pos, quat, pinch}
+// Every pose gets a sub-millimetre wobble each frame: a real head or hand is never bit-identical twice, and the
+// server drops identical resends as no new sample.
+// Both modes log every image the page decodes (createImageBitmap: Vuer's path for binary textures) with its byte
+// size and the wall-clock times of the call and of the decoded bitmap, for latency measurements.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,18 +41,32 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) =>
 }, []));
 const url = args.url || 'https://localhost:8012/';
 const seconds = Number(args.seconds || 40);
+const puppet = Boolean(args.puppet);
 const chrome = args.chrome || '/usr/bin/google-chrome';
 const require = createRequire(path.join(repo, 'data/browser-tools/package.json'));
 const { chromium } = require('playwright');
 
+// native WebXR off, so IWER's runtime is the only one. GL: software (SwiftShader) by default, so it runs anywhere;
+// --gl NAME picks an ANGLE backend instead (e.g. gl-egl: the GPU), which the robot view needs to keep the emulated
+// frame rate (software GL falls to ~2 frames/s with a 2x960x540 30 fps view).
+const gl = args.gl || 'swiftshader';
 const browser = await chromium.launch({
   executablePath: chrome, headless: true,
-  // native WebXR off, so IWER's runtime is the only one; software GL so it runs without a GPU
-  args: ['--ignore-certificate-errors', '--disable-features=WebXR', '--use-gl=angle', '--use-angle=swiftshader',
-         '--enable-unsafe-swiftshader'],
+  args: ['--ignore-certificate-errors', '--disable-features=WebXR', '--use-gl=angle', `--use-angle=${gl}`,
+         ...(gl === 'swiftshader' ? ['--enable-unsafe-swiftshader'] : ['--ignore-gpu-blocklist'])],
 });
 const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
 page.on('pageerror', (e) => console.log('[emulator] page error:', e.message));
+await page.addInitScript(() => {
+  // every decoded image: (call time, decoded time) on the wall clock, ms, and the blob size
+  window.__bitmaps = [];
+  const native = window.createImageBitmap.bind(window);
+  window.createImageBitmap = (src, ...rest) => {
+    const rec = { t_call: performance.timeOrigin + performance.now(), size: src && src.size, t_done: null };
+    if (window.__bitmaps.length < 20000) window.__bitmaps.push(rec);
+    return native(src, ...rest).then((b) => { rec.t_done = performance.timeOrigin + performance.now(); return b; });
+  };
+});
 let loads = 0;
 page.on('load', () => { loads += 1; });
 await page.goto(url);
@@ -69,6 +99,11 @@ const ok = await page.evaluate(async () => {
 });
 if (ok !== true) { console.log('[emulator]', ok); await browser.close(); process.exit(1); }
 await page.getByRole('button', { name: /virtual reality/i }).first().click();
+if (puppet) {
+  await runPuppet();
+  await browser.close();
+  process.exit(0);
+}
 console.log(`[emulator] in emulated VR at ${url}, playing ${seconds} s`);
 
 await page.evaluate((seconds) => new Promise((resolve) => {
@@ -112,3 +147,73 @@ await page.evaluate((seconds) => new Promise((resolve) => {
 const xr = await page.evaluate(() => window.__xr);
 console.log(`[emulator] done: XR sessions started ${xr.started} ended ${xr.ended}, page loads ${loads}`);
 await browser.close();
+
+async function runPuppet() {
+  await page.evaluate(() => {
+    const dev = window.__dev;
+    const S = window.__S = {
+      head: { pos: [0, 1.65, 0], quat: [0, 0, 0, 1] }, mode: 'controller',
+      controllers: {
+        left: { pos: [-0.2, 1.1, -0.35], quat: [0, 0, 0, 1], trigger: 0, squeeze: 0, stick: [0, 0], stickPress: false,
+                a: false, b: false, connected: true },
+        right: { pos: [0.2, 1.1, -0.35], quat: [0, 0, 0, 1], trigger: 0, squeeze: 0, stick: [0, 0], stickPress: false,
+                 a: false, b: false, connected: true },
+      },
+      hands: { left: { pos: [-0.2, 1.1, -0.3], quat: [0, 0, 0, 1], pinch: 0 },
+               right: { pos: [0.2, 1.1, -0.3], quat: [0, 0, 0, 1], pinch: 0 } },
+    };
+    window.__merge = function merge(dst, src) {
+      for (const [k, v] of Object.entries(src)) {
+        if (v && typeof v === 'object' && !Array.isArray(v) && dst[k] && typeof dst[k] === 'object') merge(dst[k], v);
+        else dst[k] = v;
+      }
+    };
+    const last = { mode: 'controller', buttons: {}, pinch: {}, connected: { left: true, right: true } };
+    const t0 = performance.now();
+    const put = (obj, pose, k) => {
+      const t = (performance.now() - t0) / 1000, w = 0.0003 * Math.sin(2 * Math.PI * (1.3 + 0.17 * k) * t);
+      obj.position.set(pose.pos[0] + w, pose.pos[1] + 0.7 * w, pose.pos[2] - 0.5 * w);
+      obj.quaternion.set(...pose.quat);
+    };
+    const button = (c, side, id, v) => {
+      const key = side + id;
+      if (last.buttons[key] !== v) { c.updateButtonValue(id, v); last.buttons[key] = v; }
+    };
+    const step = () => {
+      if (S.mode !== last.mode) { dev.primaryInputMode = S.mode; last.mode = S.mode; }
+      put(dev, S.head, 0);
+      let k = 1;
+      for (const side of ['left', 'right']) {
+        const c = dev.controllers[side], cs = S.controllers[side];
+        if (cs.connected !== last.connected[side]) { c.connected = cs.connected; last.connected[side] = cs.connected; }
+        put(c, cs, k++);
+        c.updateAxes('thumbstick', cs.stick[0], cs.stick[1]);
+        button(c, side, 'trigger', cs.trigger);
+        button(c, side, 'squeeze', cs.squeeze);
+        button(c, side, 'thumbstick', cs.stickPress ? 1 : 0);
+        button(c, side, side === 'right' ? 'a-button' : 'x-button', cs.a ? 1 : 0);
+        button(c, side, side === 'right' ? 'b-button' : 'y-button', cs.b ? 1 : 0);
+        const h = dev.hands[side], hs = S.hands[side];
+        put(h, hs, k++);
+        if (last.pinch[side] !== hs.pinch) { h.updatePinchValue(hs.pinch); last.pinch[side] = hs.pinch; }
+      }
+      setTimeout(step, 5);
+    };
+    step();
+  });
+  console.log('@@ ' + JSON.stringify({ ready: true }));
+  const readline = await import('node:readline');
+  const rl = readline.createInterface({ input: process.stdin });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let cmd;
+    try { cmd = JSON.parse(line); } catch (e) { console.log('@@ ' + JSON.stringify({ error: String(e) })); continue; }
+    const reply = { id: cmd.id };
+    if (cmd.set) await page.evaluate((patch) => window.__merge(window.__S, patch), cmd.set);
+    if (cmd.recenter) await page.evaluate(() => window.__dev.recenter());
+    if (cmd.bitmaps) reply.bitmaps = await page.evaluate(() => window.__bitmaps.splice(0));
+    if (cmd.quit) { console.log('@@ ' + JSON.stringify(reply)); break; }
+    if (cmd.xr) reply.xr = await page.evaluate(() => window.__xr);
+    console.log('@@ ' + JSON.stringify(reply));
+  }
+}

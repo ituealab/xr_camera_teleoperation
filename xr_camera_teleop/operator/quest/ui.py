@@ -10,7 +10,9 @@ Opening and closing
          palm toward the eyes for palm_hold_s (hand tracking). The palm gesture re-arms once the palm turns away.
   Close: the X tab, a thumbstick press, "Devam" (resume) or "Kalibre et ve devral" (which engages the robot).
   The panel is world-locked where it opened: `distance` ahead of the head along its heading, `drop` below the eyes
-  (chest height), tilted to face the eyes.
+  (chest height), upright and turned to face the operator. Upright, not tilted toward the eyes: a panel tilted to
+  face the eyes from chest height leans its lower part toward the operator, and hands held at the waist end up
+  behind its plane, where no ray from them can reach its face.
 
 Freeze while open (PLAN §6a): opening pauses an ACTIVE robot (PAUSE), and the panel keeps the robot out of ACTIVE
 while it is open (a PAUSE again if anything else engages it, at most every repause_s). A pause during the node's
@@ -166,18 +168,16 @@ def build_layout(p: UiParams = UiParams()) -> dict:
 # ---------------------------------------------------------------------------------------------------- geometry
 
 def panel_pose(head_T, p: UiParams = UiParams()) -> np.ndarray:
-    """World-locked panel pose in F for a head pose in F: columns (right, up, normal toward the eyes), origin at the
-    panel centre. Its local axes are those of a three.js plane (x right, y up, +z out of the face)."""
+    """World-locked panel pose in F for a head pose in F: columns (right, up, normal toward the operator), origin at
+    the panel centre; upright. Its local axes are those of a three.js plane (x right, y up, +z out of the face)."""
     head_T = np.asarray(head_T, dtype=float)
     eye = head_T[:3, 3]
     psi = yaw_of(head_T)
     fwd = np.array([math.cos(psi), math.sin(psi), 0.0])
     c = eye + p.distance * fwd + np.array([0.0, 0.0, -p.drop])
-    n = eye - c
-    n /= np.linalg.norm(n)
-    u = np.cross([0.0, 0.0, 1.0], n)
-    u /= np.linalg.norm(u)
-    v = np.cross(n, u)
+    n = -fwd
+    u = np.array([math.sin(psi), -math.cos(psi), 0.0])      # the operator's right
+    v = np.array([0.0, 0.0, 1.0])
     T = np.eye(4)
     T[:3, 0], T[:3, 1], T[:3, 2], T[:3, 3] = u, v, n, c
     return T

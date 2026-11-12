@@ -99,14 +99,22 @@ class Rig:
 
 # ---------------------------------------------------------------------------------------------------- geometry
 
-def test_panel_is_world_locked_ahead_at_chest_and_faces_the_eyes():
+def test_panel_is_world_locked_ahead_at_chest_upright_facing_the_operator():
     head = pose(rot_z(math.radians(90)) @ rot_y(math.radians(30)), [1.0, 2.0, 1.7])   # turned left, looking down
     T = ui.panel_pose(head, P)
     assert np.allclose(T[:3, 3], [1.0, 2.0 + P.distance, 1.7 - P.drop])
-    to_eye = head[:3, 3] - T[:3, 3]
-    assert np.allclose(T[:3, 2], to_eye / np.linalg.norm(to_eye))                     # normal at the eyes
+    assert np.allclose(T[:3, 2], [0.0, -1.0, 0.0])                                   # faces the operator
+    assert np.allclose(T[:3, 1], [0.0, 0.0, 1.0])                                    # upright
     assert np.allclose(T[:3, 0], [1.0, 0.0, 0.0])                                    # its right = operator's right
     assert np.allclose(T[:3, :3].T @ T[:3, :3], np.eye(3)) and np.linalg.det(T[:3, :3]) > 0
+
+
+def test_a_hand_at_the_waist_can_point_at_the_whole_panel():
+    T = ui.panel_pose(pose(np.eye(3), EYE), P)
+    for o in (np.array([0.38, -0.2, 1.0]), np.array([0.3, 0.25, 1.15])):
+        for x, y in ((0.0, 0.0), (P.width, P.height), (P.width / 2, P.height / 2)):
+            target = ui.panel_point(T, x, y, P)
+            assert ui.raycast(T, o, (target - o) / np.linalg.norm(target - o), P, margin=1e-6) is not None
 
 
 def test_raycast_maps_hits_to_panel_coordinates_and_misses():

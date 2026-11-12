@@ -5,17 +5,27 @@
 
 Quest browser:  https://<this machine>/  (443 is redirected to :8012 on MSI), Enter VR.
 
-Two streams, both msgpack on ZMQ PUB:
-  :5596 xr_frame (fullbody/xr_frame.py): head, both hands and both controllers in the operator floor frame, each
+Streams, msgpack on ZMQ:
+  PUB :5596 xr_frame (fullbody/xr_frame.py): head, both hands and both controllers in the operator floor frame, each
         with its own sample time, receive time, sample counter and validity. One snapshot per new sample.
-  :5594 perception message of CONTRACT.md (unchanged), so the live UI's WiLoRTeleWrapper, clutch, filters, Dex3
+  PUB :5594 perception message of CONTRACT.md (unchanged), so the live UI's WiLoRTeleWrapper, clutch, filters, Dex3
         retargeting and preview run on the Quest hands (`xrcam-ui --source quest`).
+  PUB :5597 panel actions, SUB :5595 node status (fullbody/operator_link.py): the headset control panel.
 
     Vuer HTTPS/WSS :8012  --HEAD_MOVE / HAND_MOVE / CONTROLLER_MOVE-->  assembler --> :5596 xr_frame
                                                                         convert.build_message --> :5594 perception
+                          <--panel (Image), status strip, pointer rays--  ui.Panel --> :5597 UiAction --> node
+                                                                                   <-- :5595 node status
     HTTP :8771  /  /overlay.mjpg (hands seen from the headset)  /latest.json  /health  /view?mode=
-    --camera: robot ZED left/right JPEGs (deploy/zed_stereo_stream.py, ZMQ) -> head-locked plane per eye in the
-    headset, forwarded without re-encoding; removed when the stream stalls so a frozen view never looks live.
+                /state (node status + panel state, JSON)  /frames (robot view frames sent: stamps, sizes)
+    --camera: robot ZED left/right JPEGs (deploy/zed_stereo_stream.py, or sim/camera_bridge.py; ZMQ) -> head-locked
+    plane per eye in the headset, forwarded without re-encoding; removed when the stream stalls so a frozen view
+    never looks live.
+
+Panel (PLAN §6a, docs/quest-sonic/P5_ui.md): operator/quest/ui.py decides everything (pointers, raycast, hover,
+hold-to-confirm, pages, the freeze while open); ui_draw.py draws it; this module only steps it at UI_HZ on the event
+loop, publishes its requests and upserts the pictures: the panel as a world-locked `Image`, the status strip as a
+head-locked `ImageBackground` while the panel is closed, each pointer's ray as a `Line`.
 
 Vuer streams head (Head, getViewerPose), hands (Hands) and controllers (MotionControllers) together; each is
 sampled every XR frame and sent at --input-fps. Only the most recent headset connection is used.
@@ -37,15 +47,22 @@ import msgpack
 import numpy as np
 import zmq
 
+from xr_camera_teleop.fullbody.operator_link import ActionOutbox, LinkError, NodeStatus
 from xr_camera_teleop.fullbody.xr_frame import SOURCES as XR_SOURCES
 from xr_camera_teleop.fullbody.xr_frame import encode as encode_xr_frame
 from xr_camera_teleop.fullbody.xr_frame import source as xr_source
+from xr_camera_teleop.operator.quest import ui
 from xr_camera_teleop.operator.quest.assembler import XRFrameAssembler
 from xr_camera_teleop.operator.quest.convert import (WEBXR_BONES, build_message, client_time_s, joint_matrices,
                                                      pose_from_flat16, project_head_view)
 
 REPO = Path(__file__).resolve().parents[3]
 DATA = REPO / "data"
+UI_HZ = 60.0                 # panel steps per second (hold-to-confirm resolution, pointer sampling)
+PANEL_DRAW_HZ = 15.0         # the panel image is redrawn at most this often, and only when it changed
+STRIP_DRAW_HZ = 2.0
+RAY_HZ = 30.0
+STRIP = dict(distanceToCamera=0.9, height=0.026, position=[-0.10, -0.27, 0.0])   # head-locked, below the ego view
 
 PAGE = b"""<!doctype html><meta charset=utf-8><title>Quest hands</title>
 <body style="margin:0;background:#111;color:#ddd;font:14px system-ui">
@@ -120,7 +137,8 @@ class CameraFeed:
             age_ms = (time.time_ns() - int(p.get("stamp_ns", time.time_ns()))) / 1e6   # PC2 clock follows MSI
             with self.lock:
                 self.frame = {"seq": p.get("sequence"), "left": left, "right": right, "size": size, "t_rx": now,
-                              "age_ms": age_ms}
+                              "age_ms": age_ms, "stamp_ns": p.get("stamp_ns"), "sim_time": p.get("sim_time"),
+                              "t_rx_wall": time.time()}
                 self.rate.tick(now)
                 self.ages.append(age_ms)
                 self.bytes.append(len(left) + len(right or b""))
@@ -140,6 +158,43 @@ class CameraFeed:
                 "since_last_ms": (now - f["t_rx"]) * 1e3,
                 "capture_age_ms": {"p50": float(np.median(ages)), "p99": float(np.percentile(ages, 99))},
                 "kB_per_frame": float(nb.mean() / 1e3), "Mbit_s": float(nb.mean() * 8 * hz / 1e6)}
+
+
+class NodeStatusFeed:
+    """Latest fullbody_node status (fullbody/operator_link.py), SUB connected to the node's PUB."""
+
+    def __init__(self, addr):
+        self.addr = addr
+        self.lock = threading.Lock()
+        self.status, self.t_rx, self.errors = None, None, 0
+        self.stop = threading.Event()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        sock = zmq.Context.instance().socket(zmq.SUB)
+        sock.setsockopt(zmq.CONFLATE, 1)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.SUBSCRIBE, b"")
+        sock.setsockopt(zmq.RCVTIMEO, 500)
+        sock.connect(self.addr)
+        while not self.stop.is_set():
+            try:
+                raw = sock.recv()
+            except zmq.Again:
+                continue
+            try:
+                st = NodeStatus.decode(raw)
+            except LinkError as e:
+                self.errors += 1
+                if self.errors == 1:
+                    print(f"[quest] bad node status: {e}", flush=True)
+                continue
+            with self.lock:
+                self.status, self.t_rx = st, time.time()
+
+    def latest(self):
+        with self.lock:
+            return self.status, self.t_rx
 
 
 class QuestServer:
@@ -173,7 +228,19 @@ class QuestServer:
         self.record = open(a.record, "w") if a.record else None
         self.camera = CameraFeed(a.camera, a.view_width) if a.camera else None
         self.view_rate = RateWin()
-        self.view = a.view            # live: GET /view?mode=none|ego|immersive switches it without a restart
+        self.view = a.view            # live: GET /view?mode=none|ego|immersive (or the panel) switches it
+        self.view_log = deque(maxlen=600)    # robot view frames sent to the headset (GET /frames)
+        # headset panel: ui.Panel decides, the outbox carries its requests to the node, the feed brings node status
+        self.server_id = f"{socket.gethostname()}-{os.getpid()}-{int(time.time())}"
+        self.ui_pub = ctx.socket(zmq.PUB)
+        self.ui_pub.setsockopt(zmq.SNDHWM, 20)
+        self.ui_pub.setsockopt(zmq.LINGER, 0)
+        self.ui_pub.bind(a.ui_zmq)
+        self.outbox = ActionOutbox(self.server_id)
+        self.node = NodeStatusFeed(a.node_status)
+        self.panel = ui.Panel()
+        self.ui_state = {}                   # panel.describe() of the last step (GET /state)
+        self.actions_log = deque(maxlen=50)
 
     # ------------------------------------------------------------------ vuer handlers
     def _active(self, session):
@@ -248,6 +315,7 @@ class QuestServer:
     async def main(self, session):
         self.active_ws = session.CURRENT_WS_ID
         self.connected += 1
+        self.panel = ui.Panel()              # the panel belongs to a headset session: a new one starts closed
         print(f"[quest] headset connected (sessions so far: {self.connected})", flush=True)
         self.publish_xr(self.assembler.connect(time.time()))
         try:
@@ -267,6 +335,10 @@ class QuestServer:
                               hideRight=not self.a.show_hands),
                         MotionControllers(stream=True, key="controllers", fps=fps, left=True, right=True)],
                        to="bgChildren")
+        await asyncio.gather(self.camera_loop(session), self.ui_loop(session))
+
+    async def camera_loop(self, session):
+        import asyncio
         if self.camera is None:
             while True:
                 await asyncio.sleep(1.0)
@@ -290,6 +362,9 @@ class QuestServer:
                     last_seq = f["seq"]
                     session.upsert(self.view_elements(f), to="bgChildren")
                     self.view_rate.tick(now)
+                    self.view_log.append({"seq": f["seq"], "stamp_ns": f["stamp_ns"], "sim_time": f["sim_time"],
+                                          "t_rx": f["t_rx_wall"], "t_sent": time.time(), "left_bytes": len(f["left"]),
+                                          "right_bytes": len(f["right"] or b""), "view": self.view})
                     shown = True
             elif shown:
                 # never leave a frozen robot view up: it would look live
@@ -297,6 +372,102 @@ class QuestServer:
                 shown = False
                 print("[quest] robot camera stale: view removed", flush=True)
             await asyncio.sleep(0.004)
+
+    def rates(self):
+        now = time.monotonic()
+        with self.lock:
+            r = {"head_hz": self.xr_rate["head"].hz(now),
+                 "hand_hz": (self.xr_rate["hands.left"].hz(now), self.xr_rate["hands.right"].hz(now)),
+                 "ctrl_hz": (self.xr_rate["controllers.left"].hz(now), self.xr_rate["controllers.right"].hz(now))}
+        if self.camera is not None:
+            c = self.camera.health()
+            if c.get("frames") is not False:
+                r["camera_fps"], r["camera_age_ms"] = c["fps"], c["capture_age_ms"]["p50"]
+        return r
+
+    async def ui_loop(self, session):
+        """Step the panel at UI_HZ, send its requests, draw what changed."""
+        import asyncio
+
+        from vuer.schemas import Image, ImageBackground, Line
+
+        from xr_camera_teleop.operator.quest import ui_draw
+
+        loop = asyncio.get_running_loop()
+        panel_pic, strip_pic, rays_sent = None, None, {}
+        t_panel = t_strip = t_rays = 0.0
+        shown = {"panel": False, "strip": False}
+        period = 1.0 / UI_HZ
+        while True:
+            await asyncio.sleep(period)
+            now = time.time()
+            if not self._active(session):
+                continue
+            panel = self.panel
+            status, status_rx = self.node.latest()
+            out = panel.step(now, self.assembler.frame, status, status_rx, self.view, self.rates())
+            for r in out.requests:
+                a = self.outbox.add(r.kind, now, r.key, r.value)
+                self.actions_log.append({"seq": a.seq, "kind": a.kind.value, "key": a.key, "value": a.value, "t": a.t})
+                print(f"[quest] panel: {a.kind.value}" + (f" {a.key}={a.value!r}" if a.key else "")
+                      + (f" {a.value}" if a.kind.value == "mark" else "") + f" (seq {a.seq})", flush=True)
+            if out.view and out.view != self.view:
+                self.view = out.view
+                print(f"[quest] view -> {self.view} (panel)", flush=True)
+            msg = self.outbox.message(now)
+            if msg is not None:
+                self.ui_pub.send(msg)
+            self.ui_state = panel.describe()
+
+            if panel.open:
+                pic = panel.picture()
+                if (pic != panel_pic or not shown["panel"]) and now - t_panel >= 1.0 / PANEL_DRAW_HZ:
+                    jpg = await loop.run_in_executor(None, ui_draw.render_panel, pic, panel.p.width, panel.p.height)
+                    pos, rot = ui.to_xr(panel.T)
+                    session.upsert(Image(src=jpg, key="ui-panel", position=pos, rotation=rot, height=panel.p.height,
+                                         aspect=panel.p.width / panel.p.height, interpolate=True), to="bgChildren")
+                    panel_pic, t_panel, shown["panel"] = pic, now, True
+                if shown["strip"]:
+                    session.remove @ ["ui-strip"]
+                    shown["strip"], strip_pic = False, None
+            else:
+                if shown["panel"]:
+                    session.remove @ ["ui-panel"]
+                    shown["panel"], panel_pic = False, None
+                pic = panel.strip()
+                if (pic != strip_pic or not shown["strip"]) and now - t_strip >= 1.0 / STRIP_DRAW_HZ:
+                    jpg, aspect = await loop.run_in_executor(None, ui_draw.render_strip, pic)
+                    session.upsert(ImageBackground(src=jpg, key="ui-strip", aspect=aspect, interpolate=True, **STRIP),
+                                   to="bgChildren")
+                    strip_pic, t_strip, shown["strip"] = pic, now, True
+
+            if now - t_rays >= 1.0 / RAY_HZ:
+                t_rays = now
+                rays = {}
+                for side, (o, e, pressed) in panel.rays.items():
+                    rays[side] = ([ui.point_to_xr(o), ui.point_to_xr(e)], pressed)
+                for side in ("left", "right"):
+                    key = f"ui-ray-{side}"
+                    if side in rays:
+                        pts, pressed = rays[side]
+                        old = rays_sent.get(side)
+                        if old is None or old[1] != pressed or np.abs(np.subtract(old[0], pts)).max() > 0.003:
+                            session.upsert(Line(points=pts, color="#3ddc84" if pressed else "#ffffff", lineWidth=3,
+                                                key=key), to="bgChildren")
+                            rays_sent[side] = (pts, pressed)
+                    elif side in rays_sent:
+                        session.remove @ [key]
+                        del rays_sent[side]
+
+    def state(self):
+        """GET /state: the node's status as last received, the panel, the view and the panel actions sent."""
+        status, t_rx = self.node.latest()
+        node = None
+        if status is not None:
+            node = {**status.to_dict(), "age_s": time.time() - t_rx}
+        return {"server": self.server_id, "t": time.time(), "node": node, "node_status_errors": self.node.errors,
+                "ui": self.ui_state, "view": self.view, "actions_sent": self.outbox.sent,
+                "actions": list(self.actions_log)}
 
     def view_elements(self, f):
         """Two head-locked planes, left image on the left eye's layer 1 and right on layer 2 (as TeleVuer).
@@ -367,6 +538,7 @@ class QuestServer:
                 "undecoded": {f"{s}:{t}:{n}": c for (s, t, n), c in self.undecoded.items()},
                 "view": self.view if self.camera else "none",
                 "view_hz": self.view_rate.hz(now),
+                "panel": {"open": self.panel.open, "actions_sent": self.outbox.sent},
             }
         if self.camera is not None:
             out["camera"] = self.camera.health()
@@ -404,6 +576,10 @@ class QuestServer:
                     self._send(200, json.dumps({"view": srv.view}).encode(), "application/json")
                 elif path == "/health":
                     self._send(200, json.dumps(srv.health()).encode(), "application/json")
+                elif path == "/state":
+                    self._send(200, json.dumps(srv.state(), default=str).encode(), "application/json")
+                elif path == "/frames":
+                    self._send(200, json.dumps(list(srv.view_log)).encode(), "application/json")
                 elif path == "/latest.json":
                     with srv.lock:
                         m = srv.latest_msg
@@ -489,6 +665,10 @@ def main():
                     help="downscale each eye to this width on MSI before sending over Wi-Fi (0 = as received)")
     ap.add_argument("--camera-timeout", type=float, default=0.5,
                     help="remove the view when no new frame arrived for this long (s)")
+    ap.add_argument("--ui-zmq", default="tcp://127.0.0.1:5597",
+                    help="panel action PUB address (configs/fullbody.yaml node.ui_addr)")
+    ap.add_argument("--node-status", default="tcp://127.0.0.1:5595",
+                    help="fullbody_node status PUB to subscribe to (configs/fullbody.yaml node.status_addr)")
     a = ap.parse_args()
 
     from xr_camera_teleop.operator.quest.vuer_app import make_vuer_app
@@ -505,6 +685,7 @@ def main():
 
     for ip in lan_ips():
         print(f"[quest] Quest browser:  https://{ip}/  (or https://{ip}:{a.port}/?ws=wss://{ip}:{a.port})", flush=True)
+    print(f"[quest] panel actions {a.ui_zmq}   node status {a.node_status}", flush=True)
     print(f"[quest] xr_frame {a.xr_zmq}   perception {a.zmq}   HTTP http://{a.http_host}:{a.http_port}/"
           f"   input fps requested {a.input_fps:g}"
           + (f"   camera {a.camera} view {a.view}" if a.camera else "   no camera"), flush=True)
@@ -527,9 +708,14 @@ def main():
         pass
     finally:
         srv.stop.set()
+        srv.node.stop.set()
         if srv.record:
             srv.record.close()
         print("[quest] stopped", flush=True)
+        # Daemon threads (camera feed, node status) still own ZMQ sockets; interpreter finalization tearing down the
+        # ZMQ context under them can abort ("terminate called without an active exception"). Nothing is left to
+        # flush, so leave without finalization.
+        os._exit(0)
 
 
 if __name__ == "__main__":
