@@ -1,0 +1,38 @@
+# How the SONIC MuJoCo sim stack runs on the MSI (PLAN §7, §7a).
+#   xr_camera_teleop.sim.run_sonic_sim  - physics (upstream gear_sonic DefaultEnv) + DDS, our real-time loop
+#   xr_camera_teleop.sim.camera_publisher, .sim_viewer - its child processes, rendering from state snapshots
+#   deploy/sonic_sim.sh                 - tmux launcher of the sim and the prebuilt SONIC deploy binary
+# The DDS domain is not set here: it is the deploy binary's (configs/sonic_assets.yaml deploy.dds_domain).
+
+course: flat                   # configs/sim_courses.yaml
+
+dds:
+  interface: lo
+
+physics:
+  dt: 0.005                    # 200 Hz (upstream SIMULATE_DT)
+  elastic_band: true           # upstream: the robot starts hanging from a virtual band; key 9 drops it
+  max_lag_s: 0.05              # further behind real time than this: drop the backlog (counted), never burst-step
+
+keys:                          # sim operator keys (upstream handle_keyboard_button: 9, backspace, up/down/left/right)
+  endpoint: tcp://127.0.0.1:5599   # the sim binds PULL; the viewer window and scripted tools PUSH key names
+
+viewer:
+  enabled: true                # needs a display; skipped with a warning when there is none
+  fps: 60
+
+cameras:
+  names: [zed_left, zed_right] # MJCF cameras of the scene (configs/sim_courses.yaml robot_camera)
+  fps: 30
+  port: 5555                   # PUB, upstream sim camera format: msgpack {timestamps, images: base64 JPEG}
+  jpeg_quality: 80
+
+stats:
+  endpoint: tcp://127.0.0.1:5598   # sim processes connect PUB here; tools/sim_perf.py binds SUB
+  period_s: 1.0
+
+deploy:                        # prebuilt g1_deploy_onnx_ref (paths: configs/sonic_assets.yaml)
+  input_type: zmq_manager
+  zmq_host: localhost
+  zmq_port: 5556               # SONIC subscribes; fullbody_node (P2) / tools/sonic_drive.py bind PUB
+  zmq_out_port: 5557           # SONIC telemetry PUB (topic g1_debug)
