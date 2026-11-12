@@ -15,7 +15,7 @@ quest:                           # fullbody/quest_source.py
 
 lifecycle:                       # sonic/lifecycle.py
   start_resend_s: 0.2
-  start_timeout_s: 30.0          # long enough for a relaunch of the binary after a stop
+  start_timeout_s: 60.0          # a relaunch of the binary after a stop takes ~28 s (P2)
   arm_s: 0.5                     # VR-less messages after control starts (planner init ~0.14 s, P1)
   control_timeout_s: 0.3         # g1_debug (50 Hz) silent this long: SONIC is not controlling
   present_timeout_s: 5.0         # no telemetry at all (robot_config every ~2 s): binary absent

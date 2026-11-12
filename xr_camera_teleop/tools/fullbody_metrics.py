@@ -10,8 +10,10 @@ when present, odom.msgpack (the sim's base pose, written by tools/fullbody_sim_t
                 pelvis frame, MuJoCo) -> the three link poses -> SONIC's VR points (sonic/adapter.py, the one owner
                 of the offsets) vs the commanded points. Position error (m) and rotation error (deg) per point, at
                 zero lag and at the lag (0-0.6 s) that minimises the wrists' median error (the policy's tracking
-                delay). Also the largest difference between what SONIC reported it was given (vr_3point_*) and
-                what the node sent: a wiring check, should be ~0.
+                delay). Also the largest difference between the VR orientations SONIC reports it was given
+                (vr_3point_orientation) and what the node sent within the last 5 ticks: a wiring check, ~0
+                (float32). Reported positions are not comparable: SONIC rotates them into a heading-aligned
+                visualisation frame (e.g. 90 deg after a 90 deg turn), while the policy tracks ours (FK shows it).
   heading       per turn segment: commanded facing change vs IMU yaw change from segment start to end.
   base (odom)   per segment: start/end position and yaw, displacement, pelvis height (median of the last half),
                 and over the whole timeline (settle excluded: the robot may still be landing from the gantry) the
@@ -38,6 +40,7 @@ G1_MJCF = "gear_sonic/data/robots/g1/g1_29dof_with_hand.xml"    # in the pinned 
 LINKS = {"torso": "torso_link", "left": "left_wrist_yaw_link", "right": "right_wrist_yaw_link"}
 LAGS = np.arange(0.0, 0.62, 0.02)
 ODOM_FILE = "odom.msgpack"
+WIRING_TICKS = 5
 
 
 class G1Kinematics:
@@ -146,9 +149,11 @@ def vr_tracking(run: dict, kin: G1Kinematics, t0: float, t1: float) -> dict | No
         meas_p.append([vr_point(L[w], w) for w in VR_ORDER])
         meas_R.append([L[w][:3, :3] for w in VR_ORDER])
         ts.append(t)
-        # SONIC reports what it was given; the command it saw is this tick's or the previous one
-        reported = s.vr_position.reshape(3, 3)
-        wiring_k = min(np.abs(reported - pos[j]).max() for j in (k, max(k - 1, 0)))
+        # SONIC reports what it was given: one of the commands of the last WIRING_TICKS ticks (its input and control
+        # threads run at their own rates, so the report trails the node by a few ticks)
+        # (orientations: SONIC reports the positions rotated into a heading-aligned visualisation frame)
+        reported = s.vr_orientation.reshape(3, 4)
+        wiring_k = min(np.abs(reported - orn[j]).max() for j in range(max(k - WIRING_TICKS, 0), k + 1))
         wiring = max(wiring, float(wiring_k))
     if not ts:
         return None

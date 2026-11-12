@@ -73,7 +73,7 @@ def make_source(desc: dict, fullbody_cfg: dict) -> InputSource:
     if desc["kind"] == "script":
         return ScriptSource(desc["scenario"], Postures.from_config(fullbody_cfg["postures"]),
                             stop_at_end=desc.get("stop_at_end", True),
-                            start_timeout_s=desc.get("start_timeout_s", 60.0))
+                            start_timeout_s=desc.get("start_timeout_s", 90.0))
     if desc["kind"] == "quest":
         return QuestSource(QuestParams.from_config(fullbody_cfg["quest"]))
     raise ValueError(f"unknown source kind {desc['kind']!r}")

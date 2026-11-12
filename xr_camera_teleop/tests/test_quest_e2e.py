@@ -154,3 +154,49 @@ def test_page_reconnects_after_a_long_outage_without_reentering_vr(tmp_path):
     assert after[0][0] - up_at < 10                                        # back within seconds of the restart
     # controller poses only exist inside the immersive session: the same XR session is still feeding the server
     assert sum(f.controllers["right"].stamp.valid for _, f in after) > 100
+
+
+def test_node_follows_the_emulated_quest(tmp_path):
+    """The real fullbody_node (Quest source) on the emulated headset's xr_frame stream: the head makes the input live
+    while the emulator plays and not live after it leaves; every frame the node used is logged and the run replays."""
+    import signal
+
+    import yaml
+
+    from xr_camera_teleop.fullbody.runlog import read_records
+    from xr_camera_teleop.tools import fullbody_replay
+
+    port, http, perc, xr = free_port(), free_port(), free_port(), free_port()
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir()
+    fb = yaml.safe_load((REPO / "configs" / "fullbody.yaml").read_text())
+    fb["node"]["xr_frame_addr"] = f"tcp://127.0.0.1:{xr}"
+    fb["sonic_config"] = "sonic.yaml"                    # no SONIC: free ports, nobody listening
+    (cfg_dir / "fullbody.yaml").write_text(yaml.safe_dump(fb))
+    (cfg_dir / "sonic.yaml").write_text(yaml.safe_dump({"deploy": {"zmq_host": "127.0.0.1", "zmq_port": free_port(),
+                                                                   "zmq_out_port": free_port()}}))
+    server = start_server(port, http, perc, xr, tmp_path / "server.log")
+    run = tmp_path / "run"
+    node = subprocess.Popen([sys.executable, "-u", "-m", "xr_camera_teleop.fullbody.node", "--source", "quest",
+                             "--config", str(cfg_dir / "fullbody.yaml"), "--run-dir", str(run)], cwd=REPO,
+                            stdout=open(tmp_path / "node.log", "w"), stderr=subprocess.STDOUT)
+    try:
+        emulator = subprocess.run(["node", str(EMULATOR), "--url", f"https://localhost:{port}/?ws=wss://localhost:{port}",
+                                   "--seconds", "20"], cwd=REPO, stdout=open(tmp_path / "emulator.log", "w"),
+                                  stderr=subprocess.STDOUT, timeout=120)
+        assert emulator.returncode == 0, (tmp_path / "emulator.log").read_text()
+        time.sleep(2.0)
+    finally:
+        node.send_signal(signal.SIGINT)
+        node.wait(timeout=20)
+        server.terminate()
+        server.wait(timeout=10)
+    assert node.returncode == 0, (tmp_path / "node.log").read_text()
+
+    recs = list(read_records(run))
+    ticks = [r for r in recs if r["k"] == "tick"]
+    live = [r["input"]["live"] for r in ticks]
+    assert sum(1 for r in recs if r["k"] == "xr_frame") > 300
+    assert np.mean(live) > 0.5 and not live[-1]                  # live while playing, not after the headset left
+    assert all(r["state"] == "off" and "vr_position" not in r["planner"] for r in ticks)   # nobody started SONIC
+    assert fullbody_replay.replay(run)["passed"]

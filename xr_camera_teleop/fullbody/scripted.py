@@ -170,7 +170,7 @@ def build(scenario: str, postures: Postures) -> Timeline:
 class ScriptSource:
     """InputSource playing a Timeline (see the module docstring)."""
 
-    def __init__(self, scenario: str, postures: Postures, stop_at_end: bool = True, start_timeout_s: float = 60.0):
+    def __init__(self, scenario: str, postures: Postures, stop_at_end: bool = True, start_timeout_s: float = 90.0):
         self.scenario = scenario
         self.timeline = build(scenario, postures)
         self.stop_at_end = stop_at_end

@@ -37,7 +37,7 @@ class Phase(str, Enum):
 @dataclass(frozen=True)
 class LifecycleParams:
     start_resend_s: float = 0.2
-    start_timeout_s: float = 30.0      # covers a relaunch of the binary (INIT + engine load) after a stop
+    start_timeout_s: float = 60.0      # covers a relaunch of the binary after a stop (~28 s measured in P2)
     arm_s: float = 0.5                 # VR-less time after control is observed (planner init ~0.14 s, P1)
     control_timeout_s: float = 0.3     # no g1_debug for this long: not controlling (it comes at 50 Hz)
     present_timeout_s: float = 5.0     # no telemetry at all for this long: binary absent (robot_config every ~2 s)
