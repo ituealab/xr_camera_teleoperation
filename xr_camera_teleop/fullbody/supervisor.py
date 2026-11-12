@@ -11,6 +11,10 @@ What each state commands:
                 neutral, hands open. On entry the upper body blends from where it was (SONIC's idle pose when coming
                 from STANDBY) to the target over engage_blend_s, so switching VR on never jumps.
   PAUSED        IDLE, facing frozen, upper body eased to neutral over pause_blend_s and held there, hands open.
+                A pause entered because the input stopped being live (stale head) ends by itself once the input
+                has been live and ready again for auto_resume_s (PLAN §6: a hand <-> controller switch stalls the
+                head 0.6-1.5 s and two free hands have no button). A pause from the operator, or because the input
+                stopped being ready (recenter, new session: calibration gone), needs RESUME / ENGAGE.
 
 Heading: the Intent's heading is relative to the facing at engage; the supervisor anchors it so that engaging never
 turns the robot (facing = anchor + heading). The facing restarts at 0 whenever SONIC starts, because SONIC
@@ -36,6 +40,7 @@ from xr_camera_teleop.fullbody.types import (BaseCmd, Event, FullBodyCommand, Ha
 class SupervisorParams:
     engage_blend_s: float = 1.0
     pause_blend_s: float = 1.5
+    auto_resume_s: float = 0.5
 
     @classmethod
     def from_config(cls, cfg: dict) -> "SupervisorParams":
@@ -103,6 +108,8 @@ class Supervisor:
         self._anchor: Optional[float] = None       # facing = anchor + intent.heading while ACTIVE
         self._upper: Optional[UpperBody] = None    # last commanded upper body (None: VR off)
         self._blend: Optional[_Blend] = None
+        self._auto_resume = False                  # this pause ends by itself when the input is usable again
+        self._usable_since: Optional[float] = None
 
     # ------------------------------------------------------------------ transitions
     def _go(self, state: State, notes: list, why: str):
@@ -114,8 +121,9 @@ class Supervisor:
         self._anchor = None
         self._blend = _Blend(self._upper if self._upper is not None else self.postures.idle, now, self.p.engage_blend_s)
 
-    def _pause(self, now: float, notes: list, why: str):
+    def _pause(self, now: float, notes: list, why: str, auto_resume: bool = False):
         self._go(State.PAUSED, notes, why)
+        self._auto_resume, self._usable_since = auto_resume, None
         self._blend = _Blend(self._upper if self._upper is not None else self.postures.idle, now, self.p.pause_blend_s)
 
     def _release(self, notes: list, state: State, why: str):
@@ -150,7 +158,17 @@ class Supervisor:
             else:
                 notes.append(f"{ev.value} ignored in {self.state.value}")
         if self.state is State.ACTIVE and not usable:
-            self._pause(now, notes, why_not)
+            self._pause(now, notes, why_not, auto_resume=inp.ready)
+        elif self.state is State.PAUSED and self._auto_resume:
+            if not inp.ready:
+                self._auto_resume = False            # recenter / new session meanwhile: the operator must resume
+                notes.append("paused: input not ready (needs resume)")
+            elif not inp.live:
+                self._usable_since = None
+            elif self._usable_since is None:
+                self._usable_since = now
+            elif now - self._usable_since >= self.p.auto_resume_s - 1e-9:
+                self._activate(now, notes, f"input live again for {self.p.auto_resume_s:g} s")
 
         return SupervisorStep(self.state, self._command(now, inp.intent), tuple(notes))
 

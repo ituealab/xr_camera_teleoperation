@@ -96,3 +96,22 @@ def test_disengage_and_torso_target():
     assert rotation_angle(cmd.upper.torso, torso) < 1e-9
     step = s.step(1.6, OperatorInput(events=(Event.DISENGAGE,), **OK), True)
     assert step.state is State.STANDBY and step.cmd.upper is None
+
+
+def test_a_stale_head_pause_resumes_by_itself_but_not_a_recenter_or_button():
+    s = sup_running()
+    s.step(0.0, OperatorInput(events=(Event.ENGAGE,), **OK), True)
+    assert s.step(1.0, OperatorInput(live=False, ready=True), True).state is State.PAUSED
+    assert s.step(1.2, OperatorInput(**OK), True).state is State.PAUSED
+    assert s.step(1.5, OperatorInput(live=False, ready=True), True).state is State.PAUSED     # stalled again
+    assert s.step(1.6, OperatorInput(**OK), True).state is State.PAUSED
+    step = s.step(2.1, OperatorInput(**OK), True)
+    assert step.state is State.ACTIVE and any("live again" in n for n in step.notes)
+    # stale, then a recenter while paused (ready drops): no auto resume
+    s.step(3.0, OperatorInput(live=False, ready=True), True)
+    s.step(3.1, OperatorInput(live=True, ready=False), True)
+    assert s.step(5.0, OperatorInput(**OK), True).state is State.PAUSED
+    # a button pause never resumes by itself
+    s.step(5.1, OperatorInput(events=(Event.RESUME,), **OK), True)
+    s.step(5.2, OperatorInput(events=(Event.PAUSE,), **OK), True)
+    assert s.step(9.0, OperatorInput(**OK), True).state is State.PAUSED

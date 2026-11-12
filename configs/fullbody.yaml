@@ -25,6 +25,7 @@ lifecycle:                       # sonic/lifecycle.py
 supervisor:                      # fullbody/supervisor.py
   engage_blend_s: 1.0            # upper body blends to the operator's targets on entering ACTIVE
   pause_blend_s: 1.5             # and to neutral on entering PAUSED (PLAN §6)
+  auto_resume_s: 0.5             # a pause from a stale head ends after the input is live this long (PLAN §6)
 
 # Link poses in the pelvis frame (+X forward, +Y left, +Z up), R = Rz(yaw) Ry(pitch) Rx(roll).
 # torso = torso_link, left/right = left/right_wrist_yaw_link; sonic/adapter.py turns them into SONIC's VR points.

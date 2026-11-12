@@ -85,6 +85,9 @@ kapalı, eller açık) → ENGAGE → ACTIVE ⇄ PAUSED; DISENGAGE → STANDBY; 
 - ACTIVE'e girişte üst gövde bulunduğu yerden (STANDBY'den: `postures.idle`, SONIC'in kendi duruşu) hedefe 1.0 s'de
   yarı-kosinüsle geçer; VR açılması zıplamaz.
 - PAUSED'da IDLE, facing donuk, üst gövde 1.5 s'de nötre yumuşar.
+- Bayat kafa (`live` False) ile girilen PAUSED, girdi 0.5 s canlı ve hazır kalınca kendiliğinden ACTIVE'e döner
+  (PLAN §6, `supervisor.auto_resume_s`). Buton, ya da `ready` düşmesi (recenter, yeni oturum) ile girilen PAUSED
+  RESUME/ENGAGE ister. Arada `ready` düşerse otomatik dönüş iptal olur.
 - Heading ENGAGE anında çapalanır (`facing = çapa + intent.heading`): devralma ya da devam robotu döndürmez. SONIC her
   start'ta planner yönünü robotun o anki yaw'ına sıfırladığı için facing de start'ta 0'a döner.
 
@@ -186,8 +189,9 @@ SONIC tarafı watchdog'u (VR'ı ve hareketi kısa sürede bırakan, elleri açı
 - Headset 271. saniyeden sonra canlı; canlı oranı %95.2.
 - 13 "canlı değil" aralığı (kafa > 200 ms bayat): 4'ü uzun (1.9–4.1 s), diğerleri 0.14–0.3 s.
 
-P4 için: kısa takılmalar her biri bir PAUSED demek. 200 ms eşiği gerçek Wi-Fi teslimatında sık tetikleniyor; P4
-eşiği ya da PAUSED'dan otomatik dönüşü bu kayıtla ayarlamalı.
+P4 için: her takılma bir PAUSED demek. Bayatlıkla girilen PAUSED artık 0.5 s taze kafadan sonra kendiliğinden
+dönüyor (supervisor, PLAN §6), yani kısa takılmalar ~0.5–0.8 s'lik duraklamalara dönüşür. Uzunlar kalibrasyonu
+bozmuyorsa aynı şekilde döner.
 
 ### Emülatör (headless Chrome + IWER, `XR_E2E=1`)
 
