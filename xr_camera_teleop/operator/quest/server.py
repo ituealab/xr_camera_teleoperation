@@ -273,6 +273,12 @@ class QuestServer:
         keys = ["robot-left", "robot-right"]
         shown, last_seq = False, None
         while True:
+            if not self._active(session):
+                # A newer connection took over. This one is usually a half-open socket the server never saw close
+                # (Wi-Fi drop, the page redialled): Vuer keeps it until TCP gives up, and feeding it would double the
+                # view traffic of this server. It gets nothing more; Vuer cancels this task when the socket closes.
+                await asyncio.sleep(0.1)
+                continue
             f = self.camera.latest()
             now = time.monotonic()
             if self.view == "none":
