@@ -4,15 +4,23 @@
     deploy/xr_fullbody_sim.sh start --no-cameras
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.fullbody_sim_test square --repeat 3
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.fullbody_sim_test square --kill-at 9 --watch 30
+    data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.fullbody_sim_test --xr p4_turn90 p6_hands
+    data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.fullbody_sim_test --xr-run data/fullbody-runs/<recording>
 
 Per run: a new run directory under data/fullbody-runs/, the node started as a subprocess (data/xr-env, the node's
 venv) with the script source, the sim's base pose recorded from DDS rt/odostate into <run>/odom.msgpack, then
-tools/fullbody_metrics.py and tools/fullbody_replay.py on the result. The node STOPs SONIC at the end of a scenario;
+tools/fullbody_metrics.py and tools/fullbody_replay.py (in the node's venv) on the result. The node STOPs SONIC at the end of a scenario;
 the sim's gantry catches the robot and SONIC is relaunched (run_deploy --respawn), so every run starts the same way.
 
 --kill-at S: SIGKILL the node S seconds after it started, then watch the robot for --watch seconds without any
 node: does it stay up, does it stop walking, what do SONIC's telemetry, hands and VR targets do. Afterwards the
 harness itself sends SONIC `stop` so the next run starts clean. Results: <run>/sim_test.json and a summary line.
+
+--xr SCENARIO...: the headset path instead of a script. Each synthetic operator stream (tools/xr_synth.py, written to
+data/xr-synth/) is played into the node with `--source quest --xr-replay`, so the real QuestSource drives SONIC; the
+stream calibrates, starts and engages with the A/X hold and ends with the STOP gesture. --xr-run DIR plays a recorded
+headset run the same way (afterwards the harness stops SONIC if the recording left it running). Quest-source runs
+also get tools/mapping_metrics.py (P4/P6/P7 exit measurements) in <run>/mapping_metrics.json.
 """
 from __future__ import annotations
 
@@ -31,7 +39,7 @@ import numpy as np
 from xr_camera_teleop.fullbody.runlog import RecordFile, new_run_dir, read_meta
 from xr_camera_teleop.paths import ROOT
 from xr_camera_teleop.sim import sim_config
-from xr_camera_teleop.tools import fullbody_metrics, fullbody_replay
+from xr_camera_teleop.tools import fullbody_metrics, mapping_metrics, xr_synth
 from xr_camera_teleop.tools.fullbody_metrics import ODOM_FILE, up_z
 
 NODE_PYTHON = ROOT / "data" / "xr-env" / "bin" / "python"
@@ -187,15 +195,35 @@ def last_sent_vr(run_dir: Path):
                 "speed": float(np.frombuffer(pl["speed"], dtype="<f4")[0])}
 
 
-def run_once(scenario: str, odo: Odometry, tel: Telemetry, cfg: dict, a, kin) -> dict:
+def replay_in_node_env(run_dir: Path, node_python: Path) -> dict:
+    """tools/fullbody_replay.py in the node's venv: the replayed source must import what the node imports (the Quest
+    source's Dex3 retarget needs dex-retargeting, which the sim venv does not have)."""
+    report = run_dir / "replay.json"
+    proc = subprocess.run([str(node_python), "-m", "xr_camera_teleop.tools.fullbody_replay", str(run_dir), "--json",
+                           str(report)], cwd=ROOT, capture_output=True, text=True)
+    if not report.exists():
+        return {"passed": False, "error": proc.stderr[-2000:]}
+    rep = json.loads(report.read_text())
+    return {k: v for k, v in rep.items() if k != "first"} | ({"first": rep["first"][:2]} if rep["first"] else {})
+
+
+def sonic_controlling(tel: Telemetry) -> bool:
+    return tel.latest(timeout_ms=500) is not None
+
+
+def run_once(scenario: str, odo: Odometry, tel: Telemetry, cfg: dict, a, kin, xr_replay: Path | None = None) -> dict:
+    """One node run: a script scenario, or (xr_replay) the Quest source playing a recorded / synthetic stream."""
     deploy = cfg["deploy"]
     if not wait_sonic_ready(tel, deploy):
         return {"error": "SONIC binary not waiting for start (is the sim stack up?)"}
     run_dir = new_run_dir()
     odo.record_into(run_dir / ODOM_FILE)
-    cmd = [str(a.node_python), "-u", "-m", "xr_camera_teleop.fullbody.node", "--source", "script",
-           "--scenario", scenario, "--run-dir", str(run_dir)]
-    if a.kill_at is not None:
+    cmd = [str(a.node_python), "-u", "-m", "xr_camera_teleop.fullbody.node", "--run-dir", str(run_dir)]
+    if xr_replay is not None:
+        cmd += ["--source", "quest", "--xr-replay", str(xr_replay)]
+    else:
+        cmd += ["--source", "script", "--scenario", scenario]
+    if a.kill_at is not None and xr_replay is None:
         cmd.append("--keep-running")
     print(f"[test] {scenario}: {run_dir}", flush=True)
     t_launch = time.time()
@@ -218,8 +246,17 @@ def run_once(scenario: str, odo: Odometry, tel: Telemetry, cfg: dict, a, kin) ->
             send_stop(int(deploy["zmq_port"]))
     else:
         out["node_exit"] = proc.wait()
+        if xr_replay is not None and sonic_controlling(tel):
+            send_stop(int(deploy["zmq_port"]))            # the recording ended with SONIC running: stop it
     odo.record_into(None)
-    out["replay"] = {k: v for k, v in fullbody_replay.replay(run_dir).items() if k != "first"}
+    out["replay"] = replay_in_node_env(run_dir, a.node_python)
+    if xr_replay is not None:
+        try:
+            out["mapping"] = mapping_metrics.analyze(run_dir, kin)
+            (run_dir / "mapping_metrics.json").write_text(json.dumps(out["mapping"], indent=1, default=float))
+            print(json.dumps(out["mapping"], indent=1, default=float), flush=True)
+        except Exception as e:  # noqa: BLE001
+            out["mapping_error"] = repr(e)
     try:
         out["metrics"] = fullbody_metrics.analyze(run_dir, kin)
         fullbody_metrics.print_report(out["metrics"])
@@ -236,27 +273,39 @@ def main(argv=None) -> int:
     from xr_camera_teleop.sonic import assets
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scenario", choices=[*SCENARIOS, "all"])
+    ap.add_argument("scenario", nargs="?", choices=[*SCENARIOS, "all"])
+    ap.add_argument("--xr", nargs="+", metavar="SCENARIO", help="synthetic operator streams (tools/xr_synth.py)")
+    ap.add_argument("--xr-run", type=Path, help="a recorded headset run to play into the Quest source")
+    ap.add_argument("--seed", type=int, default=0, help="--xr: synthetic stream seed")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--kill-at", type=float, help="SIGKILL the node this many seconds after launching it")
     ap.add_argument("--watch", type=float, default=30.0, help="with --kill-at: seconds to watch the robot afterwards")
     ap.add_argument("--node-python", type=Path, default=NODE_PYTHON)
     ap.add_argument("--config", type=Path, default=sim_config.SIM_CONFIG)
     a = ap.parse_args(argv)
+    if sum(x is not None for x in (a.scenario, a.xr, a.xr_run)) != 1:
+        ap.error("give one of: a script scenario, --xr SCENARIO..., --xr-run DIR")
+    if a.scenario:
+        jobs = [(a.scenario, None)]
+    elif a.xr:
+        jobs = [(n, xr_synth.write_run(n, seed=a.seed)) for n in a.xr]
+    else:
+        jobs = [(a.xr_run.name, a.xr_run)]
+    jobs = jobs * a.repeat
     cfg = sim_config.load(a.config)
     odo = Odometry(assets.load().dds_domain, cfg["dds"]["interface"])
     tel = Telemetry(cfg["deploy"]["zmq_host"], int(cfg["deploy"]["zmq_out_port"]))
     kin = fullbody_metrics.G1Kinematics()
     results, ok = [], True
-    for k in range(a.repeat):
-        r = run_once(a.scenario, odo, tel, cfg, a, kin)
+    for k, (scenario, xr) in enumerate(jobs):
+        r = run_once(scenario, odo, tel, cfg, a, kin, xr)
         results.append(r)
         ok &= "error" not in r and r["replay"]["passed"] and (a.kill_at is not None or r.get("node_exit") == 0)
         summary = {"run": r.get("run_dir"), "node_exit": r.get("node_exit"), "result": r.get("meta_result"),
                    "replay": r.get("replay", {}).get("passed"), "error": r.get("error")}
         if "after_kill" in r:
             summary["after_kill"] = r["after_kill"]
-        print(f"[test] run {k + 1}/{a.repeat}: {json.dumps(summary, default=float)}", flush=True)
+        print(f"[test] run {k + 1}/{len(jobs)} {scenario}: {json.dumps(summary, default=float)}", flush=True)
     return 0 if ok else 1
 
 

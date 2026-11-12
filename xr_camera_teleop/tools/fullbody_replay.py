@@ -63,8 +63,11 @@ def replay(run_dir: Path, max_reports: int = 10) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_dir", type=Path)
+    ap.add_argument("--json", type=Path, help="also write the report here")
     a = ap.parse_args(argv)
     rep = replay(a.run_dir)
+    if a.json:
+        a.json.write_text(json.dumps(rep, indent=1))
     print(json.dumps(rep, indent=1))
     print(f"replay {'PASSED' if rep['passed'] else 'FAILED'}: {rep['ticks']} ticks, {rep['mismatched']} mismatched")
     return 0 if rep["passed"] else 1

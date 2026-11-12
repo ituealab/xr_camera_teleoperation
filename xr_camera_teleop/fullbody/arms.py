@@ -63,7 +63,7 @@ class ArmsParams:
     hand_point_m: float = 0.10                  # hand point along the wrist link's x (toward the fingers)
     hand_radius_m: float = 0.12                 # and the hand point this far
     z_min_m: float = -0.15                      # wrist height floor in the pelvis frame (clear of hips and thighs)
-    wrist_gap_m: float = 0.10                   # the two wrists stay this far apart
+    wrist_gap_m: float = 0.15                   # the two wrists stay this far apart (Dex3 thumbs reach ~6 cm in)
     hold_s: float = 1.0                         # a lost hand holds its target this long, then parks (PLAN §5)
     park_s: float = 1.0
     track_s: float = 0.7

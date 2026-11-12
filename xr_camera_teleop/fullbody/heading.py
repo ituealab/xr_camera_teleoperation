@@ -14,6 +14,12 @@ change of the facing makes SONIC replan, PLAN D6); it is relative to the calibra
 supervisor anchors it to the robot's facing on engage.
 waist_yaw = clamp(psi_head - psi_body, +-waist_yaw_max_deg): the glance share, for the torso target (posture.py).
 
+Re-issue: SONIC's planner plans an in-place turn once per facing change and, standing, never replans otherwise (it
+replans periodically only while walking). Measured in the sim, a 90 deg body turn ends 10-16 deg short and stays
+there. So `reissue_s` seconds after the heading last changed, the same heading is sent again as a nudge of
+`reissue_rad` (SONIC replans on any float change of the facing) and then exactly again at the next entry: each
+re-issue plans the remainder from where the robot stands. Open loop: the robot's measured yaw is never read.
+
 psi_body also orients the operator torso frame the wrists are measured in (posture.py, arms.py), so it keeps tracking
 the operator while the heading is locked.
 """
@@ -37,18 +43,23 @@ class HeadingParams:
     step_deg: float = 3.0            # heading quantisation step
     step_band: float = 0.6           # quantiser hysteresis, in steps (> 0.5)
     waist_yaw_max_deg: float = 30.0  # glance share of the torso yaw (0 turns it off)
+    reissue_s: tuple = (1.0, 2.0)    # after a heading change: nudge at the 1st, exact at the 2nd, ... (empty: never)
+    reissue_rad: float = 1e-3        # as a nudge this size, alternating with the exact value
 
     @classmethod
     def from_config(cls, cfg: dict) -> "HeadingParams":
         unknown = set(cfg) - {f.name for f in fields(cls)}
         if unknown:
             raise KeyError(f"unknown heading parameters: {sorted(unknown)}")
-        return cls(**cfg)
+        p = cls(**{k: tuple(v) if isinstance(v, list) else v for k, v in cfg.items()})
+        if len(p.reissue_s) % 2 or list(p.reissue_s) != sorted(p.reissue_s):
+            raise ValueError("heading.reissue_s: increasing times, pairs of (nudge, back to exact)")
+        return p
 
 
 @dataclass(frozen=True)
 class HeadingOut:
-    heading: float                   # robot heading relative to calibration (rad, quantised)
+    heading: float                   # robot heading relative to calibration (rad, quantised; + a re-issue nudge)
     psi_body: float                  # operator body yaw in the floor frame F (rad)
     waist_yaw: float                 # torso yaw share (rad)
     turning: bool                    # psi_body is slewing
@@ -63,12 +74,26 @@ class Heading:
         self._t: Optional[float] = None
         self._over_since: Optional[float] = None
         self._turning = False
+        self._level: Optional[float] = None     # quantised heading and when it last changed (re-issue clock)
+        self._t_level = 0.0
 
     def reset(self, psi_head: float):
         """Calibration: the body faces where the head does, heading 0."""
         self.psi_body = float(psi_head)
         self._heading, self._t, self._over_since, self._turning = 0.0, None, None, False
+        self._level = None
         self._quant.reset()
+
+    def _reissued(self, now: float, level: float) -> float:
+        """The quantised heading, nudged at the re-issue times after a change (not after calibration)."""
+        if level != self._level:
+            self._t_level = now if self._level is not None else -math.inf
+            self._level = level
+            return level
+        n = sum(1 for r in self.p.reissue_s if now - self._t_level >= r - 1e-9)
+        if n == len(self.p.reissue_s):
+            return level                        # all re-issues done (always so right after calibration)
+        return level + (self.p.reissue_rad if n % 2 else 0.0)
 
     def step(self, now: float, psi_head: float, locked: bool) -> HeadingOut:
         if self.psi_body is None:
@@ -95,5 +120,5 @@ class Heading:
             self._heading += moved
         w = math.radians(p.waist_yaw_max_deg)
         waist = min(w, max(-w, float(wrap_angle(psi_head - self.psi_body))))
-        return HeadingOut(heading=self._quant(self._heading), psi_body=self.psi_body, waist_yaw=waist,
-                          turning=self._turning)
+        return HeadingOut(heading=self._reissued(now, self._quant(self._heading)), psi_body=self.psi_body,
+                          waist_yaw=waist, turning=self._turning)

@@ -207,7 +207,8 @@ def outro(sc: Script) -> Script:
 # ---------------------------------------------------------------------------------------------------- scenarios
 
 def p4_figure8(sc: Script) -> Script:
-    """Walk forward with the stick while the body turns a full circle left, then a full circle right; release."""
+    """Walk forward with the stick while the body turns a full circle left, then a full circle right, then 4 s
+    straight; release."""
     w = math.radians(28.6)                     # 0.46 m/s on ~0.9 m radius
     d = 2 * math.pi / w
     for name, sign in (("loop left", 1.0), ("loop right", -1.0)):
@@ -216,8 +217,17 @@ def p4_figure8(sc: Script) -> Script:
             return replace(s, body_yaw=yaw, pads={k: replace(v, stick=(0.0, 1.0) if k == "right" else (0.0, 0.0))
                                                    for k, v in s.pads.items()})
         sc.add(name, d, fn)
-    sc.stick(0.0, 0.0, 0.0, "release")
+    sc.stick(4.0, 0.0, 1.0, "straight to the mark")
     sc.hold(5.0, "stop")
+    return sc
+
+
+def p4_stops(sc: Script) -> Script:
+    """Stopping distance: full stick forward, back, left, right and half forward for 4 s each, then released."""
+    for name, x, y in (("forward", 0.0, 1.0), ("back", 0.0, -1.0), ("left", -1.0, 0.0), ("right", 1.0, 0.0),
+                       ("half forward", 0.0, 0.5)):
+        sc.stick(4.0, x, y, f"walk {name}")
+        sc.hold(4.0, f"stop {name}")
     return sc
 
 
@@ -241,14 +251,16 @@ def p4_turn90(sc: Script) -> Script:
 
 
 def _circle(side: str, r: float, period: float):
+    """Wrist on a circle in the frontal plane around its rest point; the radius eases in over the first second."""
     base = rest_hand(side)
 
     def T(t):
         a = 2 * math.pi * t / period
+        rr = r * (0.5 - 0.5 * math.cos(math.pi * min(1.0, t)))
         sgn = 1.0 if side == "left" else -1.0
         out = base.T.copy()
-        out[1, 3] += sgn * r * math.cos(a) - sgn * r
-        out[2, 3] += r * math.sin(a)
+        out[1, 3] += sgn * rr * math.cos(a)
+        out[2, 3] += rr * math.sin(a)
         return out
     return T
 
@@ -261,7 +273,7 @@ def p6_hands(sc: Script) -> Script:
     for period in (4.0, 2.5):
         def fn(t, s, period=period):
             return replace(s, hands={k: HandPose(_circle(k, 0.11, period)(t)) for k in SIDES})
-        sc.add(f"wrist circles r=11 cm (operator) T={period:g} s", 3 * period, fn)
+        sc.add(f"wrist circles r=11 cm (operator) T={period:g} s", 1.0 + 3 * period, fn)
     sc.hold(1.0, "hands neutral 2", hands=dict(hands))
 
     def reach(t, s):                           # slow reaches: forward-up with the left, out-down with the right
@@ -405,7 +417,7 @@ def acceptance(sc: Script) -> Script:
     return sc
 
 
-SCENARIOS = {"p4_figure8": p4_figure8, "p4_glances": p4_glances, "p4_turn90": p4_turn90, "p6_hands": p6_hands,
+SCENARIOS = {"p4_figure8": p4_figure8, "p4_stops": p4_stops, "p4_glances": p4_glances, "p4_turn90": p4_turn90, "p6_hands": p6_hands,
              "p7_squat20": p7_squat20, "p7_lean": p7_lean, "p7_nod": p7_nod, "normal10min": normal10min,
              "acceptance": acceptance}
 NO_OUTRO = {"acceptance"}                       # ends with a disconnect instead of STOP

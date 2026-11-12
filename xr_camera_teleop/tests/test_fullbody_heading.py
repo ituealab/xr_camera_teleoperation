@@ -16,7 +16,7 @@ def run(h, yaws, t0=0.0, locked=False):
 
 
 def test_glances_never_turn_the_robot():
-    h = Heading()
+    h = Heading(HeadingParams(reissue_s=()))
     h.reset(0.3)
     t = np.arange(0, 60, DT)
     yaws = 0.3 + D(15) * np.sin(2 * np.pi * 0.2 * t) + D(4) * np.sin(2 * np.pi * 1.3 * t)
@@ -36,7 +36,23 @@ def test_body_turn_is_followed_rate_limited_and_settles_close():
     assert heads[-1] == pytest.approx(D(90), abs=D(1.8))                             # within one quantiser band
     assert abs(out[-1].psi_body - D(90)) <= D(1.0) + 1e-9
     k = np.round(heads / D(3))
-    assert np.allclose(heads, k * D(3))                                              # quantised to 3 deg
+    assert np.allclose(heads, k * D(3), atol=2e-3)                                   # quantised to 3 deg (+ nudge)
+
+
+def test_settled_heading_is_reissued_then_exact():
+    h = Heading(HeadingParams(reissue_s=(1.0, 2.0), reissue_rad=1e-3))
+    h.reset(0.0)
+    yaws = np.concatenate([np.linspace(0, D(90), 100), np.full(300, D(90))])
+    heads = np.array([o.heading for o in run(h, yaws)])
+    changes = np.flatnonzero(np.diff(heads)) + 1
+    t_last_step = next(k for k in changes[::-1] if abs(heads[k] - heads[k - 1]) > 1e-2)
+    nudges = [k for k in changes if k > t_last_step]
+    assert [round((k - t_last_step) * DT, 2) for k in nudges] == [1.0, 2.0]
+    assert heads[nudges[0]] - heads[t_last_step] == pytest.approx(1e-3) and heads[-1] == heads[t_last_step]
+    h0 = Heading(HeadingParams(reissue_s=()))
+    h0.reset(0.0)
+    heads = np.array([o.heading for o in run(h0, yaws)])
+    assert len(np.flatnonzero(np.diff(heads[150:]))) == 0
 
 
 def test_turn_needs_the_delay_and_the_threshold():

@@ -18,8 +18,10 @@ when present, odom.msgpack (the sim's base pose, written by tools/fullbody_sim_t
   base (odom)   per segment: start/end position and yaw, displacement, pelvis height (median of the last half),
                 and over the whole timeline (settle excluded: the robot may still be landing from the gantry) the
                 lowest pelvis and the smallest up-axis z (1 upright, 0 lying).
-Segments come from the script source's description in meta.json; timeline time 0 is the first tick after the
-supervisor became ACTIVE (when ScriptSource starts its clock).
+Segments come from the script source's description in meta.json (timeline time 0 is the first tick after the
+supervisor became ACTIVE, when ScriptSource starts its clock), or, for a Quest-source run that replayed a synthetic
+operator stream (tools/xr_synth.py), from that stream's meta.json. tools/mapping_metrics.py adds the P4/P6/P7 exit
+measurements on top.
 """
 from __future__ import annotations
 
@@ -104,7 +106,7 @@ def load(run_dir: Path) -> dict:
     odom = []
     if (Path(run_dir) / ODOM_FILE).exists():
         odom = [(r["t"], np.asarray(r["p"]), np.asarray(r["q"])) for r in read_records(run_dir, ODOM_FILE)]
-    return {"meta": meta, "ticks": ticks, "robots": robots, "odom": odom}
+    return {"meta": meta, "ticks": ticks, "robots": robots, "odom": odom, "dir": Path(run_dir)}
 
 
 def timeline_start(ticks) -> float | None:
@@ -114,12 +116,34 @@ def timeline_start(ticks) -> float | None:
     return None
 
 
+def replay_offset(run_dir: Path, replayed: Path) -> float | None:
+    """Node time minus recording time of a run that played `replayed` (--xr-replay): the node logs each xr_frame it
+    used with its times shifted to now, so one frame seen in both gives the offset."""
+    first = next((r["frame"] for r in read_records(run_dir) if r["k"] == "xr_frame"), None)
+    if first is None:
+        return None
+    for r in read_records(replayed):
+        if r["k"] == "xr_frame" and r["frame"]["seq"] == first["seq"]:
+            return float(first["t_pub"] - r["frame"]["t_pub"])
+    return None
+
+
 def segments(run: dict) -> list:
-    src = run["meta"].get("source", {})
-    t0 = timeline_start(run["ticks"])
-    if src.get("kind") != "script" or t0 is None:
-        return []
-    return [{"name": n, "t0": t0 + a, "t1": t0 + b} for n, a, b in src["segments"]]
+    """Named time windows of a run, in its own clock: a script source's timeline (time 0 = first ACTIVE tick), or
+    the segments of a replayed synthetic operator stream (tools/xr_synth.py, mapped through `replay_offset`)."""
+    meta = run["meta"]
+    src = meta.get("source", {})
+    if src.get("kind") == "script":
+        t0 = timeline_start(run["ticks"])
+        return [] if t0 is None else [{"name": n, "t0": t0 + a, "t1": t0 + b} for n, a, b in src["segments"]]
+    replayed = meta.get("xr_replay")
+    if src.get("kind") == "quest" and replayed and run.get("dir") is not None:
+        rmeta = read_meta(Path(replayed))
+        offset = replay_offset(run["dir"], Path(replayed))
+        if "segments" in rmeta and offset is not None:
+            t0 = rmeta["t0"] + offset
+            return [{"name": n, "t0": t0 + a, "t1": t0 + b} for n, a, b in rmeta["segments"]]
+    return []
 
 
 def _stats(x) -> dict:
