@@ -393,6 +393,14 @@ def normal10min(sc: Script, seconds: float = 600.0, seed: int = 7) -> Script:
     return sc
 
 
+def p8_course(sc: Script, walk_s: float = 16.0) -> Script:
+    """Over an obstacle 1 m ahead and back (sim courses ramp5 ... cross5): full stick forward, release, a 180 deg
+    body turn, then forward again. Each walk crosses the whole obstacle (up and down)."""
+    sc.stick(walk_s, 0.0, 1.0, "walk out").hold(3.0, "stop out")
+    sc.ramp(4.0, "turn around", body_yaw=sc.end.body_yaw + math.pi).hold(6.0, "settle turn")
+    return sc.stick(walk_s, 0.0, 1.0, "walk back").hold(3.0, "stop back")
+
+
 def acceptance(sc: Script) -> Script:
     """PLAN §0 storyline (no table scene yet): walk, body turn, glances, lean, squat, hands, one controller, walk."""
     sc.stick(3.0, 0.0, 1.0, "walk forward").hold(2.0, "stop 1")
@@ -419,7 +427,7 @@ def acceptance(sc: Script) -> Script:
 
 SCENARIOS = {"p4_figure8": p4_figure8, "p4_stops": p4_stops, "p4_glances": p4_glances, "p4_turn90": p4_turn90, "p6_hands": p6_hands,
              "p7_squat20": p7_squat20, "p7_lean": p7_lean, "p7_nod": p7_nod, "normal10min": normal10min,
-             "acceptance": acceptance}
+             "p8_course": p8_course, "acceptance": acceptance}
 NO_OUTRO = {"acceptance"}                       # ends with a disconnect instead of STOP
 
 

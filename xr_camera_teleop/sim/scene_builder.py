@@ -2,8 +2,9 @@
 """Build the sim's MuJoCo scene from the upstream SONIC G1 scene, without copying or editing it.
 
 Upstream `scene_43dof.xml` (G1 29 DoF + Dex3, floor, light) is loaded with MjSpec; this module adds the ZED 2i
-stereo cameras, the render settings and the static course geometry of `configs/sim_courses.yaml`, and writes
-`data/sim/scenes/<course>.xml` with absolute mesh paths into the SONIC checkout. Physics of the robot is not changed.
+stereo cameras, the render settings and the course of `configs/sim_courses.yaml` (its geometry: `sim/courses.py`),
+and writes `data/sim/scenes/<course>.xml` with absolute mesh paths into the SONIC checkout. Physics of the robot is
+not changed.
 
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.sim.scene_builder --course flat
 
@@ -19,6 +20,7 @@ import numpy as np
 import yaml
 
 from xr_camera_teleop.paths import CONFIGS, DATA
+from xr_camera_teleop.sim import courses
 
 COURSES = CONFIGS / "sim_courses.yaml"
 SCENES_DIR = DATA / "sim" / "scenes"
@@ -86,12 +88,39 @@ def _euler_deg_to_quat(rpy_deg) -> np.ndarray:
                      cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy])
 
 
-def build_spec(cfg: dict, course: str, sonic_root: Path):
-    """MjSpec of the upstream base scene + render settings + stereo cameras + course boxes."""
+def _add_part(spec, part: courses.Part) -> None:
+    """One course part (sim/courses.py) as MjSpec elements in the world."""
     import mujoco
 
-    if course not in cfg["courses"]:
-        raise KeyError(f"unknown course {course!r}; known: {', '.join(cfg['courses'])}")
+    quat = _euler_deg_to_quat(np.degrees(part.euler)).tolist()
+    kw = dict(name=part.name, pos=list(part.pos), quat=quat, rgba=list(part.rgba))
+    c = part.contact
+    if c is None:
+        kw.update(contype=0, conaffinity=0)
+    else:
+        kw.update(friction=list(c.friction), condim=int(c.condim), solref=list(c.solref), solimp=list(c.solimp))
+    if part.kind == "box":
+        spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(part.size), **kw)
+    elif part.kind == "disc":
+        spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=[part.size[0], part.size[1], 0.0], **kw)
+    elif part.kind == "hfield":
+        z = np.asarray(part.elevation)
+        spec.add_hfield(name=part.name, size=list(part.size), nrow=z.shape[0], ncol=z.shape[1],
+                        userdata=z.ravel().tolist())          # row 0 at -y, as Part (tests/test_sim_courses.py rays)
+        spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname=part.name, **kw)
+    elif part.kind == "free_box":
+        body = spec.worldbody.add_body(name=part.name, pos=kw.pop("pos"), quat=kw.pop("quat"))
+        body.add_freejoint(name=f"{part.name}_free")
+        body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(part.size), mass=float(part.mass), **kw)
+    else:
+        raise ValueError(f"unknown part kind {part.kind!r}")
+
+
+def build_spec(cfg: dict, course: str, sonic_root: Path):
+    """MjSpec of the upstream base scene + render settings + stereo cameras + the course (sim/courses.py)."""
+    import mujoco
+
+    parts = courses.course_parts(cfg, course)          # validates the course before the heavy load
     base = Path(sonic_root) / cfg["base_scene"]
     spec = mujoco.MjSpec.from_file(str(base))
     if not Path(spec.meshdir).is_absolute():          # the generated XML lives elsewhere
@@ -101,7 +130,7 @@ def build_spec(cfg: dict, course: str, sonic_root: Path):
     spec.visual.global_.offwidth, spec.visual.global_.offheight = map(int, r["offscreen_size"])
     spec.visual.quality.shadowsize = int(r["shadow_size"])
     group = int(r["robot_collision_group"])
-    for g in spec.geoms:
+    for g in spec.geoms:                              # the robot's only: the course is added below
         if g.parent.name != "world" and (g.contype or g.conaffinity):
             g.group = group
 
@@ -113,14 +142,11 @@ def build_spec(cfg: dict, course: str, sonic_root: Path):
         body.add_camera(name=name, pos=pos.tolist(), quat=quat.tolist(), fovy=cam.fovy_deg,
                         resolution=list(cam.resolution))
 
-    for el in (cfg["courses"][course] or {}).get("elements", []):
-        if el.get("type") != "box":
-            raise ValueError(f"course {course}: unsupported element type {el.get('type')!r} (only 'box')")
-        spec.worldbody.add_geom(name=el["name"], type=mujoco.mjtGeom.mjGEOM_BOX, pos=list(map(float, el["pos"])),
-                                size=list(map(float, el["size"])),
-                                quat=_euler_deg_to_quat(el.get("euler_deg", [0, 0, 0])).tolist(),
-                                friction=[float(el.get("friction", 1.0)), 0.005, 0.0001],
-                                rgba=list(map(float, el.get("rgba", [0.55, 0.55, 0.5, 1.0]))))
+    # Added after the robot, so the robot's bodies and joints keep their indices: upstream's DefaultEnv addresses
+    # qpos by joint id (pelvis free joint first). A free part's joint name must not contain a robot joint keyword
+    # (hip, knee, ankle, waist, shoulder, elbow, wrist, left_hand, right_hand): upstream sorts joints by name.
+    for part in parts:
+        _add_part(spec, part)
     return spec
 
 
@@ -143,9 +169,13 @@ def main(argv=None) -> int:
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--course", default="flat")
+    ap.add_argument("--list", action="store_true", help="list the courses")
     ap.add_argument("--config", type=Path, default=COURSES)
     ap.add_argument("--out-dir", type=Path, default=SCENES_DIR)
     a = ap.parse_args(argv)
+    if a.list:
+        print("\n".join(load_config(a.config)["courses"]))
+        return 0
     print(write_scene(a.course, assets.load().source_root, load_config(a.config), a.out_dir))
     return 0
 

@@ -26,7 +26,56 @@ robot_camera:
   resolution: [960, 540]         # per eye
   names: [zed_left, zed_right]
 
+# Obstacles (sim/courses.py). Each is built in its own frame: x is the direction you walk onto it, from its near
+# edge at x = 0; y is centred on it; z = 0 on the floor. Metres, degrees. Optional per feature: rgba, contact
+# {friction: [slide, torsion, roll], condim, solref, solimp} (a contact uses the larger friction/condim of the pair).
+features:
+  ramp5:  {type: ramp, angle_deg: 5,  rise: 0.15, plateau: 1.2, width: 1.2}    # 1.71 m up, 1.2 m flat, 1.71 m down
+  ramp10: {type: ramp, angle_deg: 10, rise: 0.15, plateau: 1.2, width: 1.2}    # 0.85 m slopes
+  ramp15: {type: ramp, angle_deg: 15, rise: 0.15, plateau: 1.2, width: 1.2}    # 0.56 m slopes
+  cross5: {type: cross_slope, angle_deg: 5, length: 3.0, width: 1.2, lead: 0.8}   # left edge 10.5 cm up, centre 5.2 cm
+  steps3: {type: steps, rise: 0.03, count: 2, tread: 0.4, landing: 0.8, width: 1.2}   # 2 up, landing, 2 down
+  steps6: {type: steps, rise: 0.06, count: 2, tread: 0.4, landing: 0.8, width: 1.2}
+  rough2: {type: rough, height: 0.02, length: 2.4, width: 1.6, cell: 0.025, bump: 0.06, border: 0.2, seed: 1}
+  # The table is sized for the G1 (1.32 m): top 0.78 m, the hands' height with the forearms level is 0.89 m.
+  table:  {type: table, depth: 0.5, width: 0.8, height: 0.78}
+  # PLAN §7: 5 cm, 0.1 kg. Its contact is the scene's grasp tuning (the robot's hand is upstream's, unchanged).
+  cube:   {type: cube, size: 0.05, mass: 0.1, contact: {friction: [1.5, 0.02, 0.001], condim: 4}}
+  mark:   {type: mark, radius: 0.12}
+
+# Placements: {feature, [name], pos: [x, y], [yaw_deg], [atop: <earlier table>]}; world x forward of the robot's start,
+# y to its left. `atop` stacks onto a table: pos is then in the table's top frame (x from its near edge).
 courses:
-  flat: {}                       # the upstream floor only
-  # A course lists static boxes on top of the base scene (ramps, steps, tables come in P5/P8):
-  #   - {type: box, name: ramp5, pos: [x, y, z], size: [hx, hy, hz], euler_deg: [r, p, y], friction: 1.0}
+  flat: []                       # the upstream floor only
+  # The morning test (PLAN §0): a corridor straight ahead with a yellow mark every 1.8 m; at each mark the
+  # courses branch off 0.7 m to the left (ramps 5/10/15 deg, steps 3/6 cm) and to the right (tables with the cube,
+  # rough ground, cross slope). Turn left or right on a mark and walk onto it.
+  morning:
+    - {feature: mark, name: start, pos: [0.0, 0.0]}
+    - {feature: mark, name: mark1, pos: [1.5, 0.0]}
+    - {feature: mark, name: mark2, pos: [3.3, 0.0]}
+    - {feature: mark, name: mark3, pos: [5.1, 0.0]}
+    - {feature: mark, name: mark4, pos: [6.9, 0.0]}
+    - {feature: mark, name: mark5, pos: [8.7, 0.0]}
+    - {feature: ramp5,  pos: [1.5, 0.7], yaw_deg: 90}
+    - {feature: ramp10, pos: [3.3, 0.7], yaw_deg: 90}
+    - {feature: ramp15, pos: [5.1, 0.7], yaw_deg: 90}
+    - {feature: steps3, pos: [6.9, 0.7], yaw_deg: 90}
+    - {feature: steps6, pos: [8.7, 0.7], yaw_deg: 90}
+    - {feature: table, name: table_a, pos: [1.5, -0.55], yaw_deg: -90}
+    - {feature: cube, atop: table_a, pos: [0.12, 0.0]}
+    - {feature: table, name: table_b, pos: [2.7, -0.55], yaw_deg: -90}
+    - {feature: rough2, pos: [5.1, -0.7], yaw_deg: -90}
+    - {feature: cross5, pos: [6.9, -0.7], yaw_deg: -90}
+  # One obstacle 1 m ahead of the start each (P8 characterisation; tools/course_test.py)
+  ramp5:  [{feature: ramp5,  pos: [1.0, 0.0]}]
+  ramp10: [{feature: ramp10, pos: [1.0, 0.0]}]
+  ramp15: [{feature: ramp15, pos: [1.0, 0.0]}]
+  steps3: [{feature: steps3, pos: [1.0, 0.0]}]
+  steps6: [{feature: steps6, pos: [1.0, 0.0]}]
+  rough2: [{feature: rough2, pos: [1.0, 0.0]}]
+  cross5: [{feature: cross5, pos: [1.0, 0.0]}]
+  # The cube test: a table in reach of the robot's start (tools/cube_test.py)
+  table:
+    - {feature: table, name: table, pos: [0.22, 0.0]}
+    - {feature: cube, atop: table, pos: [0.10, -0.12]}

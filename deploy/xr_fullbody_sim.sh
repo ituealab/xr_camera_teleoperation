@@ -69,6 +69,7 @@ case "${1:-start}" in
     quest=1
     while (($#)); do
       case "$1" in
+        --course) sim_args+=(--course "$2"); shift ;;
         --no-viewer) sim_args+=(--no-viewer) ;;
         --no-cameras) sim_args+=(--no-cameras); cameras=0 ;;
         --no-quest) quest=0 ;;

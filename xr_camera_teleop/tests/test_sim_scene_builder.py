@@ -79,15 +79,66 @@ def test_flat_scene_keeps_the_upstream_robot_and_adds_cameras(sonic_root, tmp_pa
     assert np.allclose(m.cam_resolution[left], CFG["robot_camera"]["resolution"])
 
 
-def test_course_boxes_are_added_and_unknown_elements_rejected(sonic_root):
+def _ray_down(m, d, x, y):
+    g = np.zeros(1, np.int32)
+    dist = mujoco.mj_ray(m, d, np.array([x, y, 2.0]), np.array([0.0, 0.0, -1.0]), None, 1, -1, g)
+    return 2.0 - dist, m.geom(g[0]).name
+
+
+@pytest.fixture(scope="module")
+def morning(sonic_root, tmp_path_factory):
+    path = SB.write_scene("morning", sonic_root, CFG, tmp_path_factory.mktemp("scenes"))
+    m = mujoco.MjModel.from_xml_path(str(path))
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    return m, d
+
+
+def test_morning_keeps_the_robot_indices_and_adds_the_cube_last(sonic_root, morning):
+    base = mujoco.MjModel.from_xml_path(str(sonic_root / CFG["base_scene"]))
+    m, d = morning
+    assert [m.joint(i).name for i in range(base.njnt)] == [base.joint(i).name for i in range(base.njnt)]
+    assert m.njnt == base.njnt + 1 and m.joint(m.njnt - 1).name == "cube_body_free"
+    assert m.nq == base.nq + 7 and m.nu == base.nu
+    assert np.allclose(m.body_mass[:base.nbody], base.body_mass)
+    cube = m.body("cube_body")
+    assert np.isclose(m.body_mass[cube.id], 0.1)
+    g = m.geom(m.body_geomadr[cube.id])
+    assert g.condim == 4 and np.isclose(g.friction[0], 1.5) and g.group == 0     # visible to the robot cameras
+    assert np.allclose(d.body("cube_body").xpos, [1.5, -0.67, 0.805])            # on table_a, 12 cm from its edge
+
+
+def test_morning_surfaces_by_ray(morning):
+    from xr_camera_teleop.sim import courses as C
+
+    m, d = morning
+    ramp = C.Ramp(5.0, 0.15, 1.2, 1.2)
+    for s in np.linspace(0.05, ramp.length - 0.05, 25):                 # ramp5 runs along +y from (1.5, 0.7)
+        z, name = _ray_down(m, d, 1.5, 0.7 + s)
+        assert name.startswith("ramp5") and z == pytest.approx(ramp.surface(s), abs=2e-3)
+    steps = C.Steps(0.06, 2, 0.4, 0.8, 1.2)
+    for s in np.linspace(0.05, steps.length - 0.05, 15):
+        assert _ray_down(m, d, 8.7, 0.7 + s)[0] == pytest.approx(steps.surface(s), abs=1e-6)
+    hi, _ = _ray_down(m, d, 6.9 + 0.55, -2.2)                          # cross5 (yaw -90): its left edge is +x
+    lo, _ = _ray_down(m, d, 6.9 - 0.55, -2.2)
+    assert hi == pytest.approx(np.tan(np.radians(5)) * 1.15, abs=3e-3) and lo < 0.01
+    assert _ray_down(m, d, 1.5, -0.9) == (pytest.approx(0.78), "table_a_top")
+    mark = m.geom("mark1_disc")                                        # marks are visual only
+    assert mark.contype == 0 and mark.conaffinity == 0
+    rough = [_ray_down(m, d, 5.1 + dx, -1.9 + dy)[0] for dx in np.linspace(-0.79, 0.79, 25)
+             for dy in np.linspace(-1.19, 1.19, 25)]
+    assert 0.015 < max(rough) <= 0.0201 and min(rough) >= 0.0
+
+
+def test_every_course_compiles(sonic_root):
+    for course in CFG["courses"]:
+        SB.build_spec(CFG, course, sonic_root).compile()
+
+
+def test_unknown_course_and_feature_are_rejected(sonic_root):
     cfg = copy.deepcopy(CFG)
-    cfg["courses"]["ramp"] = {"elements": [{"type": "box", "name": "ramp5", "pos": [2, 0, 0.05],
-                                            "size": [1, 0.5, 0.05], "euler_deg": [0, -5, 0]}]}
-    m = SB.build_spec(cfg, "ramp", sonic_root).compile()
-    g = m.geom("ramp5")
-    assert g.type == mujoco.mjtGeom.mjGEOM_BOX and np.allclose(g.size, [1, 0.5, 0.05])
-    cfg["courses"]["bad"] = {"elements": [{"type": "hfield", "name": "x"}]}
-    with pytest.raises(ValueError, match="unsupported"):
-        SB.build_spec(cfg, "bad", sonic_root)
     with pytest.raises(KeyError, match="unknown course"):
         SB.build_spec(cfg, "nope", sonic_root)
+    cfg["courses"]["bad"] = [{"feature": "nope"}]
+    with pytest.raises(KeyError, match="unknown feature"):
+        SB.build_spec(cfg, "bad", sonic_root)
