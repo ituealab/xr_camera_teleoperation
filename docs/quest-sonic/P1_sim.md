@@ -63,7 +63,7 @@ reset'i ve DDS köprüsü upstream'in aynısı.
 | RTF ≥ 1.0 | 1.000 (iç döngü ve `rt/lowstate` tick'i/duvar saati, ikisi de); `lag_resets` 0 | geçer |
 | Adım p99 < 2.5 ms | yürürken 1.38–1.41 ms (en kötü 1 s pencere), pencere medyanı 1.1 ms, en kötü adım 1.9 ms; ortalama 0.8 ms | geçer |
 | `rt/lowstate` 200 Hz | 200.0 Hz, varış aralığı p99 5.3 ms | geçer |
-| Robot kamerası 30 fps, 2×960×540 | 30.0 fps her göz, düşen kare 0; durum→gönderim 13–15 ms (GPU kısıtsızken) | geçer (aşağıdaki GPU notuyla) |
+| Robot kamerası 30 fps, 2×960×540 | 30.0 fps her göz, düşen kare 0; durum→gönderim p50 6.0 / p99 8.9 ms, render+kodlama p99 7.1 ms (§3a, 145 W) | geçer |
 | Viewer ≥ 60 fps | senkron döngüsü 60.0 Hz (Xvfb üzerinde, yazılım GL); fizik etkilenmedi (p99 1.2 ms) | gözle doğrulanmalı (§6) |
 
 - Adımın kendisi ucuz: `mj_step` 0.08 ms. Asıl maliyet upstream'in Python PD döngüsü ve DDS yayını (~0.7 ms).
@@ -75,7 +75,33 @@ reset'i ve DDS köprüsü upstream'in aynısı.
 - Render: robot çarpışma mesh'leri (görsellerle aynı ~620 bin üçgen) geom grubu 3'e alındı, gölge haritası 2048.
   960×540 göz başına 3.1 ms (gölge 4096 + çarpışma mesh'leri görünürken 4.7 ms).
 
-### 3a. Kritik bulgu: dGPU 20 W'a kilitli
+### 3a. dGPU 20 W'a kilitliydi (çözüldü: uykudan dönüş hatası)
+
+**Neden (2026-11-12 akşamı bulundu):** s2idle uykusundan dönüş başarısız olmuş; çekirdek günlüğünde
+`NVRM: rm_power_source_change_event: Failed to handle Power Source change event` ve `RmHandleDNotifierEvent: Failed
+to handle ACPI D-Notifier event`. GPU pil seviyesindeki 20 W bütçesinde kalmış. Yeniden başlatma düzeltti: enforced
+limit 145–150 W. Tekrarlamasın diye sim açılırken GPU ön kontrolü yapıyor (`sim/gpu.py`): enforced limit < 50 W ise
+yüksek sesle uyarır (neden, çözüm: yeniden başlat ya da şarj aletini çıkar-tak; günlük okunabiliyorsa NVRM hatalarını da
+belirtir), `sim_perf` o durumda numaraları basar ama geçti/kaldı demez (çıkış kodu 2). Not: `emin` çekirdek günlüğünü
+okuyamıyor (`systemd-journal` grubunda değil); uyarı bunu söylüyor.
+
+**Kameralar açık, 145 W (yeniden başlatmadan sonra), `sim_perf --duration 90` yürürken (`sonic_drive endurance`):**
+
+| Ölçüm | 20 W kilitliyken | 145 W |
+|---|---|---|
+| SONIC politika çıkarımı (medyan / p99) | ~8 ms | 0.23 / 2.9 ms |
+| SONIC gözlem→motor komutu (medyan / p99 / maks) | 28 ms (kameralar açık), 11 ms (kapalı) | 0.59 / 3.2 / 3.4 ms (bütçe 20 ms) |
+| Planner modeli (10 Hz thread) | 63 ms | 2.9 ms |
+| GPU sürekli saat / güç | P8, 180 MHz | 1740 MHz medyan (1725–1762), 31 W, kullanım %4, throttle nedeni yok (`0x0`) |
+| Fizik RTF / adım p99 | — | 1.000 / en kötü pencere 1.75 ms, lag reset 0 |
+| Kamera | düşmeler | 30.0 fps her göz, düşen kare 0 |
+
+Bu yükte GPU kısa 2.7 GHz patlamalarından sonra ~1.6–1.7 GHz'de oturuyor; gözlem→komut p99 3.2 ms olduğuna göre bu
+saat SONIC için sorun değil. Kameralar açık 3 dk dayanıklılık (`sonic_drive endurance --minutes 3 --tag cameras-145w`):
+4 tur, **0 düşme**. Ham sonuçlar `data/sonic-p1/perf-cameras-145w.json`, `endurance-cameras-145w.json`.
+
+Aşağıdaki paragraf kilitliyken yazıldı (tarihçe):
+
 
 `nvidia-smi -q -d POWER`: *Current/Requested Power Limit 20 W* (varsayılan 95, max 175), *SW Power Cap: Active*,
 GPU P8 / 180 MHz'de takılı. `nvidia-smi -pl` bu laptopta desteklenmiyor (denendi, değişmedi); sınırı platform
@@ -153,8 +179,8 @@ veya pelvis < 0.2 m veya sim reset'i.
 | son ayarlar, kameralar kapalı | 607 s | 13 | **0** | 0 | RTF 1.000, adım p99 en kötü pencere 1.67 ms (medyan 1.07), en kötü adım 2.25 ms, lag reset 0, `rt/lowstate` 200 Hz |
 | ilk koşu (GIL aralığı 5 ms) | 607 s | 13 | **0** | 0 | 120 s ölçüm: p99 1.72 ms |
 
-Çıkış kriteri (10 dk yürü/dön/squat, düşme yok) iki kez geçti; ikisi de kameralar kapalı (§3a). Kameralar açık
-dayanıklılık koşusu GPU kilidi kalkınca tekrarlanmalı: `deploy/xr_fullbody_sim.sh start` +
+Çıkış kriteri (10 dk yürü/dön/squat, düşme yok) iki kez geçti; ikisi de kameralar kapalı. GPU kilidi kalktıktan sonra
+kameralar açık 3 dk koşu da düşmesiz (§3a); 10 dk'lık kameralar açık koşu: `deploy/xr_fullbody_sim.sh start` +
 `sonic_drive endurance --minutes 10 --tag cameras`.
 
 ## 5. zmq_manager tel formatı ve davranışı (P2)
@@ -191,7 +217,7 @@ Kaynak: `zmq_manager.hpp`, `zmq_packed_message_subscriber.hpp` @ a0732b6; `sonic
 - Viewer ayrı süreçte: fare ile itme (Ctrl+sürükle) fiziğe gitmez; itme için ok tuşları.
 - ZED görüntüsü: `zed_left` robotun orta hattında, 50° aşağı; eller ve önü görünüyor (render kontrol edildi).
   Gerçek montajla karşılaştırma P5'te.
-- §3a'daki GPU güç sınırı.
+- §3a'daki GPU güç sınırı çözüldü; ön kontrol her sim açılışında bakıyor.
 
 ## 7. PLAN'a düzeltmeler / yeni bilgiler
 
@@ -212,4 +238,5 @@ Kaynak: `zmq_manager.hpp`, `zmq_packed_message_subscriber.hpp` @ a0732b6; `sonic
   "JPEG kodlama camera_bridge'de" yerine: sim kodlar, `camera_bridge` (P5) upstream `ImageUtils.decode_image` ile
   çözüp stereo formatına çevirir. Mesajda `sim_time` ve `state_wall_time` var (P5 gecikme ölçümü için).
 - §0 madde 3 (0.3 m'de durma) ve P4 hız aralıkları için §4'teki ölçümler; squat `height` aralığı 0.3–0.8.
-- §7a "kameralar açıkken" hedefi, GPU 20 W kilidi kalkmadan karşılanamaz (§3a).
+- §7a "kameralar açıkken" hedefi 20 W kilidiyle karşılanamıyordu; kilit uykudan dönüş hatasıydı, yeniden başlatmadan sonra
+  karşılanıyor (§3a).
