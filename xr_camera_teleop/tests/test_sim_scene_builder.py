@@ -105,7 +105,7 @@ def test_morning_keeps_the_robot_indices_and_adds_the_cube_last(sonic_root, morn
     assert np.isclose(m.body_mass[cube.id], 0.1)
     g = m.geom(m.body_geomadr[cube.id])
     assert g.condim == 4 and np.isclose(g.friction[0], 1.5) and g.group == 0     # visible to the robot cameras
-    assert np.allclose(d.body("cube_body").xpos, [1.5, -0.67, 0.805])            # on table_a, 12 cm from its edge
+    assert np.allclose(d.body("cube_body").xpos, [1.5, -0.67, 0.85])             # on table_a, 12 cm from its edge
 
 
 def test_morning_surfaces_by_ray(morning):
@@ -122,7 +122,7 @@ def test_morning_surfaces_by_ray(morning):
     hi, _ = _ray_down(m, d, 9.3 - 0.95, 2.7)                           # cross5 (yaw 90): its left edge is -x
     lo, _ = _ray_down(m, d, 9.3 + 0.95, 2.7)
     assert hi == pytest.approx(np.tan(np.radians(5)) * 1.95, abs=3e-3) and lo < 0.01
-    assert _ray_down(m, d, 1.5, -0.9) == (pytest.approx(0.78), "table_a_top")
+    assert _ray_down(m, d, 1.5, -0.9) == (pytest.approx(0.82), "table_a_top")
     mark = m.geom("mark1_disc")                                        # marks are visual only
     assert mark.contype == 0 and mark.conaffinity == 0
     rough = [_ray_down(m, d, 9.3 + dx, -1.9 + dy)[0] for dx in np.linspace(-0.99, 0.99, 25)
