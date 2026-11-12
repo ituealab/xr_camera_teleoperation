@@ -89,7 +89,7 @@ frame rate (about 90 Hz with nothing else rendered, about 43 Hz with the stereo 
 ### xr_frame recording (full-body teleop, P3)
 
 One command records a 5-minute `xr_frame` log from the headset into `data/fullbody-runs/<time>/` and validates it
-(timestamps, per-source rates, staleness as the full-body node will see it, the mixed hand + controller case):
+(timestamps, per-source rates and jitter, staleness exactly as the full-body node sees it, input modes and switches):
 
 ```bash
 deploy/xr_frame_record.sh            # --minutes N, --no-view; `deploy/xr_frame_record.sh stop` stops the server
@@ -102,10 +102,14 @@ The operator, with the headset on:
 | Minute | Do |
 |---|---|
 | 0-1 | Both controllers in hand. Look around, walk a step, push both sticks, press A/B and X/Y. |
-| 1-2 | Put the **left** controller down; left hand free and in view, right controller in hand. |
-| 2-3 | Pick the left controller up, put the **right** one down; right hand free. |
-| 3-4 | Both controllers down, both hands tracked. Crouch once, lean forward and sideways. |
+| 1-2 | Put **both** controllers down; both hands free and in view. Crouch once, lean forward and sideways. |
+| 2-3 | Pick both controllers up, walk a step, put both down again, use the hands. |
+| 3-4 | Both hands tracked, moving. |
 | 4-5 | Both controllers back in hand. Once, around 4:30, recenter (hold the Meta button). |
+
+The Quest 3S in Quest Browser never tracks a free hand while the other holds a controller (docs/quest-sonic/
+P0_quest_probe.md §6), so the operator rule is: both controllers to walk, both down to use the hands.
+`--require-mixed` (validator and recorder) also demands that case, for a platform that delivers it.
 
 `tools/xr_frame_validate.py <run>` re-validates a run; `tools/quest_emulator.mjs` drives the server with an
 emulated Quest in headless Chrome (no headset; rates are the browser's, not the Quest's).
