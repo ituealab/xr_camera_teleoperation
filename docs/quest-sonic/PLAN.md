@@ -2,13 +2,23 @@
 
 Branch: `quest_emin` (`quest-xr`'dan, 3144d6d). Tarih: 2026-11-12.
 
+**Durum (2026-11-12):**
+
+| Faz | Durum |
+|---|---|
+| P0 | Kısmen. Ölçüm tablosu ve kafa akışı kararı `P0_quest_probe.md`'de. Karışık el/kontrolcü modu (D8) ve Vuer 0.1.6 kafa hızı ölçülmedi; kullanıcının 5 dk'lık headset kaydını bekliyor. |
+| P1 | Tamam, kameralar kapalıyken: 10 dk dayanıklılık düşmesiz, §7a fizik hedefleri geçiyor (`P1_sim.md`). Kameralar açıkken açık: GPU 20 W güç kilidi (§7a, §11). |
+| P2 | Sürüyor. |
+| P3 | Tamam (kod, testler, Quest emülatörüyle uçtan uca). Çıkıştaki 5 dk'lık headset kaydı P0 ile birlikte kullanıcıda. |
+| P4–P8 | Başlamadı. |
+
 ## 0. Bitiş tanımı
 
 Plan şu **kabul senaryosu** üç kez üst üste, düşmeden geçtiğinde biter. Senaryo MSI'da, MuJoCo'da çalışır; Quest operatörün kafasındadır.
 
 1. Operatör Quest'te sayfayı açar ve Enter VR'a basar. Simülasyondaki robotun gözünden stereo görüntüyü görür. Ayrıca bir kontrol paneli görür: robotu başlatma/durdurma ve operatör ayarları. Panel elle ya da kontrolcüyle seçilir (§6a).
 2. Nötr duruşta kalibre olur: dik durur, ileri bakar, butonu basılı tutar.
-3. Thumbstick ile ileri, geri ve yana yürür. Stick'i bırakınca robot 0.3 m içinde durur.
+3. Thumbstick ile ileri, geri ve yana yürür. Stick'i bırakınca robot 0.3 m içinde durur (aşağıdaki nota bakın).
 4. Vücuduyla 90° döner, robot da döner. ±15° etrafa bakınca robot dönmez; sadece gövde yaw'ı (bel) bakışı takip eder.
 5. Öne ve yana eğilince robotun gövdesi eğilir. Çömelince robot squat yapar. Kalkınca robot da kalkar, sonra tekrar yürür.
 6. Kontrolcüyü bırakır, iki el serbest kalır. Robotun kolları bilekleri, Dex3 parmakları parmakları takip eder. Masadan bir küpü alıp yerine koyar.
@@ -17,6 +27,8 @@ Plan şu **kabul senaryosu** üç kez üst üste, düşmeden geçtiğinde biter.
 9. Quest bağlantısını keser (headset'i çıkarır ya da sayfayı kapatır). Robot ayakta, güvenli şekilde durur.
 
 Senaryo boyunca MuJoCo gerçek zamanlı ve akıcı çalışır (§7a): takılma ya da yavaşlama yoktur.
+
+**Madde 3 için not (P1 ölçümü; karar kullanıcıda):** Durma mesafesi SONIC planner'ının özelliğidir ve hıza bağlıdır. IDLE'a geçişten sonra 0.5 m/s'den 0.25 m, 1.0 m/s'den 0.48 m, 1.5 m/s'den 0.87 m. Yani 0.3 m şartı yalnız ~0.5 m/s'ye kadar sağlanıyor. Bizim tarafımızdaki tek kaldıraç hız sınırıdır. Stick bırakılınca uygulanan bir yavaşlama rampası mesafeyi kısaltmaz, en fazla sarsıntıyı azaltır. Öneri: kabul senaryosunda operatörün azami ileri hızı `v_fwd_max = 0.5 m/s` (config). Daha yüksek hız istenirse şart "≤ 0.5 m/s'de 0.3 m; üstünde hız başına ölçülüp raporlanır" olur. Şart kullanıcı onayı olmadan gevşetilmez.
 
 Her koşuda xr_frame, giden komutlar ve robot durumu kaydedilir. Kayıt sonradan replay edilebilir olmalıdır.
 
@@ -42,7 +54,7 @@ Tasarım bunları zorlaştırmayacak şekilde yapılır (bkz. §12).
 | D1 | **SMPL yok.** SONIC'in planner hibriti kullanılır: zmq_manager `planner` topic'i, 50 Hz. | Kafa ve iki bilekten güvenilir insan vücudu çıkmaz. SMPL modunda planner bacakları yoktur. Resmi PICO teleop'u da bu yolu kullanır. |
 | D2 | **Üst gövde VR 3-nokta (encoder mod 1).** Sol bilek, sağ bilek ve gövde proxy'si, pelvise göre 6D. | Bel, kol ve denge koordinasyonunu SONIC'in eğitildiği tek model çözer. |
 | D3 | **Kontrol yolunda kol IK'sı yok.** | Bileğin nerede olması gerektiğini biz söyleriz, eklemleri SONIC çözer. q17+IK yolu sadece yedektir (§11). |
-| D4 | **Parmaklar tamamen bizim Dex3 retarget'ımız.** Planner mesajındaki `left/right_hand_joints` ile gider. | Dex3 komutunu zaten SONIC yayınlar. Her aktüatörün tek sahibi olur, upstream'e yama gerekmez. |
+| D4 | **Parmaklar tamamen bizim Dex3 retarget'ımız.** Planner mesajındaki `left/right_hand_joints` ile gider, her mesajda. | Dex3 komutunu zaten SONIC yayınlar. Her aktüatörün tek sahibi olur, upstream'e yama gerekmez. Alan yoksa SONIC elleri yumruk yapar (P1). |
 | D5 | **Yürüme sadece thumbstick'ten.** Stick boşken mode `IDLE`. | `speed<=0`, "modun varsayılan hızı" anlamına gelir; dur komutu değildir. |
 | D6 | **Robot yönü kafa yaw'ından gelir.** Mutlak ve kalibre edilmiş; histerezisli, hız sınırlı, kademeli. Bir kilit butonu vardır. | Etrafa bakmak robotu döndürmemeli. Facing'deki her float değişikliği yeniden planlama tetikler. |
 | D7 | **Çömelme dururken ve kademelidir** (planner mode 4 + `height`). | Stok SONIC'te çömelerek yürüme yoktur; `height` sadece statik modlarda çalışır. |
@@ -61,9 +73,9 @@ Quest 3S (Quest Browser, WebXR)
   │  wss :8012 (Vuer)
   ▼
 quest_server  ─────────────── (mevcut, genişletilir)
-  ├─ HAND_MOVE, CAMERA_MOVE (kafa), CONTROLLER_MOVE
+  ├─ HEAD_MOVE (Vuer 0.1.6 `Head`), HAND_MOVE, CONTROLLER_MOVE
   ├─ PUB :5594  perception mesajı (mevcut live_ui için, değişmez)
-  ├─ PUB :5596  xr_frame (YENİ: tipli anlık görüntü, kaynak başına zaman/geçerlilik)
+  ├─ PUB :5596  xr_frame (P3: tipli anlık görüntü, kaynak başına zaman/geçerlilik)
   ├─ SUB :5605  stereo JPEG (gerçek: ZED, sim: camera_bridge) → headset
   ├─ ui.py: kontrol paneli (çizim + raycast); tıklamalar UiAction olarak node'a
   └─ HTTP :8771 view modu + YENİ /state (node durumu girer, panelde gösterilir)
@@ -78,10 +90,10 @@ fullbody_node  (YENİ, başsız, sabit 50 Hz)
 SONIC g1_deploy_onnx_ref  (upstream, değişmez; --input-type zmq_manager)
         │ DDS (rt/lowcmd, rt/lowstate, rt/dex3/*, rt/odostate)
         ▼
-MuJoCo sim (upstream simulator, bizim sahnemizle başlatılır) ──offscreen stereo──► camera_bridge ──► :5605
+MuJoCo sim (upstream fizik + DDS köprüsü, bizim gerçek zamanlı döngümüz) ──JPEG stereo :5555──► camera_bridge (çözer) ──► :5605
 ```
 
-Port çakışması kontrolü: upstream sim kamerası :5555, SONIC telemetrisi :5557, fullbody → SONIC :5556. Hepsi `configs/fullbody.yaml` içindedir.
+Port çakışması kontrolü: sim kamerası :5555, SONIC telemetrisi :5557, fullbody → SONIC :5556, sim istatistik :5598, sim tuşları :5599. Sim ve SONIC portları `configs/sonic_sim.yaml`'dadır (tek kaynak); `configs/fullbody.yaml` SONIC portlarını oradan okur.
 
 ## 4. Modüller ve sorumluluklar
 
@@ -90,10 +102,13 @@ Her modülün tek bir görevi vardır. Saf matematik modülleri I/O yapmaz ve bi
 | Yol | Tek görevi | Girdi → çıktı |
 |---|---|---|
 | `operator/quest/server.py` (değişir) | Quest'ten veri almak ve yayınlamak; görüntü ve HUD sunmak | Vuer olayları → `perception` (mevcut) + `xr_frame` |
+| `operator/quest/assembler.py` (P3) | Vuer olayları → `xr_frame` anlık görüntüleri: saat eşleme, recenter tespiti (`epoch`). Saf, replay edilebilir. | olay + alım zamanı → `XRFrame` |
+| `operator/quest/vuer_app.py` (P3) | Vuer 0.1.6 uygulaması; sonsuz yeniden bağlanma için sayfaya WebSocket sarmalayıcısı enjekte eder | — |
 | `operator/quest/ui.py` | Headset kontrol paneli: düzen, widget'lar, raycast, hover/tıklama; durum gösterimi. Çizim Vuer elemanlarıyla. | xr_frame (ışın kaynakları) + node durumu → panel sahnesi + `UiAction` olayları |
 | `operator/quest/convert.py` (değişir) | XR çözme ve frame dönüşümü (kafa, kontrolcü, el) | ham olay → tipli poz/eksen/buton |
 | `fullbody/xr_frame.py` | `xr_frame` şeması: encode, decode, doğrulama | dict ↔ `XRFrame` (kaynak başına `t`, `valid`, `session`) |
 | `fullbody/frames.py` | Tek yerde frame tanımları: XR(Y-up) → Z-up, operatör gövde frame'i, robot pelvis/torso nötr pozları | poz → poz |
+| `fullbody/runlog.py` (P3) | Koşu dizini: `run.msgpack` (kayıt akışı) + `meta.json`; yazma ve okuma | kayıtlar ↔ dosya |
 | `fullbody/calibration.py` | Nötr duruşu kaydetmek: kafa yüksekliği h0, yaw ψ0, gövde boyu L, bilek nötrleri | XRFrame'ler → `Calibration` |
 | `fullbody/heading.py` | Kafa yaw'ı → operatör gövde yaw'ı ve robot facing'i (histerezis, kilit, kademe) | ψ_head → ψ_body, facing, waist-yaw payı |
 | `fullbody/locomotion.py` | Stick → mode, movement, speed | eksenler, ψ_facing → `LocomotionCmd` |
@@ -103,15 +118,17 @@ Her modülün tek bir görevi vardır. Saf matematik modülleri I/O yapmaz ve bi
 | `fullbody/supervisor.py` | Durum makinesi, bayatlık kuralları, butonlar | her şey → durum + komut maskesi |
 | `fullbody/node.py` | 50 Hz döngü: bağlama, loglama, HUD | süreç |
 | `operator/hand_geometry.py` (çıkarılır) | El eklemlerinden bilek-yerel parmak koordinatları; saf fonksiyonlar, `wrapper.py` ile ortak | 25×3 → yerel |
-| `sonic/protocol.py` | SONIC paket formatı (konu + 1280 bayt JSON başlık + diziler) | alanlar → bytes |
+| `sonic/protocol.py` (P1) | SONIC paket formatı (konu + 1280 bayt JSON başlık + diziler); upstream gönderici ile bayt bayt aynı (golden test) | alanlar → bytes |
 | `sonic/adapter.py` | `FullBodyCommand` → planner alanları (wxyz, sıralar, offset'ler) | komut → alan dict'i |
 | `sonic/lifecycle.py` | start, planner, VR yeniden kurma sırası; yeniden bağlanma | durum → command mesajları |
-| `sim/scene_builder.py` | Upstream G1 MJCF + stereo kamera + parkur → üretilmiş sahne (MjSpec ile, kopya yok) | `configs/sim_courses.yaml` → `data/sim/scenes/*.xml` (gitignore) |
-| `sim/run_sonic_sim.py` | Upstream simülatörü bizim sahne, kamera ve domain ayarımızla başlatan ince sarmalayıcı | config → süreç |
-| `sim/camera_bridge.py` | Upstream sim görüntü akışı → bizim stereo formatı (:5605) | ZMQ → ZMQ |
+| `sim/scene_builder.py` | Upstream sim sahnesi `scene_43dof.xml` + stereo kamera + parkur → üretilmiş sahne (MjSpec ile, kopya yok) | `configs/sim_courses.yaml` → `data/sim/scenes/*.xml` (gitignore) |
+| `sim/run_sonic_sim.py` | Upstream `DefaultEnv`'i (`SimLoopConfig` + `SimulatorFactory.create_simulator`) bizim sahne ve domain ayarımızla kurar; fizik döngüsü bizim (mutlak deadline), render alt süreçlerde | config → süreç |
+| P1 ek modülleri | `sim/{camera_publisher,sim_viewer,state_snapshot,perf,sim_config}.py`, `sonic/{assets,run_deploy}.py`, `tools/{sonic_drive,sim_perf}.py`; görevleri `P1_sim.md` §2 | — |
+| `sim/camera_bridge.py` | Sim'in upstream formatındaki JPEG akışı (:5555, `ImageUtils`) → çöz → bizim stereo formatı (:5605) | ZMQ → ZMQ |
 | `tools/fullbody_replay.py` | Log'dan node'u başsız tekrar oynatmak | log → komutlar |
 | `deploy/xr_fullbody_sim.sh` | tmux launcher: sim, SONIC, kamera köprüsü, quest_server, fullbody_node | — |
-| `configs/fullbody.yaml` | Tüm eşikler, kazançlar, limitler, portlar, park pozları | — |
+| `configs/fullbody.yaml` | Tüm eşikler, kazançlar, limitler, node portları, park pozları; SONIC portları `sonic_sim.yaml`'dan | — |
+| `configs/sonic_sim.yaml` (P1) | Sim ve SONIC çalışma ayarları: dt, bant, viewer/kamera hızları, sim ve SONIC portları | — |
 | `configs/sonic_assets.yaml` | SONIC kaynak, model ve binary yolları + commit + sha256 | — |
 
 Mevcut `live_ui` ve `ee_runtime` yolu (sadece kol modu) değişmez. Tek fark, ortak el geometrisinin `hand_geometry.py`'den gelmesi.
@@ -133,7 +150,7 @@ Bu bölümün kodu `frames.py`'de yaşar. Diğer modüller frame'lere sadece onu
 - L: kalça-kafa uzunluğu, `L = k_L·h0` (k_L config'te, ilk değer ≈0.48)
 - Bilek nötrleri (iki el TRACKED ise)
 
-Her XR `reset` (recenter) ya da oturum değişiminde sistem PAUSED'a geçer ve yeniden kalibrasyon ister.
+Vuer, WebXR `reset` olayını sunucuya iletmez. Recenter sunucuda kafa pozundaki adımdan algılanır ve `xr_frame.epoch`'u artırır (P3). `session` ya da `epoch` değişince kalibrasyon düşer (`Calibration.matches`); sistem PAUSED'a geçer ve yeniden kalibrasyon ister.
 
 **Heading** (`heading.py`):
 - ψ_body (operatörün gövde yaw tahmini) kafayı histerezisle izler. |ψ_head − ψ_body| ≤ 20° iken sabittir. 25°'yi en az 0.3 s aşarsa ψ_body, en fazla 60°/s ile ψ_head'e kayar; fark 5°'nin altına inince durur.
@@ -142,9 +159,13 @@ Her XR `reset` (recenter) ya da oturum değişiminde sistem PAUSED'a geçer ve y
 - Kilit: buton ile aç/kapa. Squat'ta kilit otomatik olarak açıktır. Kilitliyken ψ_body donar.
 
 **Yürüme** (`locomotion.py`):
-- Stick (x, y), radyal deadband 0.15. `v_local = [v_fwd_max·y, −v_lat_max·x]`.
+- Stick (x, y), radyal deadband 0.15. xr_frame'de stick ileri = +y = +1 (P3). `v_local = [v_fwd_max·y, −v_lat_max·x]`.
 - `|v| < ε` → mode `IDLE`, movement 0. Değilse eşiğin altında `SLOW_WALK`, üstünde `WALK` (histerezisli).
-- speed = |v|, modun ölçülmüş aralığına kırpılır (aralık P1'de ölçülür).
+- speed = |v|, modun ölçülmüş aralığına kırpılır. P1 ölçümü:
+  - ~0.3 m/s altındaki komutlar neredeyse hareket üretmiyor; en düşük yürüme hızı ≥ 0.35–0.4 m/s olmalı.
+  - SLOW_WALK ve WALK 0.5–1.2 m/s'de aynı hızı veriyor; fark yürüyüş stili.
+  - `speed = -1` varsayılanları: SLOW_WALK 0.17, WALK 0.88 m/s.
+  - Durma mesafesi hıza bağlı (§0 notu); `v_fwd_max` buna göre seçilir.
 - `movement = Rz(ψ_cmd)·v̂_local`. İleri yön kafaya değil, komut edilen facing'e göredir.
 
 **Gövde proxy'si** (`posture.py`, VR noktası 3):
@@ -157,7 +178,8 @@ Her XR `reset` (recenter) ya da oturum değişiminde sistem PAUSED'a geçer ve y
 
 **Çömelme** (`posture.py`):
 - Eğilmeden düzeltilmiş düşüş: `Δh = (h0 − h_head) − L(1 − cos θ_pitch)`.
-- **Giriş:** stick en az 0.5 s boşta ve Δh > 0.12 m. Mode `SQUAT`, `height = clamp(h_stand − k_h·Δh, h_min, h_max)`, 3 cm adımlarla. Aralık P1'de simülasyonda ölçülür; dokümanlarda çelişkili.
+- **Giriş:** stick en az 0.5 s boşta ve Δh > 0.12 m. Mode `SQUAT`, `height = clamp(h_stand − k_h·Δh, h_min, h_max)`, 3 cm adımlarla.
+- **Aralık (P1):** `height` 0.3–0.8 → pelvis 0.44–0.79 m (ayakta 0.786); 0.3'ün altı doyuyor. Squat'a giriş ~1.3 s'de oturuyor. zmq_manager squat'ta `height < 0.2`'yi 0.2'ye çeker; yani `-1` "varsayılan" değil en alçak squat demektir, her zaman açık bir yükseklik gönderilir. Kneel modları `height`'ı yok sayar.
 - **Çıkış:** Δh < 0.07 m (histerezis) ya da stick sapması. Önce `IDLE`, ardından pelvis yüksekliği toparlanınca yürüyüşe izin verilir.
 
 **Bilekler** (`arms.py`):
@@ -174,7 +196,8 @@ Her XR `reset` (recenter) ya da oturum değişiminde sistem PAUSED'a geçer ve y
 
 **El modları** (`arms.py` + `supervisor.py`):
 - Her taraf için giriş kaynağı türüne bakılır. El takibi varsa TRACKED, kontrolcü varsa PARKED.
-- PARKED: kol, config'teki park pozuna (pelvise göre sabit, yan taraf) yarı-kosinüs geçişle 1.0 s'de gider. Parmaklar nötr-açık.
+- PARKED: kol, config'teki park pozuna (pelvise göre sabit, yan taraf) yarı-kosinüs geçişle 1.0 s'de gider. Parmaklar nötr-açık. Park pozu elleri kalçadan uzak tutmalı: P1'de SONIC'in IDLE kol pozunda Dex3 işaret parmağı kalçaya takılıp açılamıyor.
+- Kontrolcü pozu WebXR target-ray pozudur, grip pozu değil (P0/P3). Işın ve park için doğrudan kullanılır; el yerine kullanılacaksa ofset gerekir.
 - TRACKED'a dönüşte, o anki hedeften takip hedefine 0.7 s'de geçilir.
 - El kaybı: 0.25 s son hedefi tut; 1 s sonra PARKED gibi davran.
 
@@ -188,17 +211,19 @@ DISCONNECTED ─(SONIC hazır + Quest bağlı)→ STANDBY ─(kalibrasyon)→ AC
 
 - **STANDBY:** `IDLE`, VR kapalı, sadece facing ψ_plan0. SONIC robotu ayakta tutar.
 - **ACTIVE:** VR 3-nokta, yürüme, duruş ve eller açık.
-- **PAUSED:** `IDLE`, facing donuk. VR hedefleri 1.5 s'de nötr duruşa yumuşar ve öyle kalır. Şunlarla girilir: pause butonu, kafa verisi bayatlaması (>200 ms), XR reset ya da oturum değişimi.
+- **PAUSED:** `IDLE`, facing donuk. VR hedefleri 1.5 s'de nötr duruşa yumuşar ve öyle kalır. Şunlarla girilir: pause butonu, kafa verisi bayatlaması (>200 ms), recenter (`epoch`) ya da oturum değişimi.
 - **Bayatlık kuralları:**
+  - Bayatlık her kaynağın örnek zamanına (`t`) göre ölçülür, alım zamanına göre değil. P0: teslimat yaklaşık saniyede bir 100–160 ms takılıyor; aşağıdaki eşikler bu takılmalara göre P4'te headset kaydıyla doğrulanır.
+  - Kafa hızı headset'in render hızıyla sınırlı (P0 bulgu 2). Kafa ≥ 50 Hz için P5'in görüntü yolu headset kare hızını ≥ 50'de tutmalı.
   - Kontrolcü verisi > 150 ms bayatsa yürüme `IDLE` olur, diğer her şey devam eder.
   - El verisi için §5'teki kural geçerlidir.
   - fullbody_node her durumda 50 Hz yayın yapar.
 - **Lifecycle:**
   1. `command{start=1, planner=1}` gönderilir.
-  2. Planner init beklenir (telemetri ya da sabit gecikme; P2'de belirlenir).
+  2. Planner init beklenir. P1: telemetri (`g1_debug`, :5557) start'tan ~0.2 s sonra akmaya başlıyor, planner init ~140 ms. Sabit gecikme yerine bu sinyal kullanılır (P2).
   3. **VR yeniden kurma:** VR alanları olmadan bir mesaj, ardından VR alanlarıyla mesajlar gönderilir. Bu, upstream'deki "init encoder modunu sıfırlar, VR enable kenar tetikli" davranışına karşı gerekli.
-  4. Kapanışta `command{stop=1}` gönderilir.
-- **Kabul edilen risk:** stok SONIC 1 s planner timeout'unda VR bayrağını temizlemez. Simde bacaklar `IDLE`'a geçer, üst gövde son hedefte kalır; senaryo 9 bunu ölçer. Gerçek robot öncesi SONIC tarafı watchdog'u gerekir (§12).
+  4. Kapanışta `command{stop=1}` gönderilir. `stop` binary'yi kapatır (süreç çıkar, motorlar sönüm moduna geçer); yeniden başlatmak için süreç yeniden açılmalı.
+- **Kabul edilen risk:** stok SONIC 1 s planner timeout'unda VR bayrağını temizlemez (P1'de gözlendi: VR modu mesaj başına `vr_position` varlığıyla açılıp kapanıyor, timeout ona dokunmuyor). Simde bacaklar `IDLE`'a geçer, üst gövde son hedefte kalır; senaryo 9 bunu ölçer. Gerçek robot öncesi SONIC tarafı watchdog'u gerekir (§12).
 
 **Kontrolcü düzeni** (eşleme config'te):
 
@@ -247,19 +272,19 @@ DISCONNECTED ─(SONIC hazır + Quest bağlı)→ STANDBY ─(kalibrasyon)→ AC
 - Modeller: `humanoid-lab-main/data/models/sonic/sonic_v1_1/{model_encoder.onnx, model_decoder.onnx, observation_config.yaml}`
 - Planner: `humanoid-lab-main/data/models/sonic-isaac/planner/target_vel/V2/planner_sonic.onnx`. Yolda `V2` olmalı.
 - Referans klibi: `humanoid-lab-main/data/models/sonic-isaac/reference/example`. Planner modunda da başlangıçta gerekiyor.
-- Deploy binary: `humanoid-lab-main/data/models/sonic-deploy/g1_deploy_onnx_ref` + `lib/` (x86, TensorRT 10.9, ORT 1.20.1). P1'de iki şey doğrulanır: DDS domain'i (0 ya da yamalı 42; sim tarafı buna uyarlanır, binary değişmez) ve `planner` mesaj formatının a0732b6 ile aynı olduğu.
+- Deploy binary: `humanoid-lab-main/data/models/sonic-deploy/g1_deploy_onnx_ref` + `lib/` (x86, TensorRT 10.9, ORT 1.20.1). P1'de doğrulandı: DDS domain'i **42** (binary'ye derlenmiş; sim buna uyar, binary değişmez) ve `planner` mesaj formatı a0732b6 ile aynı. Başlık sabit 1280 bayt; upstream Python docstring'indeki 1024 eskimiş.
 
 **Python ortamı:** `data/sonic-sim-venv`, Python 3.10, uv. Sadece simin import ettiği paketler kurulur:
-- mujoco, numpy 1.26.4, scipy, pin, tyro, pyyaml, pyzmq, msgpack, msgpack-numpy, opencv-python-headless, pygame, glfw, loguru, termcolor, cyclonedds 0.10.2
-- `unitree_sdk2_python` (pinli kaynaktan editable)
-- `gear_sonic` paketi `.pth` ile kaynağa işaret eder
+- mujoco, numpy 1.26.4, scipy, pyyaml, pyzmq, msgpack, msgpack-numpy, opencv-python-headless, cyclonedds 0.10.2
+- `pin`, `tyro`, `pygame`, `glfw` (mujoco zaten çekiyor), `loguru`, `termcolor` gerekmiyor; sim yolu import etmiyor (P1).
+- `gear_sonic` ve pinli kaynaktaki `unitree_sdk2_python` `.pth` ile yol olarak eklenir. Editable kurulum upstream ağaca egg-info yazardı.
 
 Torch kurulmaz; sim yolu torch import etmiyor, doğrulandı. Kurulum listesi `envs/sonic-sim.freeze.txt` dosyasına yazılır.
 
-**Sahne** (`sim/scene_builder.py`, MjSpec ile upstream `g1_29dof_with_hand.xml` yüklenir; kopya yok):
+**Sahne** (`sim/scene_builder.py`, MjSpec ile upstream sim sahnesi `scene_43dof.xml` yüklenir; içinde `g1_29dof_with_hand.xml` var, zemin, ışık ve sürtünme upstream sim2sim ile aynı kalır; kopya yok):
 - **Stereo kamera:** torso_link'e, ZED 2i montaj pozunda, 120 mm baz ile, 960×540 göz başına. Montaj pozu `g1_zed_mount` CAD'inden ya da ZED kalibrasyonundan alınır.
 - **Parkurlar** (`configs/sim_courses.yaml`): flat; rampa 5°/10°/15° çıkış ve iniş; yan eğim 5°; basamak 3/6 cm; pürüzlü heightfield (2 cm); iki masa ve bir küp (5 cm, 0.1 kg).
-- **El kararlılığı:** upstream, 43 DoF el modelinin kararsız olduğunu söylüyor. P1'de test edilir; gerekirse kontak ve sönüm parametreleri sahne üreticide, config ile ayarlanır.
+- **El kararlılığı:** upstream, 43 DoF el modelinin kararsız olduğunu söylüyor. P1: MuJoCo 3.15'te kararsızlık görülmedi, kontak/sönüm ayarı gerekmedi.
 
 **7a. Performans hedefleri** (P1'de ölçülür, P8'e kadar regresyon olarak izlenir; `tools/sim_perf.py`):
 - Fizik gerçek zamanlı: RTF ≥ 1.0; 0.005 s adım, adım başına süre p99 < 2.5 ms.
@@ -268,12 +293,13 @@ Torch kurulmaz; sim yolu torch import etmiyor, doğrulandı. Kurulum listesi `en
 - Bunları sağlamak için:
   - offscreen render GPU'da (EGL);
   - render ayrı bir thread ya da süreçte, MjData kopyası üzerinde, upstream sim API'sinin izin verdiği şekilde;
-  - JPEG kodlama `camera_bridge`'de;
+  - JPEG kodlama sim'in kamera alt sürecinde, upstream formatında (`ImageUtils`); `camera_bridge` (P5) çözer ve stereo formatına çevirir;
   - sahnede gereksiz kontak çifti yok;
   - mesh'ler sadeleştirilmiş görsel/çarpışma ayrımıyla.
 - Ölçülen RTF ya da fps hedefin altına düşerse ilgili faz kapanmaz.
+- **Açık donanım sorunu (P1):** laptop dGPU'su 20 W firmware güç sınırında (`SW Power Cap: Active`, `nvidia-smi -pl` desteklenmiyor). Kameralar açıkken GPU paylaşılıyor: SONIC'in gözlem→komut adımı ~28 ms (bütçe 20 ms) ve robot düşüyor. Kameralar kapalıyken her şey çalışıyor. Kullanıcı kontrol ediyor (adaptör, güç modu); düzelene kadar sim `--no-cameras` ile çalışır (`P1_sim.md` §3a).
 
-**Başlatma:** `sim/run_sonic_sim.py` upstream'in `SimLoopConfig` ve `SimulatorFactory` API'sini kullanır; ROBOT_SCENE, DOMAIN_ID, `camera_configs` ve offscreen ayarlarını geçer. Upstream dosyalarına dokunulmaz.
+**Başlatma:** `sim/run_sonic_sim.py`, `SimLoopConfig.load_wbc_yaml` + `SimulatorFactory.create_simulator` ile upstream `DefaultEnv`'i kurar (ROBOT_SCENE, DOMAIN_ID); döngü bizimdir. Upstream'in `BaseSimulator.start()` döngüsü kullanılmaz: kamera render'ı ve viewer senkronu fizik adımının içinde, uyku göreli, dolayısıyla RTF < 1. `camera_configs` upstream'e verilmez; kameralar ve viewer bizim alt süreçlerimizde, durum anlık görüntüsünden render eder. Upstream dosyalarına dokunulmaz.
 
 ## 8. Kayıt ve replay
 
@@ -285,34 +311,34 @@ Torch kurulmaz; sim yolu torch import etmiyor, doğrulandı. Kurulum listesi `en
 
 **Altyapı (hazır):**
 - **Ağ:** MSI ve Quest aksoy-lab Wi-Fi'ında. MSI `192.168.1.105`'te; aksoy-lab'ın otomatik bağlanma önceliği eduroam'dan yüksek. Quest `192.168.1.106`'da.
-- **Kısa adres:** Quest'te `https://192.168.1.105` yeterli. systemd `quest-https-redirect` servisi 443'ü 8012'ye yönlendiriyor. `operator/quest/vuer_app.py` sayfaya `?reconnect=1000000&interval=1000` ekliyor; böylece sunucu yeniden başlasa da sayfa kendi kendine yeniden bağlanıyor.
+- **Kısa adres:** Quest'te `https://192.168.1.105` yeterli. systemd `quest-https-redirect` servisi 443'ü 8012'ye yönlendiriyor. Vuer 0.1.6 `?reconnect=` sorgusunu okumuyor; `operator/quest/vuer_app.py` sayfaya bir WebSocket sarmalayıcısı enjekte ediyor, böylece sunucu ne kadar kapalı kalırsa kalsın sayfa VR'dan çıkmadan yeniden bağlanıyor (P3).
 - **ADB:** Kablosuz, `192.168.1.106:5555`. Kendi ADB sunucumuz port 5039'da (`QUEST_ADB_PORT`); 5037'deki başka kullanıcı sunucusuna dokunulmuyor. udev kuralı Quest USB'sini sadece `emin`'e veriyor.
 - **`deploy/quest_adb.sh`:** `keepalive`, `watch`, `open`, `shot`, `status`. systemd `quest-keepalive` servisi `watch` çalıştırıyor: ekran kapanmıyor, yakınlık sensörü yok sayılıyor, Quest yeniden başlarsa ayarlar geri uygulanıyor. Kablosuz ADB'yi yeniden açmak için USB kablosu takılı olmalı.
 - **Bilinen eksik:** `screencap` VR katmanını siyah veriyor. Quest'e özgü yakalama yolu P5 araçlarında çözülecek.
 
 **P0 ilk ölçüm** (`tools/quest_input_probe.py`, Vuer 0.0.60, stereo test görüntüsü açık):
-- Kafa (CAMERA_MOVE) 20–44 Hz, düzensiz. 50 Hz kontrol için yetersiz. P3'te Vuer yükseltmesi (ayarlanabilir kafa akışı) ayrı bir venv'de değerlendirilecek; ya da kafa pozu el/kontrolcü paketlerine eklenecek.
+- Kafa (CAMERA_MOVE) 20–44 Hz, düzensiz. 50 Hz kontrol için yetersiz. **Karar (P3):** Vuer 0.1.6 `Head` bileşeni (her XR karesinde örnekler, tarayıcı zaman damgalı), ayrı venv `data/quest-env`. Hız headset'in render hızıyla sınırlı (§6).
 - Kontrolcü (CONTROLLER_MOVE) 90 Hz istendi, ~40–47 Hz geldi. Yürüme için yeterli.
 - Kontrolcü eldeyken HAND_MOVE event'leri geliyor ama içleri boş.
-- **Henüz ölçülmedi:** "bir el kontrolcüde, diğeri takipte" (D8). Kullanıcı headset'te bir kez deneyecek.
+- **Henüz ölçülmedi:** "bir el kontrolcüde, diğeri takipte" (D8). Kullanıcının 5 dk'lık headset kaydını (`deploy/xr_frame_record.sh`) bekliyor.
 
 ## 9. Fazlar
 
 Her fazın çıktısı birim testleriyle ve bir commit ile kapanır.
 
-### P0 — Quest girdi probu (headset gerekir; P1 ile paralel)
+### P0 — Quest girdi probu (headset gerekir; P1 ile paralel) — kısmen tamam
 - `tools/quest_probe.py` genişletilir: CAMERA_MOVE oranı ve gecikmesi, CONTROLLER_MOVE alanları, taraf başına el↔kontrolcü geçişi, bir kontrolcü + bir el aynı anda, recenter/reset olayı. Hepsi stereo görüntü açıkken ölçülür.
 - **Çıkış:** ölçüm tablosu `docs/quest-sonic/P0_quest_probe.md`'ye yazılır.
 - **El modu kararı:** karışık mod (taraf başına) çalışıyor mu? Çalışmıyorsa yedek: iki kontrolcü ile yürüme, kontrolcüler bırakılınca iki el. Bu durumda tasarım değişmez, sadece D8'deki eşleme değişir.
 
-### P1 — Simülasyonu ayağa kaldırma
+### P1 — Simülasyonu ayağa kaldırma — tamam (kameralar kapalı)
 - `envs/sonic-sim.freeze.txt` ve venv; `configs/sonic_assets.yaml` + doğrulama script'i; `sim/scene_builder.py` (flat + kamera); `sim/run_sonic_sim.py`.
 - Upstream deploy klavye ile denenir.
 - Ölçülecekler: modların hız aralıkları, squat ve kneel yükseklik aralığı, DDS domain'i, el modeli kararlılığı.
 - **Çıkış:** klavye ile 10 dk yürü, dön, squat; düşme yok. §7a performans hedefleri karşılanır (kameralar açıkken dahil). Ölçümler `docs/quest-sonic/P1_sim.md`'ye yazılır.
 
 ### P2 — SONIC adaptörü ve başsız node (script ile girdi)
-- `sonic/protocol.py`: upstream `zmq_planner_sender.py` çıktısıyla bayt bayt karşılaştıran golden test.
+- `sonic/protocol.py`: upstream `zmq_planner_sender.py` çıktısıyla bayt bayt karşılaştıran golden test (P1'de yapıldı).
 - `sonic/adapter.py`, `sonic/lifecycle.py`, `fullbody/types.py`, `fullbody/supervisor.py`, `fullbody/node.py` (girdi kaynağı soyut: Quest ya da script).
 - Script senaryoları: kare yürüyüş, yerinde 180° dönüş, bilek daireleri, gövde eğme, squat.
 - **Çıkış:**
@@ -321,14 +347,14 @@ Her fazın çıktısı birim testleriyle ve bir commit ile kapanır.
   - Node öldürülünce robot ayakta durur.
   - Replay testi geçer.
 
-### P3 — Quest verisi
+### P3 — Quest verisi — tamam (headset kaydı bekliyor)
 - `convert.py`'ye kontrolcü ve kafa çözümü eklenir; kafa rotasyon dönüşümü düzeltilir. `server.py` `xr_frame` yayınlar; Hands + MotionControllers birlikte açılır. `fullbody/xr_frame.py`, `fullbody/frames.py`, `fullbody/calibration.py`.
 - **Çıkış:** Quest'ten 5 dk'lık xr_frame logu alınır; tüm kaynaklar zaman damgalı ve doğrulanmış. Frame testleri geçer: bilinen pozlar → beklenen sonuçlar.
 
 ### P4 — Quest ile yürüme ve yön (kollar park)
 - `locomotion.py`, `heading.py`; supervisor buton eşlemesi.
 - **Çıkış:**
-  - Sekiz çizilir; işaretin 0.3 m içinde durulur.
+  - Sekiz çizilir; işaretin 0.3 m içinde durulur (§0 notu: bu ≤ 0.5 m/s'de geçerli).
   - 60 s etrafa bakarken istemsiz dönüş yok.
   - 90° vücut dönüşünü robot ±5° ile izler.
 
@@ -380,7 +406,8 @@ Bilek hatası yetmezse §11'e geçilir.
 | El modeli kararsız | P1 | Sahne üreticide kontak ayarları; olmazsa sabit (kinematik) parmaklarla, kavrama kaynaklı |
 | Prebuilt binary ile kaynak uyumsuz | P1 | Pinli kaynaktan x86 build tarifi (`docs/quest-sonic/build_sonic.md`) |
 | Eğimlerde düşme | P8 | Karakterizasyon olarak raporlanır; kabul kapısı sadece 5° |
-| Squat aralığı beklenenden dar | P1/P7 | Çömelme kademeleri ölçüme göre ayarlanır |
+| Squat aralığı beklenenden dar | P1: `height` 0.3–0.8 (pelvis 0.44–0.79) | Çömelme kademeleri ölçüme göre ayarlanır |
+| dGPU 20 W güç kilidi | P1: kameralar açıkken politika adımı ~28 ms, robot düşüyor | Donanım kullanıcıda; o zamana kadar kameralar kapalı. P5'in görüntü hedefi buna bağlı. |
 
 ## 12. Sonrası için tasarım garantileri (PC2 ve gerçek robot)
 
