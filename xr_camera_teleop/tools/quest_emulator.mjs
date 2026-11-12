@@ -11,6 +11,8 @@
 //   15-25    hands instead of controllers (IWER can only switch both sides at once)
 //   20-23    head 0.2 m lower (crouch)                               28     recenter (Quest long-press)
 //   32-      left controller dropped out
+// At the end it prints the XR sessions started and ended and the page loads, so a caller can tell that the immersive
+// session lived through the whole run (e.g. a Quest server restart) without a reload or a second Enter VR.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +37,8 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
 page.on('pageerror', (e) => console.log('[emulator] page error:', e.message));
+let loads = 0;
+page.on('load', () => { loads += 1; });
 await page.goto(url);
 await page.waitForTimeout(4000);
 
@@ -53,6 +57,14 @@ const ok = await page.evaluate(async () => {
   // IWER removes XRWebGLBinding without the layers polyfill; three.js only checks its prototype
   Object.defineProperty(window, 'XRWebGLBinding', { value: function () {}, writable: true, configurable: true });
   window.__dev = dev;
+  window.__xr = { started: 0, ended: 0 };
+  const request = navigator.xr.requestSession.bind(navigator.xr);
+  navigator.xr.requestSession = async (...a) => {
+    const session = await request(...a);
+    window.__xr.started += 1;
+    session.addEventListener('end', () => { window.__xr.ended += 1; });
+    return session;
+  };
   return true;
 });
 if (ok !== true) { console.log('[emulator]', ok); await browser.close(); process.exit(1); }
@@ -97,5 +109,6 @@ await page.evaluate((seconds) => new Promise((resolve) => {
   };
   step();
 }), seconds);
-console.log('[emulator] done');
+const xr = await page.evaluate(() => window.__xr);
+console.log(`[emulator] done: XR sessions started ${xr.started} ended ${xr.ended}, page loads ${loads}`);
 await browser.close();

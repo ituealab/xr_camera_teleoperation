@@ -72,8 +72,9 @@ Wi-Fi address in `data/quest-cert/` (`openssl req -x509 ... -addext "subjectAltN
 data/quest-env/bin/python -m xr_camera_teleop.operator.quest.server
 ```
 
-The page reconnects by itself after a server restart only within about 30 s (Vuer 0.1.6 retries 5 times); after a
-longer stop reopen it with `deploy/quest_adb.sh open` and press Enter VR again.
+The page reconnects by itself after a server restart or stop of any length and stays in VR (Vuer 0.1.6 alone gives
+up after 5 tries; `operator/quest/vuer_app.py` injects the fix). A page opened before that fix needs one
+`deploy/quest_adb.sh open` and Enter VR.
 
 ```bash
 data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --source quest --no-publish --no-dataset

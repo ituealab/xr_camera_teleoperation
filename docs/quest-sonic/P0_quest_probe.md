@@ -82,8 +82,10 @@ Headset'te beklenen: kafa ayrık örnek hızı = XR kare hızı (0.0.60 + stereo
 90–120 Hz). 50 Hz kapısı headset kaydıyla ölçülecek (§5).
 
 0.1.6'nın bilinen bedelleri:
-- **Yeniden bağlanma:** `?reconnect=&interval=` sorgusu artık okunmuyor; istemci 5 deneme yapıyor (1, 2, 4, 8, 16 s).
-  Sunucu ~30 s'den uzun kapalı kalırsa sayfa yeniden açılmalı (`deploy/quest_adb.sh open`) ve Enter VR'a basılmalı.
+- **Yeniden bağlanma:** `?reconnect=&interval=` sorgusu artık okunmuyor; istemci 5 deneme yapıyor (1, 2, 4, 8, 16 s)
+  ve yalnızca `error` olayında yeniden deniyor. Çözüldü: `operator/quest/vuer_app.py` sayfaya küçük bir WebSocket
+  sarmalayıcısı enjekte ediyor; sayfa sunucu ne kadar kapalı kalırsa kalsın kendiliğinden yeniden bağlanıyor, VR
+  oturumu sürüyor (emülatörle 65 s kesintide doğrulandı, `tests/test_quest_e2e.py`).
 - Zaman damgası birimleri tutarsız: `HEAD_MOVE` ms, `HAND_MOVE`/`CONTROLLER_MOVE` s. `convert.client_time_s` ikisini
   de çözer.
 - İstemci `bodyTracking` ve `meshDetection`'ı opsiyonel özellik olarak istiyor; Quest Browser Enter VR'da bir izin
