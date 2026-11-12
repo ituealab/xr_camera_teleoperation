@@ -41,8 +41,9 @@ def main(argv=None):
     ap.add_argument("--out", type=Path, default=None, help="run directory (default: a new data/fullbody-runs/<time>)")
     ap.add_argument("--health", default="http://127.0.0.1:8771/health", help="server /health, stored in meta.json")
     ap.add_argument("--no-validate", action="store_true")
-    ap.add_argument("--no-require-mixed", action="store_true",
-                    help="do not fail validation when one-hand-on-controller + other-hand-tracked never occurs")
+    ap.add_argument("--require-mixed", action="store_true",
+                    help="also fail validation when one-hand-on-controller + other-hand-tracked never occurs (the "
+                         "Quest 3S does not deliver it in Quest Browser, docs/quest-sonic/P0_quest_probe.md)")
     a = ap.parse_args(argv)
 
     run_dir = a.out or new_run_dir()
@@ -98,8 +99,7 @@ def main(argv=None):
     print(f"[record] wrote {writer.records} records to {run_dir}", flush=True)
     if a.no_validate:
         return 0
-    report = validate_run(run_dir, ValidationParams(min_duration_s=0.95 * a.seconds,
-                                                    require_mixed=not a.no_require_mixed))
+    report = validate_run(run_dir, ValidationParams(min_duration_s=0.95 * a.seconds, require_mixed=a.require_mixed))
     print_report(report)
     return 0 if report["passed"] else 1
 
