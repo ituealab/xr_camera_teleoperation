@@ -7,7 +7,7 @@ Run with data/quest-venv (vuer==0.0.60, params-proto<3, numpy<2, pyzmq, msgpack,
 
     data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server
 
-Quest browser:  https://<this machine>:8012/?ws=wss://<this machine>:8012   (type https:// in full), Enter VR.
+Quest browser:  https://<this machine>/  (443 is redirected to :8012 on MSI), Enter VR.
 
     Vuer HTTPS/WSS :8012  --HAND_MOVE / CAMERA_MOVE-->  convert.build_message  --> ZMQ PUB :5594 (msgpack)
     HTTP :8771  /  /overlay.mjpg (hands seen from the headset)  /latest.json  /health
@@ -416,14 +416,10 @@ def main():
                     help="remove the view when no new frame arrived for this long (s)")
     a = ap.parse_args()
 
-    from vuer import Vuer
+    from xr_camera_teleop.operator.quest.vuer_app import make_vuer_app
 
-    # Vuer serves static_root at /static to the whole network: give it an empty directory, never the repo
-    static = DATA / "quest-static"
-    static.mkdir(parents=True, exist_ok=True)
     srv = QuestServer(a)
-    app = Vuer(host="0.0.0.0", port=a.port, cert=a.cert, key=a.key, queries=dict(grid=False), queue_len=3,
-               static_root=str(static))
+    app = make_vuer_app(a.port, a.cert, a.key, DATA / "quest-static")
     app.add_handler("HAND_MOVE")(srv.on_hand_move)
     app.add_handler("CAMERA_MOVE")(srv.on_cam_move)
     app.spawn(start=False)(srv.main)
@@ -432,7 +428,7 @@ def main():
     threading.Thread(target=srv.status_loop, daemon=True).start()
 
     for ip in lan_ips():
-        print(f"[quest] Quest browser:  https://{ip}:{a.port}/?ws=wss://{ip}:{a.port}", flush=True)
+        print(f"[quest] Quest browser:  https://{ip}/  (or https://{ip}:{a.port}/?ws=wss://{ip}:{a.port})", flush=True)
     print(f"[quest] ZMQ {a.zmq}   HTTP http://{a.http_host}:{a.http_port}/   hand fps requested {a.hand_fps:g}"
           + (f"   camera {a.camera} view {a.view}" if a.camera else "   no camera"), flush=True)
 
