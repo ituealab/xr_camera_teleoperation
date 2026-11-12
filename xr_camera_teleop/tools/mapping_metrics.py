@@ -8,8 +8,8 @@ recording, with the sim's odometry (odom.msgpack, tools/fullbody_sim_test.py) an
 tools/fullbody_metrics.py (segments, FK, VR tracking). What is measured, per scenario of tools/xr_synth.py:
 
   always         falls (pelvis < 0.3 m or up_z < 0.5 while ACTIVE), supervisor time per state, pauses
-  p4_figure8     the stop after releasing the stick (distance travelled until still), the final distance to the
-                 start mark, path length
+  p4_figure8     the figure eight's closure (distance from the start mark after both loops), the stop after
+                 releasing the stick (distance travelled until still), path length
   p4_stops       per direction: speed before the release and the distance travelled until still
   p4_glances     robot yaw change and peak deviation, facing changes commanded, base drift
   p4_turn90      per 90 deg body turn: robot yaw change at the end of its settle window vs the operator's turn
@@ -133,6 +133,9 @@ def p4_figure8(run) -> dict:
         out["final_distance_to_start_m"] = float(np.linalg.norm(P[-1] - mark))
         out["path_length_m"] = float(np.sum(np.linalg.norm(np.diff(P, axis=0), axis=1)))
         out["max_excursion_m"] = float(np.max(np.linalg.norm(P - mark, axis=1)))
+        after_loops = odom_window(run, loops[-1]["t1"] - 0.2, loops[-1]["t1"])
+        if after_loops:
+            out["loops_closure_m"] = float(np.linalg.norm(after_loops[-1][1][:2] - mark))
         pre = odom_window(run, stop["t0"] - 0.5, stop["t0"])
         if len(pre) > 1:
             out["speed_at_release_mps"] = float(np.linalg.norm(pre[-1][1][:2] - pre[0][1][:2]) / (pre[-1][0] - pre[0][0]))

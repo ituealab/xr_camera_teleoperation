@@ -16,7 +16,7 @@ def run(h, yaws, t0=0.0, locked=False):
 
 
 def test_glances_never_turn_the_robot():
-    h = Heading(HeadingParams(reissue_s=()))
+    h = Heading(HeadingParams(reissue_s=(), waist_yaw_max_deg=30.0))
     h.reset(0.3)
     t = np.arange(0, 60, DT)
     yaws = 0.3 + D(15) * np.sin(2 * np.pi * 0.2 * t) + D(4) * np.sin(2 * np.pi * 1.3 * t)

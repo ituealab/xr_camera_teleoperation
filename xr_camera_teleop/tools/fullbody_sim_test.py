@@ -219,6 +219,8 @@ def run_once(scenario: str, odo: Odometry, tel: Telemetry, cfg: dict, a, kin, xr
     run_dir = new_run_dir()
     odo.record_into(run_dir / ODOM_FILE)
     cmd = [str(a.node_python), "-u", "-m", "xr_camera_teleop.fullbody.node", "--run-dir", str(run_dir)]
+    if a.node_config is not None:
+        cmd += ["--config", str(a.node_config)]
     if xr_replay is not None:
         cmd += ["--source", "quest", "--xr-replay", str(xr_replay)]
     else:
@@ -277,6 +279,7 @@ def main(argv=None) -> int:
     ap.add_argument("--xr", nargs="+", metavar="SCENARIO", help="synthetic operator streams (tools/xr_synth.py)")
     ap.add_argument("--xr-run", type=Path, help="a recorded headset run to play into the Quest source")
     ap.add_argument("--seed", type=int, default=0, help="--xr: synthetic stream seed")
+    ap.add_argument("--node-config", type=Path, help="the node's configs/fullbody.yaml variant (A/B tests)")
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--kill-at", type=float, help="SIGKILL the node this many seconds after launching it")
     ap.add_argument("--watch", type=float, default=30.0, help="with --kill-at: seconds to watch the robot afterwards")

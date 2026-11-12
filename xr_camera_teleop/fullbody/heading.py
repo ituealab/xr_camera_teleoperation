@@ -13,12 +13,14 @@ yaw simply becomes the new reference). The heading is quantised in `step_deg` st
 change of the facing makes SONIC replan, PLAN D6); it is relative to the calibration (0 at `reset`), and the
 supervisor anchors it to the robot's facing on engage.
 waist_yaw = clamp(psi_head - psi_body, +-waist_yaw_max_deg): the glance share, for the torso target (posture.py).
+Off by default: in the sim SONIC's VR 3-point mode realises ~6% of a commanded torso yaw (glances of +-15 deg turned
+the torso -2.2..+0.8 deg), so it would only make the commanded and the real torso disagree.
 
 Re-issue: SONIC's planner plans an in-place turn once per facing change and, standing, never replans otherwise (it
 replans periodically only while walking). Measured in the sim, a 90 deg body turn ends 10-16 deg short and stays
-there. So `reissue_s` seconds after the heading last changed, the same heading is sent again as a nudge of
-`reissue_rad` (SONIC replans on any float change of the facing) and then exactly again at the next entry: each
-re-issue plans the remainder from where the robot stands. Open loop: the robot's measured yaw is never read.
+there. So at `reissue_s` after the heading last changed the heading is sent again, nudged by `reissue_rad` in the
+direction of that change (SONIC replans on any float change of the facing), and exactly again at the next entry:
+each re-issue plans the remainder from where the robot stands. Open loop: the robot's measured yaw is never read.
 
 psi_body also orients the operator torso frame the wrists are measured in (posture.py, arms.py), so it keeps tracking
 the operator while the heading is locked.
@@ -42,9 +44,9 @@ class HeadingParams:
     settle_deg: float = 1.0          # the slew stops this close to the head
     step_deg: float = 3.0            # heading quantisation step
     step_band: float = 0.6           # quantiser hysteresis, in steps (> 0.5)
-    waist_yaw_max_deg: float = 30.0  # glance share of the torso yaw (0 turns it off)
+    waist_yaw_max_deg: float = 0.0   # glance share of the torso yaw (0: off; SONIC VR mode realises ~6% of it)
     reissue_s: tuple = (1.0, 2.0)    # after a heading change: nudge at the 1st, exact at the 2nd, ... (empty: never)
-    reissue_rad: float = 1e-3        # as a nudge this size, alternating with the exact value
+    reissue_rad: float = 1e-3        # the nudge, in the direction of that change
 
     @classmethod
     def from_config(cls, cfg: dict) -> "HeadingParams":
@@ -74,8 +76,8 @@ class Heading:
         self._t: Optional[float] = None
         self._over_since: Optional[float] = None
         self._turning = False
-        self._level: Optional[float] = None     # quantised heading and when it last changed (re-issue clock)
-        self._t_level = 0.0
+        self._level: Optional[float] = None     # quantised heading, when and which way it last changed (re-issue)
+        self._t_level, self._dir = 0.0, 0.0
 
     def reset(self, psi_head: float):
         """Calibration: the body faces where the head does, heading 0."""
@@ -85,15 +87,19 @@ class Heading:
         self._quant.reset()
 
     def _reissued(self, now: float, level: float) -> float:
-        """The quantised heading, nudged at the re-issue times after a change (not after calibration)."""
+        """The quantised heading, nudged (in the direction of the last change) at the re-issue times after a change;
+        never after calibration."""
         if level != self._level:
-            self._t_level = now if self._level is not None else -math.inf
+            if self._level is None:
+                self._t_level, self._dir = -math.inf, 0.0
+            else:
+                self._t_level, self._dir = now, math.copysign(1.0, level - self._level)
             self._level = level
             return level
         n = sum(1 for r in self.p.reissue_s if now - self._t_level >= r - 1e-9)
         if n == len(self.p.reissue_s):
             return level                        # all re-issues done (always so right after calibration)
-        return level + (self.p.reissue_rad if n % 2 else 0.0)
+        return level + (self._dir * self.p.reissue_rad if n % 2 else 0.0)
 
     def step(self, now: float, psi_head: float, locked: bool) -> HeadingOut:
         if self.psi_body is None:
