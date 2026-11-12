@@ -19,7 +19,10 @@ physics:
 
 gantry:                        # sim/gantry.py: the band follows SONIC like a person at the real robot's gantry
   enabled: true
-  release_after_s: 1.0         # SONIC controlling this long with the robot on the band: drop it
+  lower_after_s: 0.5           # SONIC controlling this long with the robot on the band: start lowering it
+  lower_s: 1.5                 # band anchor eased from its hanging height (pelvis ~0.965 m) down to stand_z
+  stand_z: 0.79                # m; the standing pelvis height is 0.786: the feet carry the robot before it is let go
+  release_s: 1.0               # then let go gradually: the band stiffness fades to 0 over this, then off (key 9)
   catch_after_s: 0.3           # SONIC silent this long with the robot off the band: reset the robot, hang it again
 
 keys:                          # sim operator keys (upstream handle_keyboard_button: 9, backspace, up/down/left/right)

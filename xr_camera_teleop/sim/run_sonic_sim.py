@@ -17,8 +17,8 @@ from that snapshot (PLAN §7a, D14).
 Keys, typed on stdin one per line, pressed in the viewer window or pushed to keys.endpoint (upstream
 `handle_keyboard_button`):
     9 = drop / re-hang the elastic band    backspace = reset the robot    up / down / left / right = push it
-With `gantry.enabled` the band follows SONIC's control state by itself (sim/gantry.py): dropped once SONIC
-controls, robot reset and re-hung when SONIC lets go.
+With `gantry.enabled` the band follows SONIC's control state by itself (sim/gantry.py): lowered to standing height and
+let go once SONIC controls, robot reset and re-hung when SONIC lets go.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 from xr_camera_teleop.paths import ROOT
-from xr_camera_teleop.sim import gpu, scene_builder, sim_config
+from xr_camera_teleop.sim import gpu, live, scene_builder, sim_config
 from xr_camera_teleop.sim.gantry import Gantry, GantryParams, TelemetryWatch
 from xr_camera_teleop.sim.perf import LoopStats, StatsReporter
 from xr_camera_teleop.sim.state_snapshot import StateSnapshot
@@ -105,7 +105,7 @@ class RealtimeLoop:
 
     def __init__(self, sim, dt: float, max_lag_s: float, snapshot: StateSnapshot, keys: KeyInbox,
                  reporter: StatsReporter, period_s: float, log_every_s: float = 10.0,
-                 gantry: tuple[Gantry, TelemetryWatch] | None = None):
+                 gantry: tuple[Gantry, TelemetryWatch, dict] | None = None):
         self.sim, self.dt, self.max_lag = sim, dt, max_lag_s
         self.snapshot, self.keys, self.reporter = snapshot, keys, reporter
         self.gantry = gantry
@@ -122,6 +122,20 @@ class RealtimeLoop:
         if key == "backspace":
             env = self.sim.sim_env
             mujoco.mj_forward(env.mj_model, env.mj_data)
+
+    def follow_gantry(self) -> None:
+        """Apply the gantry's decision to upstream's ElasticBand: the anchor height (its `length` is the anchor's
+        offset from its own point), the stiffness and damping scaled from upstream's values, then the keys."""
+        gantry, watch, gains = self.gantry
+        band = self.sim.sim_env.elastic_band
+        mono = time.monotonic()
+        act = gantry.step(mono, watch.controlling(mono), bool(band.enable))
+        band.length = act.anchor_z - float(band.point[2])
+        for name, value in gains.items():
+            setattr(band, name, value * act.strength)
+        for key in act.keys:
+            print(f"[sim] gantry: key {key}", flush=True)
+            self.press(key)
 
     def run(self) -> None:
         env = self.sim.sim_env
@@ -146,12 +160,8 @@ class RealtimeLoop:
                 for key in self.keys.drain():
                     print(f"[sim] key {key}", flush=True)
                     self.press(key)
-                if self.gantry is not None:
-                    gantry, watch = self.gantry
-                    mono = time.monotonic()
-                    for key in gantry.keys(mono, watch.controlling(mono), bool(env.elastic_band.enable)):
-                        print(f"[sim] gantry: key {key}", flush=True)
-                        self.press(key)
+            if self.gantry is not None:                  # every step: the anchor eases without force steps
+                self.follow_gantry()
             next_t += self.dt
             now = clock()
             if now >= next_report:
@@ -209,7 +219,8 @@ def main(argv=None) -> int:
     gpu.warn_at_startup()                    # a stale 20 W budget after sleep breaks SONIC with the cameras on
     sys.setswitchinterval(float(cfg["physics"]["gil_switch_interval_s"]))
     manifest = assets.load()
-    scene = scene_builder.write_scene(a.course or cfg["course"], manifest.source_root)
+    course = a.course or cfg["course"]
+    scene = scene_builder.write_scene(course, manifest.source_root)
     wbc = upstream_wbc_config(scene, cfg, manifest.dds_domain)
     print(f"[sim] scene {scene}  DDS domain {wbc['DOMAIN_ID']} on {wbc['INTERFACE']}  dt {wbc['SIMULATE_DT']}",
           flush=True)
@@ -241,17 +252,22 @@ def main(argv=None) -> int:
     gantry = None
     if gantry_params.enabled:
         d = cfg["deploy"]
-        gantry = (Gantry(gantry_params), TelemetryWatch(d["zmq_host"], int(d["zmq_out_port"]), timeout_s=0.1))
+        band = env.elastic_band
+        gantry = (Gantry(gantry_params, hang_z=float(band.point[2])),
+                  TelemetryWatch(d["zmq_host"], int(d["zmq_out_port"]), timeout_s=0.1),
+                  {k: float(getattr(band, k)) for k in ("kp_pos", "kd_pos", "kp_ang", "kd_ang")})
     loop = RealtimeLoop(sim, float(cfg["physics"]["dt"]), float(cfg["physics"]["max_lag_s"]), snapshot, keys, reporter,
                         float(cfg["stats"]["period_s"]), gantry=gantry)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: loop.stop.set())
     band = "on" if cfg["physics"]["elastic_band"] else "off"
-    print(f"[sim] running; band {band}, "
+    live.announce(scene, course, snapshot.name, env.mj_model.nq)      # for measurement tools (sim/live.py)
+    print(f"[sim] running; course {course}, band {band}, "
           f"{'gantry follows SONIC' if gantry else 'key 9 drops / re-hangs the robot'}", flush=True)
     try:
         loop.run()
     finally:
+        live.withdraw()
         for p in children:
             p.terminate()
         for p in children:

@@ -11,6 +11,7 @@ drops the sim's elastic band through the sim key endpoint. Results go to stdout 
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sonic_drive hands       # Dex3 tracking and stability
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sonic_drive endurance --minutes 10   # P1 exit test
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sonic_drive vr          # VR 3-point enable/disable
+    data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sonic_drive starts --count 20   # gantry: start -> stand
 
 Every scenario starts control if SONIC is not yet controlling (command start + planner, wait for telemetry, drop the
 band) and leaves SONIC running in IDLE. `stop` sends command stop. With the sim's gantry enabled (configs/sonic_sim.yaml
@@ -195,7 +196,11 @@ class Driver:
         self.events: list[str] = []
         self.falls = 0
         self.band_dropped = False
-        self.gantry = bool(cfg.get("gantry", {}).get("enabled", False))
+        g = cfg.get("gantry", {})
+        self.gantry = bool(g.get("enabled", False))
+        # SONIC control -> let go of the robot (sim/gantry.py)
+        self.gantry_s = sum(float(g.get(k, 0.0)) for k in ("lower_after_s", "lower_s", "release_s"))
+        self.release_s = float(g.get("release_s", 0.0))
         time.sleep(1.0)                              # SUB side (SONIC, sim) reconnects to the fresh binds
 
     def log(self, msg: str) -> None:
@@ -217,14 +222,12 @@ class Driver:
                 if time.perf_counter() - t0 > 15:
                     raise SystemExit("SONIC did not start (no g1_debug telemetry within 15 s); is it running?")
             self.log(f"SONIC controlling after {time.perf_counter() - t0:.2f} s (telemetry)")
-            time.sleep(2.0)
+            if self.gantry:                          # the gantry lowers the robot and lets go of it; then it settles
+                time.sleep(self.gantry_s + 2.0)
+            else:
+                time.sleep(2.0)
         s = self.mon.latest()
-        if s[3] > 0.9 and self.gantry:               # hanging from the band (pelvis ~0.96 m): the gantry drops it
-            t0 = time.perf_counter()
-            while self.mon.latest()[3] > 0.9 and time.perf_counter() - t0 < 10:
-                time.sleep(0.1)
-            time.sleep(3.0)
-        elif s[3] > 0.9:
+        if s[3] > 0.9 and not self.gantry:
             self.log("dropping the elastic band (sim key 9)")
             self._keys.send_string("9")
             self.band_dropped = True
@@ -463,8 +466,61 @@ def walk_and_turn(d: Driver) -> dict:
     return r
 
 
+def scenario_starts(d: Driver, a) -> dict:
+    """Start -> stand -> stop, `count` times: the gantry lowers the robot and lets go (sim/gantry.py); the landing is
+    measured from the moment SONIC controls for `watch` s. Between trials SONIC's stop ends the binary, run_deploy
+    --respawn reopens it (~28 s) and the gantry re-hangs the robot."""
+    trials = []
+    for k in range(a.count):
+        t_wait = time.perf_counter()
+        while d.mon.controlling() or (d.mon.latest() is not None and d.mon.latest()[3] < 0.9):
+            if time.perf_counter() - t_wait > 60:          # still controlling, or not hanging again
+                raise SystemExit("robot not back on the band within 60 s of the stop")
+            time.sleep(0.1)
+        d.sonic.cmd = Cmd()
+        d.sonic.streaming.set()
+        t0 = time.perf_counter()
+        while not d.mon.controlling():
+            d.sonic.command(start=True, stop=False, planner=True)
+            time.sleep(0.2)
+            if time.perf_counter() - t0 > 90:
+                raise SystemExit(f"trial {k + 1}: SONIC did not take control within 90 s (binary respawning?)")
+        tc = time.perf_counter()
+        resets0 = d.mon.resets
+        fall = None
+        while time.perf_counter() - tc < a.watch and fall is None:
+            fall = d.mon.fallen() or ("sim reset" if d.mon.resets > resets0 else None)
+            time.sleep(0.02)
+        w = d.mon.window(a.watch + 1.0)
+        w = w[w[:, 0] >= tc]
+        tilt = np.degrees(np.arccos(np.clip([up_z(r[4:8]) for r in w], -1.0, 1.0)))
+        hung = w[:, 0] < tc + d.gantry_s - d.release_s      # on the band until it starts letting go
+        landed = w[:, 0] >= w[-1, 0] - 2.0
+        p_free = w[~hung][0, 1:3] if (~hung).any() else w[-1, 1:3]
+        r = {"trial": k + 1, "wait_for_control_s": round(tc - t0, 2), "fall": fall,
+             "tilt_hung_max_deg": float(tilt[hung].max()) if hung.any() else None,
+             "tilt_landing_max_deg": float(tilt[~hung].max()) if (~hung).any() else None,
+             "tilt_end_deg": float(tilt[landed].max()),
+             "z_hung": float(w[:, 3].max()), "z_end": float(w[landed, 3].mean()),
+             "drift_after_release_m": float(np.linalg.norm(w[-1, 1:3] - p_free))}
+        trials.append(r)
+        if fall:
+            d.falls += 1
+        d.log(f"start {k + 1}/{a.count}: {'FALL ' + fall if fall else 'standing'}; tilt hung {r['tilt_hung_max_deg']:.1f}, "
+              f"landing {r['tilt_landing_max_deg']:.1f} (last 2 s {r['tilt_end_deg']:.1f}) deg, pelvis z "
+              f"{r['z_hung']:.3f} -> {r['z_end']:.3f} m, drift after release {r['drift_after_release_m']:.3f} m")
+        for _ in range(5):
+            d.sonic.command(start=False, stop=True, planner=True)
+            time.sleep(0.1)
+        d.sonic.streaming.clear()
+    land = [t["tilt_landing_max_deg"] for t in trials]
+    drift = [t["drift_after_release_m"] for t in trials]
+    return {"trials": trials, "falls": d.falls, "tilt_landing_max_deg": max(land),
+            "tilt_landing_median_deg": float(np.median(land)), "drift_after_release_max_m": max(drift)}
+
+
 SCENARIOS = {"speeds": scenario_speeds, "heights": scenario_heights, "hands": scenario_hands, "vr": scenario_vr,
-             "endurance": scenario_endurance}
+             "endurance": scenario_endurance, "starts": scenario_starts}
 
 
 def main(argv=None) -> int:
@@ -477,6 +533,8 @@ def main(argv=None) -> int:
     ap.add_argument("--run", action="store_true", help="speeds: include RUN mode")
     ap.add_argument("--cycles", type=int, default=3, help="hands: open/close cycles")
     ap.add_argument("--minutes", type=float, default=10.0, help="endurance: duration")
+    ap.add_argument("--count", type=int, default=20, help="starts: start -> stand -> stop trials")
+    ap.add_argument("--watch", type=float, default=8.0, help="starts: seconds watched after SONIC takes control")
     ap.add_argument("--tag", default="", help="suffix of the result file: data/sonic-p1/<scenario>[-tag].json")
     a = ap.parse_args(argv)
     cfg = sim_config.load(a.config)
@@ -486,7 +544,8 @@ def main(argv=None) -> int:
             d.sonic.command(start=False, stop=True, planner=True)
             time.sleep(0.1)
         return 0
-    d.ensure_control()
+    if a.scenario != "starts":
+        d.ensure_control()
     if a.scenario == "start":
         d.stand(1.0)
         return 0

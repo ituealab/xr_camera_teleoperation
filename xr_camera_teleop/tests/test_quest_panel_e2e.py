@@ -211,7 +211,7 @@ def test_panel_runs_the_sim_robot(tmp_path):
             t_mark["start"] = time.time()
             st = q.wait_for(lambda s: s["node"]["state"] == "standby" and s, 90, "STANDBY after Başlat")
             ev["start_to_standby_s"] = round(time.time() - t_mark["start"], 2)
-            time.sleep(6.0)                       # the band drops 1 s after control (a ~1 s landing), then it stands
+            time.sleep(6.0)                       # the gantry lowers the robot and lets go 2.7 s after control
             t_mark["standing"] = time.time()
 
             # 2. a setting by hand pinch

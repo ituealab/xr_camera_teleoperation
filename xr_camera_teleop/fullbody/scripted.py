@@ -13,7 +13,7 @@ Scenarios (`SCENARIOS`):
   squat    squat at two heights, stand, squat lower, stand
   all      the five in sequence
 Every timeline starts with a `settle` segment (standing, neutral arms): the robot may still be coming down from the
-gantry when the supervisor becomes ACTIVE (the sim's gantry drops it 1 s after SONIC takes control).
+gantry when the supervisor becomes ACTIVE (the sim's gantry lets go of it 2.7 s after SONIC takes control).
 Headings change like fullbody/heading.py will command them (PLAN §5): rate-limited, quantised to 3 deg steps.
 """
 from __future__ import annotations
