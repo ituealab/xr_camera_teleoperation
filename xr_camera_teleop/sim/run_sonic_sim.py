@@ -17,6 +17,8 @@ from that snapshot (PLAN §7a, D14).
 Keys, typed on stdin one per line, pressed in the viewer window or pushed to keys.endpoint (upstream
 `handle_keyboard_button`):
     9 = drop / re-hang the elastic band    backspace = reset the robot    up / down / left / right = push it
+With `gantry.enabled` the band follows SONIC's control state by itself (sim/gantry.py): dropped once SONIC
+controls, robot reset and re-hung when SONIC lets go.
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ from pathlib import Path
 
 from xr_camera_teleop.paths import ROOT
 from xr_camera_teleop.sim import scene_builder, sim_config
+from xr_camera_teleop.sim.gantry import Gantry, GantryParams, TelemetryWatch
 from xr_camera_teleop.sim.perf import LoopStats, StatsReporter
 from xr_camera_teleop.sim.state_snapshot import StateSnapshot
 
@@ -101,11 +104,24 @@ class RealtimeLoop:
     """
 
     def __init__(self, sim, dt: float, max_lag_s: float, snapshot: StateSnapshot, keys: KeyInbox,
-                 reporter: StatsReporter, period_s: float, log_every_s: float = 10.0):
+                 reporter: StatsReporter, period_s: float, log_every_s: float = 10.0,
+                 gantry: tuple[Gantry, TelemetryWatch] | None = None):
         self.sim, self.dt, self.max_lag = sim, dt, max_lag_s
         self.snapshot, self.keys, self.reporter = snapshot, keys, reporter
+        self.gantry = gantry
         self.period_s, self.log_every_s = period_s, log_every_s
         self.stop = threading.Event()
+
+    def press(self, key: str) -> None:
+        """Upstream handle_keyboard_button, plus: after a reset recompute the kinematics. Upstream's reset is a bare
+        mj_resetData, which zeroes xpos/xquat until the next step; the elastic band reads them, so re-hanging the
+        robot right after a reset crashed the sim on a zero quaternion."""
+        import mujoco
+
+        self.sim.handle_keyboard_button(key)
+        if key == "backspace":
+            env = self.sim.sim_env
+            mujoco.mj_forward(env.mj_model, env.mj_data)
 
     def run(self) -> None:
         env = self.sim.sim_env
@@ -129,7 +145,13 @@ class RealtimeLoop:
             if steps % 10 == 0:
                 for key in self.keys.drain():
                     print(f"[sim] key {key}", flush=True)
-                    self.sim.handle_keyboard_button(key)
+                    self.press(key)
+                if self.gantry is not None:
+                    gantry, watch = self.gantry
+                    mono = time.monotonic()
+                    for key in gantry.keys(mono, watch.controlling(mono), bool(env.elastic_band.enable)):
+                        print(f"[sim] gantry: key {key}", flush=True)
+                        self.press(key)
             next_t += self.dt
             now = clock()
             if now >= next_report:
@@ -214,12 +236,18 @@ def main(argv=None) -> int:
         else:
             print("[sim] no DISPLAY / WAYLAND_DISPLAY: running without the viewer", flush=True)
 
+    gantry_params = GantryParams.from_config(cfg["gantry"])
+    gantry = None
+    if gantry_params.enabled:
+        d = cfg["deploy"]
+        gantry = (Gantry(gantry_params), TelemetryWatch(d["zmq_host"], int(d["zmq_out_port"]), timeout_s=0.1))
     loop = RealtimeLoop(sim, float(cfg["physics"]["dt"]), float(cfg["physics"]["max_lag_s"]), snapshot, keys, reporter,
-                        float(cfg["stats"]["period_s"]))
+                        float(cfg["stats"]["period_s"]), gantry=gantry)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: loop.stop.set())
-    print(f"[sim] running; band {'on (key 9 drops the robot)' if cfg['physics']['elastic_band'] else 'off'}",
-          flush=True)
+    band = "on" if cfg["physics"]["elastic_band"] else "off"
+    print(f"[sim] running; band {band}, "
+          f"{'gantry follows SONIC' if gantry else 'key 9 drops / re-hangs the robot'}", flush=True)
     try:
         loop.run()
     finally:

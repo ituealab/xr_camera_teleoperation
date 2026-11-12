@@ -17,6 +17,11 @@ physics:
   # With CPython's default 5 ms GIL switch interval a step could wait up to 5 ms behind them; 0.5 ms bounds that.
   gil_switch_interval_s: 0.0005
 
+gantry:                        # sim/gantry.py: the band follows SONIC like a person at the real robot's gantry
+  enabled: true
+  release_after_s: 1.0         # SONIC controlling this long with the robot on the band: drop it
+  catch_after_s: 0.3           # SONIC silent this long with the robot off the band: reset the robot, hang it again
+
 keys:                          # sim operator keys (upstream handle_keyboard_button: 9, backspace, up/down/left/right)
   endpoint: tcp://127.0.0.1:5599   # the sim binds PULL; the viewer window and scripted tools PUSH key names
 

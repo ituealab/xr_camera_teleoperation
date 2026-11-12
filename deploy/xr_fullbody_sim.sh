@@ -2,12 +2,13 @@
 # Full-body teleop in simulation (PLAN §3, §4): one tmux session per process, logs in ~/.local/state/xr_fullbody.
 # P1 brings up the first two processes; later phases add camera_bridge, quest_server and fullbody_node here.
 #   sim    MuJoCo sim (upstream gear_sonic physics, our scene + real-time loop, viewer and robot cameras)
-#   sonic  prebuilt SONIC deploy binary (zmq_manager input on :5556, telemetry on :5557)
+#   sonic  prebuilt SONIC deploy binary (zmq_manager input on :5556, telemetry on :5557), relaunched whenever it
+#          exits (SONIC's `stop` ends the process); the sim's gantry drops / re-hangs the robot with SONIC's control
 #
 #   deploy/xr_fullbody_sim.sh start [--no-viewer] [--no-cameras]  # start both (the robot hangs from the sim's elastic band)
 #   deploy/xr_fullbody_sim.sh stop | status | logs
 #   deploy/xr_fullbody_sim.sh key 9                  # sim key: 9 = drop/re-hang band, backspace = reset robot
-#   deploy/xr_fullbody_sim.sh attach sim|sonic       # the process's terminal (sonic: `o` = emergency stop)
+#   deploy/xr_fullbody_sim.sh attach sim|sonic       # the process's terminal (sonic: `o` = emergency stop; relaunched)
 set -euo pipefail
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LOG_DIR="$HOME/.local/state/xr_fullbody"
@@ -60,15 +61,15 @@ case "${1:-start}" in
       wait_log sim '\[sim\] running' 30
     fi
     if ! running sonic; then
-      launch sonic "$SIM_PY" -u -m xr_camera_teleop.sonic.run_deploy
+      launch sonic "$SIM_PY" -u -m xr_camera_teleop.sonic.run_deploy --respawn
       wait_log sonic 'Init Done' 120
     fi
     printf 'Sim and SONIC are up (robot on the elastic band, SONIC waiting for command start).\n'
-    printf 'Drive it: %s -m xr_camera_teleop.tools.sonic_drive start\nLogs: %s\n' "$SIM_PY" "$LOG_DIR"
+    printf 'Drive it: %s -m xr_camera_teleop.fullbody.node --source script --scenario square\nLogs: %s\n' \
+      "$REPO/data/xr-env/bin/python" "$LOG_DIR"
     ;;
   stop)
-    if running sonic; then tmux send-keys -t "=$PREFIX-sonic:" o; sleep 2; fi   # SONIC's own emergency stop
-    stop_one sonic
+    stop_one sonic      # SIGINT ends the respawn loop and the binary
     stop_one sim
     printf 'Stopped.\n'
     ;;

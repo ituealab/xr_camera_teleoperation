@@ -13,7 +13,8 @@ drops the sim's elastic band through the sim key endpoint. Results go to stdout 
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sonic_drive vr          # VR 3-point enable/disable
 
 Every scenario starts control if SONIC is not yet controlling (command start + planner, wait for telemetry, drop the
-band) and leaves SONIC running in IDLE. `stop` sends command stop.
+band) and leaves SONIC running in IDLE. `stop` sends command stop. With the sim's gantry enabled (configs/sonic_sim.yaml
+gantry, sim/gantry.py) the band is the gantry's: the tool waits for it instead of pressing keys.
 """
 from __future__ import annotations
 
@@ -194,6 +195,7 @@ class Driver:
         self.events: list[str] = []
         self.falls = 0
         self.band_dropped = False
+        self.gantry = bool(cfg.get("gantry", {}).get("enabled", False))
         time.sleep(1.0)                              # SUB side (SONIC, sim) reconnects to the fresh binds
 
     def log(self, msg: str) -> None:
@@ -217,7 +219,12 @@ class Driver:
             self.log(f"SONIC controlling after {time.perf_counter() - t0:.2f} s (telemetry)")
             time.sleep(2.0)
         s = self.mon.latest()
-        if s[3] > 0.9:                               # hanging from the band (pelvis ~0.96 m)
+        if s[3] > 0.9 and self.gantry:               # hanging from the band (pelvis ~0.96 m): the gantry drops it
+            t0 = time.perf_counter()
+            while self.mon.latest()[3] > 0.9 and time.perf_counter() - t0 < 10:
+                time.sleep(0.1)
+            time.sleep(3.0)
+        elif s[3] > 0.9:
             self.log("dropping the elastic band (sim key 9)")
             self._keys.send_string("9")
             self.band_dropped = True
@@ -262,6 +269,8 @@ class Driver:
             self.sonic.command(start=False, stop=True, planner=True)
             time.sleep(0.1)
         self.sonic.streaming.clear()
+        if self.gantry:
+            return                                   # the gantry resets and re-hangs the robot
         self._keys.send_string("backspace")
         if self.band_dropped:
             self._keys.send_string("9")
