@@ -1,21 +1,27 @@
 #!/usr/bin/env python
 """Measure the running SONIC sim against the PLAN §7a targets and print PASS/FAIL per target.
 
-Three independent views of the same run:
+Views of the same run:
   - the sim processes' own loop timing (physics, cameras, viewer), collected on the stats endpoint
     (this tool binds it; configs/sonic_sim.yaml stats.endpoint);
   - the robot camera stream as a client sees it (frames per second per camera, frame age);
-  - rt/lowstate as SONIC sees it over DDS (message rate, inter-arrival jitter, sim clock vs wall clock).
+  - rt/lowstate as SONIC sees it over DDS (message rate, inter-arrival jitter, sim clock vs wall clock);
+  - SONIC's own 1 Hz "Loop timing" lines appended to its log during the run (policy inference, observation ->
+    motor command, planner model), when SONIC is controlling;
+  - the GPU: sustained graphics clock, power draw, clock-event reasons (sim/gpu.py ClockSampler).
 
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sim_perf --duration 60 [--json out.json]
 
-Exit status 0 when every measured target passes. A target whose source is not running (e.g. no viewer without a
-display) is reported as "n/a" and does not fail the run.
+Exit status 0 when every measured target passes, 1 when one fails. A target whose source is not running (e.g. no
+viewer without a display) is reported as "n/a" and does not fail the run. If the GPU preflight finds a stale power
+budget (sim/gpu.py: enforced limit < 50 W, as after a failed resume from sleep) the numbers are printed but no
+verdict is given, exit status 2: a run on a crippled GPU says nothing about the sim.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import threading
 import time
@@ -25,7 +31,10 @@ import msgpack
 import numpy as np
 import zmq
 
-from xr_camera_teleop.sim import sim_config
+from xr_camera_teleop.sim import gpu, sim_config
+
+SONIC_LOG = Path.home() / ".local/state/xr_fullbody/sonic.log"     # deploy/xr_fullbody_sim.sh
+_LOOP_TIMING = re.compile(r"Loop timing.*?Policy: (\d+)us, Obs 2 Motor Command: (\d+)us(?:.*?Model: (\d+)us)?")
 
 # PLAN §7a. RTF uses 0.999: the loop is deadline-locked, so the long-run value is 1.000 unless it fell behind; the
 # tolerance only absorbs where the measurement window edges fall.
@@ -37,6 +46,7 @@ TARGETS = {
     "camera_fps": (">=", 29.5),
     "dds_lowstate_hz": (">=", 199.0),
     "dds_rtf": (">=", 0.999),
+    "sonic_obs2cmd_ms_p99": ("<", 20.0),        # SONIC's 50 Hz control budget
 }
 
 
@@ -104,6 +114,22 @@ class LowStateProbe:
         self._sub.Init(lambda msg: self.samples.append((time.perf_counter(), int(msg.tick))), 10)
 
 
+def sonic_timing(log_text: str) -> dict:
+    """Medians / p99 of SONIC's Loop timing lines (ms)."""
+    rows = [m.groups() for m in _LOOP_TIMING.finditer(log_text)]
+    if not rows:
+        return {}
+    pol = np.array([float(r[0]) for r in rows]) / 1e3
+    o2c = np.array([float(r[1]) for r in rows]) / 1e3
+    out = {"sonic_policy_ms_median": float(np.median(pol)), "sonic_policy_ms_p99": float(np.percentile(pol, 99)),
+           "sonic_obs2cmd_ms_median": float(np.median(o2c)), "sonic_obs2cmd_ms_p99": float(np.percentile(o2c, 99)),
+           "sonic_obs2cmd_ms_max": float(o2c.max()), "sonic_timing_lines": len(rows)}
+    planner = [float(r[2]) / 1e3 for r in rows if r[2]]
+    if planner:
+        out["sonic_planner_model_ms_median"] = float(np.median(planner))
+    return out
+
+
 def summarize(stats: StatsCollector, cams: CameraProbe, low: LowStateProbe | None, duration: float) -> dict:
     out: dict = {}
     phys = stats.windows.get("physics", [])[1:]      # the first window may straddle the tool's start
@@ -154,15 +180,18 @@ def summarize(stats: StatsCollector, cams: CameraProbe, low: LowStateProbe | Non
     return out
 
 
-def report(res: dict) -> bool:
+def report(res: dict, verdicts: bool = True) -> bool:
+    """Print every metric; with verdicts, PASS/FAIL against TARGETS. Returns whether all measured targets pass."""
     ok = True
     print(f"{'metric':<34}{'value':>12}  target")
     for key, value in res.items():
-        if isinstance(value, dict) or key == "duration_s":
+        if isinstance(value, dict) or key == "duration_s" or value is None:
             continue
         tgt = TARGETS.get(key)
         verdict = ""
-        if tgt:
+        if tgt and not verdicts:
+            verdict = f"{tgt[0]} {tgt[1]}  (no verdict: GPU power budget)"
+        elif tgt:
             passed = _passes(value, *tgt)
             ok &= passed
             verdict = f"{tgt[0]} {tgt[1]}  {'PASS' if passed else 'FAIL'}"
@@ -184,23 +213,39 @@ def main(argv=None) -> int:
     ap.add_argument("--config", type=Path, default=sim_config.SIM_CONFIG)
     ap.add_argument("--no-dds", action="store_true", help="skip the rt/lowstate probe")
     ap.add_argument("--json", type=Path, help="also write the results here")
+    ap.add_argument("--sonic-log", type=Path, default=SONIC_LOG, help="SONIC's stdout log (its Loop timing lines)")
     a = ap.parse_args(argv)
     cfg = sim_config.load(a.config)
+    pf = gpu.preflight()
+    print(pf.message(), flush=True)
+    clocks = gpu.ClockSampler()
+    log_start = a.sonic_log.stat().st_size if a.sonic_log.exists() else None
 
     stats = StatsCollector(cfg["stats"]["endpoint"])
     cams = CameraProbe(int(cfg["cameras"]["port"]))
     low = None if a.no_dds else LowStateProbe(assets.load().dds_domain, cfg["dds"]["interface"])
     stats.start()
     cams.start()
+    clocks.start()
     print(f"measuring for {a.duration:.0f} s ...", flush=True)
     time.sleep(a.duration)
     stats.stop.set()
     cams.stop.set()
+    clocks.stop.set()
     res = summarize(stats, cams, low, a.duration)
-    ok = report(res)
+    if log_start is not None:
+        with open(a.sonic_log, "rb") as f:
+            f.seek(log_start)
+            res.update(sonic_timing(f.read().decode(errors="replace")))
+    res.update(clocks.summary())
+    res["gpu_power_limit_w"] = pf.power_limit_w
+    ok = report(res, verdicts=pf.ok)
     if a.json:
         a.json.parent.mkdir(parents=True, exist_ok=True)
         a.json.write_text(json.dumps(res, indent=2))
+    if not pf.ok:
+        print("NO VERDICT: " + pf.message().splitlines()[0], flush=True)
+        return 2
     return 0 if ok else 1
 
 

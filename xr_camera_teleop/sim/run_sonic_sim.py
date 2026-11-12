@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 from xr_camera_teleop.paths import ROOT
-from xr_camera_teleop.sim import scene_builder, sim_config
+from xr_camera_teleop.sim import gpu, scene_builder, sim_config
 from xr_camera_teleop.sim.gantry import Gantry, GantryParams, TelemetryWatch
 from xr_camera_teleop.sim.perf import LoopStats, StatsReporter
 from xr_camera_teleop.sim.state_snapshot import StateSnapshot
@@ -206,6 +206,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     cfg = sim_config.load(a.config)
+    gpu.warn_at_startup()                    # a stale 20 W budget after sleep breaks SONIC with the cameras on
     sys.setswitchinterval(float(cfg["physics"]["gil_switch_interval_s"]))
     manifest = assets.load()
     scene = scene_builder.write_scene(a.course or cfg["course"], manifest.source_root)

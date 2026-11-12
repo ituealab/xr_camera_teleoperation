@@ -59,6 +59,7 @@ case "${1:-start}" in
     if ! running sim; then
       launch sim "$SIM_PY" -u -m xr_camera_teleop.sim.run_sonic_sim "${sim_args[@]}"
       wait_log sim '\[sim\] running' 30
+      grep -F 'GPU WARNING' "$LOG_DIR/sim.log" >&2 || true     # the sim's GPU preflight (sim/gpu.py), loudly
     fi
     if ! running sonic; then
       launch sonic "$SIM_PY" -u -m xr_camera_teleop.sonic.run_deploy --respawn
