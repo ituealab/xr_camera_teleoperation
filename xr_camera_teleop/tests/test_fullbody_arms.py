@@ -117,15 +117,20 @@ def test_safety_projections():
     T = torso_safety(far, "left", P)
     sh = np.asarray(P.robot_shoulders) + [0, P.robot_shoulder_y, 0]
     assert np.linalg.norm(T[:3, 3] - sh) == pytest.approx(P.reach_m)
-    # inside the torso capsule -> pushed out radially
-    inside = pose(p=[0.05, 0.0, 0.1])
+    # inside the torso capsule -> pushed out forward (side and height kept)
+    inside = pose(p=[0.05, 0.02, 0.1])
     T = torso_safety(inside, "left", P)
-    assert np.hypot(T[0, 3], T[1, 3]) >= P.torso_radius_m - 1e-9
+    assert np.hypot(T[0, 3], T[1, 3]) >= P.torso_radius_m - 1e-9 and T[1, 3] == 0.02 and T[2, 3] == 0.1
     # hand point aimed into the chest -> wrist moved so the hand point clears it
     aimed = pose(rot_z(math.pi), [0.20, 0.05, 0.1])
     T = torso_safety(aimed, "left", P)
     hand = T[:3, 3] + P.hand_point_m * T[:3, 0]
     assert np.hypot(hand[0], hand[1]) >= P.hand_radius_m - 1e-9
+    # behind the torso / far across the midline -> back into the front workspace
+    T = torso_safety(pose(p=[-0.3, -0.2, 0.1]), "left", P)
+    assert T[0, 3] >= P.front_min_m - 1e-9 and T[1, 3] >= -P.cross_m - 1e-9
+    T = torso_safety(pose(p=[0.25, 0.3, 0.1]), "right", P)
+    assert T[1, 3] <= P.cross_m + 1e-9
     # wrists too close -> apart symmetrically
     a, b = separate(pose(p=[0.3, 0.01, 0.1]), pose(p=[0.3, -0.01, 0.1]), P.wrist_gap_m)
     assert np.linalg.norm(a[:3, 3] - b[:3, 3]) == pytest.approx(P.wrist_gap_m)

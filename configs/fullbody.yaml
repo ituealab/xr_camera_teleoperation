@@ -120,6 +120,8 @@ quest:
     robot_shoulders: [0.004, 0.0, 0.235]   # shoulder midpoint in the torso_link frame (G1 FK)
     robot_shoulder_y: 0.1406
     reach_m: 0.36
+    front_min_m: 0.08            # wrists in front of the torso (never behind it, never beside the hips)
+    cross_m: 0.05                # and across the midline by at most this
     torso_axis: [[0.0, 0.0, -0.10], [0.0, 0.0, 0.32]]
     torso_radius_m: 0.16
     hand_point_m: 0.10

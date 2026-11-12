@@ -12,8 +12,11 @@ calibration (with D8 the operator usually calibrates holding a controller), and 
 The WebXR wrist rotation is used as is (PLAN §5), One-Euro filtered with the position (operator/filters.py).
 
 Cheap geometric safety, no collision model: in the torso frame the wrist stays within `reach_m` of its shoulder,
-the wrist origin and the hand point (hand_point_m along the fingers) stay outside the torso capsule, and in the
-pelvis frame the wrist stays above z_min; then the two wrists stay wrist_gap_m apart. A violating target is
+in front of the torso (x >= front_min_m: never behind the robot, never beside the hips), across the midline by at
+most cross_m, and the wrist origin and the hand point (hand_point_m along the fingers) outside the torso capsule
+(left forward); in the pelvis frame the wrist stays above z_min; then the two wrists stay wrist_gap_m apart. (The real
+recording showed why the front limit matters: an operator turning around in HANDS mode leaves the lagging body-yaw
+estimate behind, and the hands, measured in that frame, swung behind the robot.) A violating target is
 projected onto the boundary. Afterwards velocity limits (max_lin, max_ang) bound every output; ramps and limits
 integrate at most operator/filters.MAX_STEP_DT per step, so a stalled loop never turns into a jump.
 
@@ -59,6 +62,8 @@ class ArmsParams:
     robot_shoulders: tuple = (0.004, 0.0, 0.235)   # shoulder midpoint in the torso_link frame (G1 FK)
     robot_shoulder_y: float = 0.1406            # each shoulder (roll joint) is this far off the midline
     reach_m: float = 0.36                       # wrist within this of its shoulder (full stretch ~0.37)
+    front_min_m: float = 0.08                   # wrist at least this far in front of the torso_link origin
+    cross_m: float = 0.05                       # a wrist may cross the midline (torso frame) by this much
     torso_axis: tuple = ((0.0, 0.0, -0.10), (0.0, 0.0, 0.32))   # torso capsule segment, torso_link frame
     torso_radius_m: float = 0.16                # the wrist origin stays this far from the segment
     hand_point_m: float = 0.10                  # hand point along the wrist link's x (toward the fingers)
@@ -113,23 +118,23 @@ def map_wrist(T_wrist_F, shoulders_F, side: str, scale: float, robot_shoulders) 
     return pose(rel[:3, :3] @ ego_wrist_offset(side), np.asarray(robot_shoulders, dtype=float) + scale * rel[:3, 3])
 
 
-def _push_out_of_segment(p, a, b, r) -> np.ndarray:
-    """p moved radially away from segment ab until it is at least r from it."""
-    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+def _forward_out_of_capsule(p, a, b, r) -> float:
+    """How far point p must move along +x (forward) to be at least r from segment ab (0 if it already is). The
+    capsule is the torso and the wrists are kept in front of it, so leaving it forward keeps y and z (the side and
+    height limits stay satisfied)."""
+    a, b, p = (np.asarray(v, dtype=float) for v in (a, b, p))
     ab = b - a
-    s = float(np.clip(np.dot(p - a, ab) / np.dot(ab, ab), 0.0, 1.0))
-    c = a + s * ab
+    c = a + float(np.clip(np.dot(p - a, ab) / np.dot(ab, ab), 0.0, 1.0)) * ab
     d = p - c
-    n = float(np.linalg.norm(d))
-    if n >= r:
-        return p
-    if n < 1e-9:                                   # on the axis: push forward
-        d, n = np.array([1.0, 0.0, 0.0]), 1.0
-    return c + d * (r / n)
+    if np.linalg.norm(d) >= r:
+        return 0.0
+    return max(0.0, c[0] + float(np.sqrt(max(r * r - d[1] ** 2 - d[2] ** 2, 0.0))) - p[0])
 
 
 def torso_safety(T_local, side: str, p: ArmsParams) -> np.ndarray:
-    """Reach sphere and torso capsule, in the torso_link frame."""
+    """Reach sphere, then the front / midline limits, then the torso capsule (left forward), in the torso_link
+    frame. The last steps only move forward, so they keep the side limit; reach may then be exceeded slightly (the
+    policy falls short, nothing collides)."""
     T = np.array(T_local, dtype=float)
     sh = np.asarray(p.robot_shoulders, dtype=float) + [0.0, p.robot_shoulder_y if side == "left" else
                                                        -p.robot_shoulder_y, 0.0]
@@ -137,10 +142,11 @@ def torso_safety(T_local, side: str, p: ArmsParams) -> np.ndarray:
     n = float(np.linalg.norm(d))
     if n > p.reach_m:
         T[:3, 3] = sh + d * (p.reach_m / n)
+    T[0, 3] = max(T[0, 3], p.front_min_m)
+    T[1, 3] = max(T[1, 3], -p.cross_m) if side == "left" else min(T[1, 3], p.cross_m)
     a, b = p.torso_axis
-    T[:3, 3] = _push_out_of_segment(T[:3, 3], a, b, p.torso_radius_m)
-    hand = T[:3, 3] + p.hand_point_m * T[:3, 0]
-    T[:3, 3] += _push_out_of_segment(hand, a, b, p.hand_radius_m) - hand
+    T[0, 3] += _forward_out_of_capsule(T[:3, 3], a, b, p.torso_radius_m)
+    T[0, 3] += _forward_out_of_capsule(T[:3, 3] + p.hand_point_m * T[:3, 0], a, b, p.hand_radius_m)
     return T
 
 
