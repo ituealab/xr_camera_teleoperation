@@ -60,16 +60,20 @@ data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --no-dataset
 
 ## Meta Quest 3S as the hand source
 
-The Quest browser streams WebXR hand tracking to `operator/quest/server.py`, which publishes the same message as the
-WiLoR server on its own ports (ZMQ :5594, HTTP :8771), so the clutch, filters, retargeting and preview are unchanged.
-It needs its own venv (vuer pins numpy below 2): `python3 -m venv data/quest-venv`, then
-`data/quest-venv/bin/pip install -r envs/quest.freeze.txt`. `params-proto` must stay below 3, or `from vuer import Vuer`
-fails. Make a certificate for MSI's Wi-Fi address in `data/quest-cert/` (`openssl req -x509 ... -addext
-"subjectAltName=IP:192.168.1.105"`).
+The Quest browser streams WebXR head, hand and controller tracking to `operator/quest/server.py`. It publishes two
+streams: the same perception message as the WiLoR server on its own ports (ZMQ :5594, HTTP :8771), so the clutch,
+filters, retargeting and preview are unchanged, and the full-body `xr_frame` on ZMQ :5596 (`fullbody/xr_frame.py`).
+It needs its own venv with Vuer 0.1.6: `python3.12 -m venv data/quest-env`, then
+`data/quest-env/bin/pip install -r envs/quest-env.freeze.txt`. (`data/quest-venv`, Vuer 0.0.60 + TeleVuer from
+`envs/quest.freeze.txt`, is only used by the raw TeleVuer probe `tools/quest_probe.py`.) Make a certificate for MSI's
+Wi-Fi address in `data/quest-cert/` (`openssl req -x509 ... -addext "subjectAltName=IP:192.168.1.105"`).
 
 ```bash
-data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server
+data/quest-env/bin/python -m xr_camera_teleop.operator.quest.server
 ```
+
+The page reconnects by itself after a server restart only within about 30 s (Vuer 0.1.6 retries 5 times); after a
+longer stop reopen it with `deploy/quest_adb.sh open` and press Enter VR again.
 
 ```bash
 data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --source quest --no-publish --no-dataset
@@ -77,8 +81,33 @@ data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui --source quest --no-
 
 On the Quest open `https://192.168.1.105:8012/?ws=wss://192.168.1.105:8012`, typing `https://` (the browser otherwise
 tries plain HTTP and reports that it cannot connect), accept the certificate, press Enter VR, put the controllers down.
-The server asks the browser for 90 Hz hand updates (Vuer's default is 30) and measured about 92 Hz of distinct samples.
-`tools/quest_probe.py` is the raw TeleVuer probe used to bring the headset up.
+The server asks the browser for 90 Hz updates (Vuer's default is 30); the distinct sample rate is the headset's XR
+frame rate (about 90 Hz with nothing else rendered, about 43 Hz with the stereo view in the P0 measurement,
+`docs/quest-sonic/P0_quest_probe.md`). `tools/quest_probe.py` is the raw TeleVuer probe used to bring the headset up.
+
+### xr_frame recording (full-body teleop, P3)
+
+One command records a 5-minute `xr_frame` log from the headset into `data/fullbody-runs/<time>/` and validates it
+(timestamps, per-source rates, staleness as the full-body node will see it, the mixed hand + controller case):
+
+```bash
+deploy/xr_frame_record.sh            # --minutes N, --no-view; `deploy/xr_frame_record.sh stop` stops the server
+```
+
+It starts the Quest server with the synthetic stereo view (the render load of the robot view) unless one is already
+running, waits for Enter VR, records, and prints the validation (also `validation.json` in the run directory).
+The operator, with the headset on:
+
+| Minute | Do |
+|---|---|
+| 0-1 | Both controllers in hand. Look around, walk a step, push both sticks, press A/B and X/Y. |
+| 1-2 | Put the **left** controller down; left hand free and in view, right controller in hand. |
+| 2-3 | Pick the left controller up, put the **right** one down; right hand free. |
+| 3-4 | Both controllers down, both hands tracked. Crouch once, lean forward and sideways. |
+| 4-5 | Both controllers back in hand. Once, around 4:30, recenter (hold the Meta button). |
+
+`tools/xr_frame_validate.py <run>` re-validates a run; `tools/quest_emulator.mjs` drives the server with an
+emulated Quest in headless Chrome (no headset; rates are the browser's, not the Quest's).
 
 ## Updating
 
