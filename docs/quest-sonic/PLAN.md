@@ -6,10 +6,10 @@ Branch: `quest_emin` (`quest-xr`'dan, 3144d6d). Tarih: 2026-11-12.
 
 | Faz | Durum |
 |---|---|
-| P0 | Kısmen. Ölçüm tablosu ve kafa akışı kararı `P0_quest_probe.md`'de. Karışık el/kontrolcü modu (D8) ve Vuer 0.1.6 kafa hızı ölçülmedi; kullanıcının 5 dk'lık headset kaydını bekliyor. |
+| P0 | Tamam. Gerçek headset kaydı `data/fullbody-runs/20261112-195840` (300 s); bulgular `P0_quest_probe.md` §6–7. Kafa ~36 Hz (robot görüntüsü açıkken 72 Hz / 2); Quest 3S Quest Browser'da karışık el+kontrolcü modu yok (D8). |
 | P1 | Tamam, kameralar kapalıyken: 10 dk dayanıklılık düşmesiz, §7a fizik hedefleri geçiyor (`P1_sim.md`). Kameralar açıkken açık: GPU 20 W güç kilidi (§7a, §11). |
 | P2 | Sürüyor. |
-| P3 | Tamam (kod, testler, Quest emülatörüyle uçtan uca). Çıkıştaki 5 dk'lık headset kaydı P0 ile birlikte kullanıcıda. |
+| P3 | Tamam. Gerçek kayıt §6 kurallarıyla doğrulandı; takip edilen elin işaretçisi artık kontrolcü akışına girmiyor. |
 | P4–P8 | Başlamadı. |
 
 ## 0. Bitiş tanımı
@@ -58,7 +58,7 @@ Tasarım bunları zorlaştırmayacak şekilde yapılır (bkz. §12).
 | D5 | **Yürüme sadece thumbstick'ten.** Stick boşken mode `IDLE`. | `speed<=0`, "modun varsayılan hızı" anlamına gelir; dur komutu değildir. |
 | D6 | **Robot yönü kafa yaw'ından gelir.** Mutlak ve kalibre edilmiş; histerezisli, hız sınırlı, kademeli. Bir kilit butonu vardır. | Etrafa bakmak robotu döndürmemeli. Facing'deki her float değişikliği yeniden planlama tetikler. |
 | D7 | **Çömelme dururken ve kademelidir** (planner mode 4 + `height`). | Stok SONIC'te çömelerek yürüme yoktur; `height` sadece statik modlarda çalışır. |
-| D8 | **Her el için iki mod: TRACKED / PARKED.** Kontrolcü tutan elin kolu sabit park pozuna gider. | El ile kontrolcünün aynı anda takibi gerekmez. |
+| D8 | **Her el için iki mod: TRACKED / PARKED.** Taraf başına kural: el takipteyse TRACKED, değilse PARKED. Quest 3S Quest Browser karışık modu vermiyor (P0 §6), bu yüzden operatör kuralı: yürümek için iki kontrolcü elde; ellerle çalışmak için ikisi de bırakılır. Platform karışık modu verirse aynı kural değişmeden çalışır. | El ile kontrolcünün aynı anda takibi gerekmez. |
 | D9 | **Bilek hedefleri sanal operatör gövdesine göre tanımlanır.** Gövde hedefiyle aynı frame kullanılır. | Eğilme hem gövdeye hem kola iki kez yansımaz. |
 | D10 | **Upstream kopyalanmaz ve yamalanmaz.** SONIC kaynağı, modeller ve binary bir config yolu ve manifest (commit + sha256) ile referanslanır. | Tasarım borcu olmaz, güncelleme tek yerden yapılır. |
 | D11 | **Sim ve gerçek robotta aynı süreç grafiği çalışır.** Fark sadece DDS ucu, yani MuJoCo köprüsü ya da robot. | İleride PC2'ye taşımak sadece config değişikliği olur. |
@@ -211,10 +211,10 @@ DISCONNECTED ─(SONIC hazır + Quest bağlı)→ STANDBY ─(kalibrasyon)→ AC
 
 - **STANDBY:** `IDLE`, VR kapalı, sadece facing ψ_plan0. SONIC robotu ayakta tutar.
 - **ACTIVE:** VR 3-nokta, yürüme, duruş ve eller açık.
-- **PAUSED:** `IDLE`, facing donuk. VR hedefleri 1.5 s'de nötr duruşa yumuşar ve öyle kalır. Şunlarla girilir: pause butonu, kafa verisi bayatlaması (>200 ms), recenter (`epoch`) ya da oturum değişimi.
+- **PAUSED:** `IDLE`, facing donuk. VR hedefleri 1.5 s'de nötr duruşa yumuşar ve öyle kalır. Şunlarla girilir: pause butonu, kafa verisi bayatlaması (>200 ms), recenter (`epoch`) ya da oturum değişimi. Bayatlıkla girilen PAUSED, aynı oturum ve epoch'ta kafa 0.5 s taze kalınca kendiliğinden ACTIVE'e döner (el↔kontrolcü geçişi kafayı 0.6–1.5 s durdurur ve iki el serbestken buton yoktur). Buton, recenter ve oturum değişimiyle girilen PAUSED elle çözülür.
 - **Bayatlık kuralları:**
-  - Bayatlık her kaynağın örnek zamanına (`t`) göre ölçülür, alım zamanına göre değil. P0: teslimat yaklaşık saniyede bir 100–160 ms takılıyor; aşağıdaki eşikler bu takılmalara göre P4'te headset kaydıyla doğrulanır.
-  - Kafa hızı headset'in render hızıyla sınırlı (P0 bulgu 2). Kafa ≥ 50 Hz için P5'in görüntü yolu headset kare hızını ≥ 50'de tutmalı.
+  - Bayatlık her kaynağın örnek zamanına (`t`) göre ölçülür, alım zamanına göre değil.
+  - Düğüm 50 Hz'de son örnekle çalışır; kafa > 200 ms bayatsa PAUSED. Kafa örnek aralığı p50 ≤ 40 ms, p99 ≤ 100 ms; sakin kullanımda ≤ 0.2 duraklama/dk (geçiş, recenter ve oturum sonundakiler ayrı raporlanır). 50 Hz kafa şartı kaldırıldı (kullanıcı kararı, 2026-11-12): robot görüntüsü açıkken headset ~36 Hz örnekliyor.
   - Kontrolcü verisi > 150 ms bayatsa yürüme `IDLE` olur, diğer her şey devam eder.
   - El verisi için §5'teki kural geçerlidir.
   - fullbody_node her durumda 50 Hz yayın yapar.
@@ -326,6 +326,8 @@ Torch kurulmaz; sim yolu torch import etmiyor, doğrulandı. Kurulum listesi `en
 
 Her fazın çıktısı birim testleriyle ve bir commit ile kapanır.
 
+**Doğrulama ilkesi (kullanıcı kararı, 2026-11-12):** Hiçbir faz kullanıcının headset denemesini beklemez. Her çıkış kriteri insansız doğrulanır: sim + script girdileri, headless Chrome Meta headset emülatörü (`tools/quest_emulator.mjs`) ve gerçek kaydın (`data/fullbody-runs/20261112-195840`) replay'i. Kullanıcı sistemi bitince bir kez, baştan sona §0 senaryosuyla dener. Aşağıdaki "headset ile" geçen çıkışlar emülatör/replay ile karşılanır; §0'ın kendisi kullanıcının denemesidir.
+
 ### P0 — Quest girdi probu (headset gerekir; P1 ile paralel) — kısmen tamam
 - `tools/quest_probe.py` genişletilir: CAMERA_MOVE oranı ve gecikmesi, CONTROLLER_MOVE alanları, taraf başına el↔kontrolcü geçişi, bir kontrolcü + bir el aynı anda, recenter/reset olayı. Hepsi stereo görüntü açıkken ölçülür.
 - **Çıkış:** ölçüm tablosu `docs/quest-sonic/P0_quest_probe.md`'ye yazılır.
@@ -347,7 +349,7 @@ Her fazın çıktısı birim testleriyle ve bir commit ile kapanır.
   - Node öldürülünce robot ayakta durur.
   - Replay testi geçer.
 
-### P3 — Quest verisi — tamam (headset kaydı bekliyor)
+### P3 — Quest verisi — tamam
 - `convert.py`'ye kontrolcü ve kafa çözümü eklenir; kafa rotasyon dönüşümü düzeltilir. `server.py` `xr_frame` yayınlar; Hands + MotionControllers birlikte açılır. `fullbody/xr_frame.py`, `fullbody/frames.py`, `fullbody/calibration.py`.
 - **Çıkış:** Quest'ten 5 dk'lık xr_frame logu alınır; tüm kaynaklar zaman damgalı ve doğrulanmış. Frame testleri geçer: bilinen pozlar → beklenen sonuçlar.
 
