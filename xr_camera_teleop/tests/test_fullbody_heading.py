@@ -27,7 +27,7 @@ def test_glances_never_turn_the_robot():
 
 
 def test_body_turn_is_followed_rate_limited_and_settles_close():
-    h = Heading()
+    h = Heading(HeadingParams(reissue_s=()))
     h.reset(0.0)
     yaws = np.concatenate([np.linspace(0, D(90), 100), np.full(300, D(90))])       # 90 deg in 2 s, then still
     out = run(h, yaws)
@@ -36,23 +36,34 @@ def test_body_turn_is_followed_rate_limited_and_settles_close():
     assert heads[-1] == pytest.approx(D(90), abs=D(1.8))                             # within one quantiser band
     assert abs(out[-1].psi_body - D(90)) <= D(1.0) + 1e-9
     k = np.round(heads / D(3))
-    assert np.allclose(heads, k * D(3), atol=2e-3)                                   # quantised to 3 deg (+ nudge)
+    assert np.allclose(heads, k * D(3))                                              # quantised to 3 deg
 
 
-def test_settled_heading_is_reissued_then_exact():
-    h = Heading(HeadingParams(reissue_s=(1.0, 2.0), reissue_rad=1e-3))
+def test_settled_heading_is_reissued_beyond_then_exact_while_standing():
+    p = HeadingParams(reissue_s=(3.0, 4.5), reissue_rad=D(4))
+    yaws = np.concatenate([np.linspace(0, D(90), 100), np.full(400, D(90))])
+    h = Heading(p)
     h.reset(0.0)
-    yaws = np.concatenate([np.linspace(0, D(90), 100), np.full(300, D(90))])
     heads = np.array([o.heading for o in run(h, yaws)])
     changes = np.flatnonzero(np.diff(heads)) + 1
-    t_last_step = next(k for k in changes[::-1] if abs(heads[k] - heads[k - 1]) > 1e-2)
-    nudges = [k for k in changes if k > t_last_step]
-    assert [round((k - t_last_step) * DT, 2) for k in nudges] == [1.0, 2.0]
-    assert heads[nudges[0]] - heads[t_last_step] == pytest.approx(1e-3) and heads[-1] == heads[t_last_step]
-    h0 = Heading(HeadingParams(reissue_s=()))
-    h0.reset(0.0)
-    heads = np.array([o.heading for o in run(h0, yaws)])
-    assert len(np.flatnonzero(np.diff(heads[150:]))) == 0
+    last = next(k for k in changes[::-1] if abs(heads[k] - heads[k - 1]) < D(3.5) and k < 200)
+    pulses = [k for k in changes if k > last]
+    assert [round((k - last) * DT, 2) for k in pulses] == [3.0, 4.5]
+    assert heads[pulses[0]] - heads[last] == pytest.approx(D(4)) and heads[-1] == heads[last]
+    # a turn to the right pulses to the right
+    h = Heading(p)
+    h.reset(0.0)
+    heads = np.array([o.heading for o in run(h, -yaws)])
+    assert heads.min() == pytest.approx(heads[-1] - D(4))
+    # walking: sent exactly
+    h = Heading(p)
+    h.reset(0.0)
+    out = [h.step(i * DT, y, False, walking=True) for i, y in enumerate(yaws)]
+    assert len(np.flatnonzero(np.diff([o.heading for o in out])[200:])) == 0
+    # never right after calibration
+    h = Heading(p)
+    h.reset(0.0)
+    assert all(o.heading == 0.0 for o in run(h, np.zeros(400)))
 
 
 def test_turn_needs_the_delay_and_the_threshold():
@@ -81,7 +92,7 @@ def test_pending_turn_survives_the_band_between_hold_and_turn():
 
 
 def test_lock_is_a_clutch():
-    h = Heading()
+    h = Heading(HeadingParams(reissue_s=()))
     h.reset(0.0)
     out = run(h, [D(90)] * 150, locked=True)                 # turn while locked: robot heading frozen
     assert out[-1].heading == 0.0
@@ -93,7 +104,7 @@ def test_lock_is_a_clutch():
 
 
 def test_wraps_across_pi():
-    h = Heading()
+    h = Heading(HeadingParams(reissue_s=()))
     h.reset(D(170))
     yaws = [float(np.angle(np.exp(1j * y))) for y in np.linspace(D(170), D(260), 100)] + [D(-100)] * 200
     out = run(h, yaws)

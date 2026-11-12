@@ -221,8 +221,8 @@ class QuestSource:
 
     def _intent(self, now: float, f: XRFrame, s: OperatorSettings, mode: OperatorMode, ctrls: dict) -> Intent:
         locked = self.locked or self.posture.crouch is not Crouch.STAND
-        h = self.heading.step(now, yaw_of(f.head.T), locked)
         loco = self.locomotion.step(self._stick(ctrls) if mode is OperatorMode.WALK else None, s)
+        h = self.heading.step(now, yaw_of(f.head.T), locked, walking=loco.deflected)
         post = self.posture.step(now, f.head.T, h.psi_body, h.waist_yaw, loco.deflected, s)
         if post.height is not None:
             base = BaseCmd(Mode.SQUAT, height=post.height)

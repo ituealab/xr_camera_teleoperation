@@ -17,10 +17,13 @@ Off by default: in the sim SONIC's VR 3-point mode realises ~6% of a commanded t
 the torso -2.2..+0.8 deg), so it would only make the commanded and the real torso disagree.
 
 Re-issue: SONIC's planner plans an in-place turn once per facing change and, standing, never replans otherwise (it
-replans periodically only while walking). Measured in the sim, a 90 deg body turn ends 10-16 deg short and stays
-there. So at `reissue_s` after the heading last changed the heading is sent again, nudged by `reissue_rad` in the
-direction of that change (SONIC replans on any float change of the facing), and exactly again at the next entry:
-each re-issue plans the remainder from where the robot stands. Open loop: the robot's measured yaw is never read.
+replans periodically only while walking). Measured in the sim, a 90 deg body turn ends up to 10 deg off the facing
+and stays there. So, while standing, the settled heading is sent again at `reissue_s` after its last change: first
+`reissue_rad` beyond it in the direction of that change (SONIC replans on any change of the facing and turns the
+remainder plus the pulse), then exactly (SONIC settles on it). Sim A/B, four 90 deg turns, error to the facing 6 s
+after each: none 10.5 deg max, 1e-3 rad nudges at 1 / 2 s 5.7, at 1..6 s 4.7, a 4 deg pulse at 3 s back at 4.5 s
+3.6 (the default). While walking the heading is sent exactly (no pulse bends the path). Open loop: the robot's measured
+yaw is never read.
 
 psi_body also orients the operator torso frame the wrists are measured in (posture.py, arms.py), so it keeps tracking
 the operator while the heading is locked.
@@ -45,8 +48,8 @@ class HeadingParams:
     step_deg: float = 3.0            # heading quantisation step
     step_band: float = 0.6           # quantiser hysteresis, in steps (> 0.5)
     waist_yaw_max_deg: float = 0.0   # glance share of the torso yaw (0: off; SONIC VR mode realises ~6% of it)
-    reissue_s: tuple = (1.0, 2.0)    # after a heading change: nudge at the 1st, exact at the 2nd, ... (empty: never)
-    reissue_rad: float = 1e-3        # the nudge, in the direction of that change
+    reissue_s: tuple = (3.0, 4.5)    # after a heading change: pulse at the 1st, exact at the 2nd, ... (empty: never)
+    reissue_rad: float = math.radians(4.0)   # the pulse, beyond the heading in the direction of that change
 
     @classmethod
     def from_config(cls, cfg: dict) -> "HeadingParams":
@@ -86,7 +89,7 @@ class Heading:
         self._level = None
         self._quant.reset()
 
-    def _reissued(self, now: float, level: float) -> float:
+    def _reissued(self, now: float, level: float, walking: bool) -> float:
         """The quantised heading, nudged (in the direction of the last change) at the re-issue times after a change;
         never after calibration."""
         if level != self._level:
@@ -97,11 +100,12 @@ class Heading:
             self._level = level
             return level
         n = sum(1 for r in self.p.reissue_s if now - self._t_level >= r - 1e-9)
-        if n == len(self.p.reissue_s):
+        if walking or n == len(self.p.reissue_s):
             return level                        # all re-issues done (always so right after calibration)
         return level + (self._dir * self.p.reissue_rad if n % 2 else 0.0)
 
-    def step(self, now: float, psi_head: float, locked: bool) -> HeadingOut:
+    def step(self, now: float, psi_head: float, locked: bool, walking: bool = False) -> HeadingOut:
+        """`walking`: the legs are commanded to walk this tick (no re-issue pulse)."""
         if self.psi_body is None:
             self.reset(psi_head)
         p = self.p
@@ -126,5 +130,5 @@ class Heading:
             self._heading += moved
         w = math.radians(p.waist_yaw_max_deg)
         waist = min(w, max(-w, float(wrap_angle(psi_head - self.psi_body))))
-        return HeadingOut(heading=self._reissued(now, self._quant(self._heading)), psi_body=self.psi_body,
+        return HeadingOut(heading=self._reissued(now, self._quant(self._heading), walking), psi_body=self.psi_body,
                           waist_yaw=waist, turning=self._turning)

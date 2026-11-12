@@ -12,7 +12,8 @@ tools/fullbody_metrics.py (segments, FK, VR tracking). What is measured, per sce
                  releasing the stick (distance travelled until still), path length
   p4_stops       per direction: speed before the release and the distance travelled until still
   p4_glances     robot yaw change and peak deviation, facing changes commanded, base drift
-  p4_turn90      per 90 deg body turn: robot yaw change at the end of its settle window vs the operator's turn
+  p4_turn90      per 90 deg body turn: robot yaw vs the commanded facing at the end of its settle window (relative to
+                 before the first turn), and the turn's own yaw change
   p6_hands       wrist tracking per standing HANDS segment (median / p95 position, rotation; best lag), arm joint peak
                  velocity / acceleration in each park <-> track transition vs during tracking, Dex3 finger tracking
                  (measured vs commanded), the states through the WALK <-> HANDS switches
@@ -159,22 +160,33 @@ def p4_glances(run) -> dict:
             "base_drift_m": float(np.linalg.norm(od[-1][1][:2] - od[0][1][:2]))}
 
 
+def facing_at(run, t) -> float:
+    tk = [x for x in run["ticks"] if x["t"] <= t][-1]
+    return math.atan2(tk["facing"][1], tk["facing"][0])
+
+
 def p4_turn90(run) -> dict:
+    """Per body turn: the robot's yaw against the commanded facing at the end of its settle window, both relative to
+    just before the first turn (an absolute tracking error: a residual is not carried into the next turn's number),
+    and the turn's own yaw change."""
+    turns = segs(run, "turn ")
+    if not turns:
+        return {}
+    t_ref = turns[0]["t0"] - 0.3
+    yaw_ref, face_ref = yaw_q(odom_window(run, t_ref - 0.3, t_ref)[-1][2]), facing_at(run, t_ref)
     out = []
-    for turn in segs(run, "turn "):
+    for turn in turns:
         k = turn["name"].split("#")[1]
         settle = seg(run, f"settle #{k}")
-        before = odom_window(run, turn["t0"] - 0.3, turn["t0"])
-        end = odom_window(run, settle["t1"] - 0.3, settle["t1"])
-        if not before or not end:
-            continue
-        want = float(turn["name"].split()[1])
-        got = math.degrees(float(wrap_angle(yaw_q(end[-1][2]) - yaw_q(before[-1][2]))))
-        cmd = [tk["facing"] for tk in run["ticks"] if turn["t0"] - 0.3 <= tk["t"] <= settle["t1"]]
-        cmd_deg = math.degrees(float(wrap_angle(math.atan2(cmd[-1][1], cmd[-1][0]) - math.atan2(cmd[0][1], cmd[0][0]))))
-        out.append({"turn": turn["name"], "operator_deg": want, "commanded_deg": round(cmd_deg, 1),
-                    "robot_deg": round(got, 1), "error_deg": round(got - want, 1)})
-    return {"turns": out, "max_abs_error_deg": max((abs(x["error_deg"]) for x in out), default=None)}
+        before = odom_window(run, turn["t0"] - 0.3, turn["t0"])[-1][2]
+        end = odom_window(run, settle["t1"] - 0.3, settle["t1"])[-1][2]
+        robot = float(wrap_angle(yaw_q(end) - yaw_ref))
+        cmd = float(wrap_angle(facing_at(run, settle["t1"]) - face_ref))
+        out.append({"turn": turn["name"], "operator_deg": float(turn["name"].split()[1]),
+                    "turn_change_deg": round(math.degrees(float(wrap_angle(yaw_q(end) - yaw_q(before)))), 1),
+                    "commanded_deg": round(math.degrees(cmd), 1), "robot_deg": round(math.degrees(robot), 1),
+                    "error_deg": round(math.degrees(float(wrap_angle(robot - cmd))), 1)})
+    return {"turns": out, "max_abs_error_deg": max(abs(x["error_deg"]) for x in out)}
 
 
 # ---------------------------------------------------------------------------------------------------- P6

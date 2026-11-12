@@ -83,8 +83,8 @@ quest:
     step_deg: 3.0                # facing quantisation (each facing change replans)
     step_band: 0.6
     waist_yaw_max_deg: 0.0       # glance share of the torso yaw: off, SONIC VR mode realises ~6% of it (P4 sim)
-    reissue_s: [1.0, 2.0]        # re-send a settled heading (SONIC stops in-place turns 10-16 deg short)
-    reissue_rad: 0.001
+    reissue_s: [3.0, 4.5]        # standing: re-send a settled heading, first 4 deg beyond (SONIC stops in-place
+    reissue_rad: 0.0698          # turns up to 10 deg short), then exact (heading.py: sim A/B)
   locomotion:                    # fullbody/locomotion.py
     v_fwd_max: 0.5               # m/s: stops within 0.3 m (P1: 0.25 m from 0.5 m/s, 0.48 m from 1.0)
     v_back_max: 0.55
