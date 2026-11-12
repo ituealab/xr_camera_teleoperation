@@ -12,6 +12,7 @@ from multiprocessing import resource_tracker, shared_memory
 import numpy as np
 
 _HEADER = 3   # seq, sim_time, wall_time
+_CREATED: set[str] = set()   # blocks created by this process (its resource tracker owns them)
 
 
 class StateSnapshot:
@@ -25,7 +26,8 @@ class StateSnapshot:
         self._owner = create
         if create:
             self._buf[:] = 0.0
-        else:
+            _CREATED.add(self._shm._name)
+        elif self._shm._name not in _CREATED:
             # Python < 3.13 registers attached blocks too, and the reader's tracker would unlink the writer's block
             # when the reader exits. Only the creator owns (and unlinks) it.
             resource_tracker.unregister(self._shm._name, "shared_memory")
@@ -68,4 +70,5 @@ class StateSnapshot:
         del self._buf
         self._shm.close()
         if self._owner:
+            _CREATED.discard(self._shm._name)
             self._shm.unlink()
