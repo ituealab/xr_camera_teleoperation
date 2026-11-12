@@ -1,8 +1,8 @@
 """Synthetic stand-in for deploy/zed_stereo_stream.py: stereo JPEG pairs with known depths, for testing the Quest
 headset view without the robot.
 
-    data/quest-venv/bin/python -m xr_camera_teleop.tools.stereo_test_source
-    data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server --camera tcp://127.0.0.1:5605
+    data/quest-env/bin/python -m xr_camera_teleop.tools.stereo_test_source
+    data/quest-env/bin/python -m xr_camera_teleop.operator.quest.server --camera tcp://127.0.0.1:5605
 
 Scene, as a ZED-like pinhole pair (1280x720 per eye, 70 deg vertical FOV, 12 cm baseline): a grid wall at 4 m, a
 green panel at 1.5 m with a millisecond clock, and an orange ball swinging at 0.6 m. In the headset the ball should

@@ -12,13 +12,26 @@ operator heading at calibration (auto_yaw) and the clutch is relative, neither t
 
 `wrist_rot` is the WebXR wrist joint frame expressed in camera axes (S R_xr). It is a different axis convention
 from WiLoR's MANO root; the consumers only use it relatively (HandMapper) or not at all (wrapper default
-wrist_source="keypoints"), so it is consistent for them.
+wrist_source="keypoints"), so it is consistent for them. The head is a proper basis change of both frames
+(S H S^T): the identity is a level head looking along +z_cam.
+
+Full-body path (fullbody/xr_frame.py): `decode_head`, `decode_hand`, `decode_controller` turn one Vuer event side
+into typed values in the operator floor frame F of fullbody/frames.py. Stamps are added by operator/quest/assembler.py.
+Vuer >= 0.0.80 events: HEAD_MOVE {matrix: 16}, HAND_MOVE {left, right: 400 floats, leftState, rightState},
+CONTROLLER_MOVE {left, right: 16 floats (target-ray pose), leftState, rightState: buttons + thumbstickValue}.
+A missing hand/controller arrives as a placeholder (JS `undefined`, msgpack ExtType) with an empty state.
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
+from xr_camera_teleop.fullbody.frames import is_rigid, xr_points_to_floor, xr_pose_to_floor
+from xr_camera_teleop.fullbody.xr_frame import Controller, Hand
+
 S_CAM_XR = np.diag([1.0, -1.0, -1.0])
+_S4 = np.diag([1.0, -1.0, -1.0, 1.0])
 
 # WebXR 25 -> MANO/OpenPose 21: drop the four finger metacarpals (5, 10, 15, 20). Inverse of
 # mano_to_webxr._DIRECT: thumb 1..4 <- 1..4, finger f joint j: mano 5+4f+j <- webxr 5+5f+1+j.
@@ -66,11 +79,17 @@ def pose_from_flat16(flat):
 
 
 def to_cam(T_xr):
-    """4x4 (or stack) XR pose -> camera-frame pose: rotation S R, translation S p."""
+    """4x4 (or stack) XR hand joint pose -> camera frame, world axes only: rotation S R, translation S p (the body
+    axes stay WebXR's; see the module docstring)."""
     T = np.array(T_xr, dtype=float, copy=True)
     T[..., :3, :3] = S_CAM_XR @ T[..., :3, :3]
     T[..., :3, 3] = T[..., :3, 3] @ S_CAM_XR.T
     return T
+
+
+def head_to_cam(H_xr):
+    """XR head pose -> camera frame, world and head axes both: S H S^T (identity = level, looking along +z_cam)."""
+    return _S4 @ np.asarray(H_xr, dtype=float) @ _S4
 
 
 def hand_entry(flat):
@@ -112,8 +131,74 @@ def build_message(frame_id, t_capture, t_publish, hands_value, head_flat=None, m
     }
     H = pose_from_flat16(head_flat) if head_flat is not None else None
     if H is not None:
-        msg["head"] = to_cam(H).tolist()
+        msg["head"] = head_to_cam(H).tolist()
     return msg
+
+
+# ---------------------------------------------------------------------------------------------- full-body path
+
+def client_time_s(ts):
+    """A Vuer client timestamp -> seconds, or None. Vuer 0.1.6 sends HEAD_MOVE in ms and HAND_MOVE /
+    CONTROLLER_MOVE in s (all from Date.now()); any value above 1e11 is taken as ms."""
+    if ts is None:
+        return None
+    if hasattr(ts, "timestamp"):
+        return float(ts.timestamp())
+    try:
+        t = float(ts)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(t) or t <= 0:
+        return None
+    return t / 1e3 if t > 1e11 else t
+
+
+def decode_head(value):
+    """HEAD_MOVE value -> T_F_head (4x4), or None. The client sends an all-zero matrix before its first XR frame."""
+    m = value.get("matrix") if isinstance(value, dict) else None
+    H = pose_from_flat16(m)
+    if H is None or not is_rigid(H):
+        return None
+    return xr_pose_to_floor(H)
+
+
+def decode_hand(value, side):
+    """One side of a HAND_MOVE value -> Hand (default stamp) in F, or None if that hand is not tracked."""
+    if not isinstance(value, dict):
+        return None
+    J = joint_matrices(value.get(side))
+    if J is None or not np.all(np.abs(J[:, :3, 3]) < 50.0) or not is_rigid(J[0]):
+        return None
+    st = value.get(f"{side}State") or {}
+    pinch = st.get("pinchValue")
+    return Hand(T=xr_pose_to_floor(J[0]), joints=xr_points_to_floor(J[:, :3, 3]),
+                pinch=float(pinch) if isinstance(pinch, (int, float)) and math.isfinite(pinch) else math.nan)
+
+
+def _clip01(x):
+    return min(1.0, max(0.0, float(x))) if isinstance(x, (int, float)) and math.isfinite(x) else 0.0
+
+
+def decode_controller(value, side):
+    """One side of a CONTROLLER_MOVE value -> Controller (default stamp) in F, or None if that controller is absent.
+    stick = [x right, y forward]: WebXR's thumbstick y is negative when pushed forward."""
+    if not isinstance(value, dict):
+        return None
+    P = pose_from_flat16(value.get(side))
+    st = value.get(f"{side}State")
+    if P is None or not is_rigid(P) or not isinstance(st, dict):
+        return None
+    stick = st.get("thumbstickValue") or (0.0, 0.0)
+    try:
+        x, y = (float(v) for v in stick[:2])
+    except (TypeError, ValueError):
+        x, y = 0.0, 0.0
+    if not (math.isfinite(x) and math.isfinite(y)):
+        x, y = 0.0, 0.0
+    return Controller(T=xr_pose_to_floor(P), stick=np.clip(np.array([x, -y]), -1.0, 1.0),
+                      trigger=_clip01(st.get("triggerValue")), squeeze=_clip01(st.get("squeezeValue")),
+                      a=bool(st.get("aButton")), b=bool(st.get("bButton")), stick_press=bool(st.get("thumbstick")),
+                      trigger_press=bool(st.get("trigger")), squeeze_press=bool(st.get("squeeze")))
 
 
 def jpeg_size(data):

@@ -1,9 +1,12 @@
 """Quest (WebXR/Vuer) -> perception message conversion, and the full wrapper path driven by it."""
+import msgpack
 import numpy as np
 import pytest
 
+from xr_camera_teleop.fullbody.frames import C_F_XR, rot_z, xr_points_to_floor, xr_pose_to_floor
 from xr_camera_teleop.operator.mano_to_webxr import mano21_to_webxr25
-from xr_camera_teleop.operator.quest.convert import (S_CAM_XR, WEBXR_TO_MANO21, build_message, hand_entry,
+from xr_camera_teleop.operator.quest.convert import (S_CAM_XR, WEBXR_TO_MANO21, build_message, client_time_s,
+                                                     decode_controller, decode_hand, decode_head, hand_entry,
                                                      joint_matrices, project_head_view)
 from xr_camera_teleop.operator.synthetic_stream import canonical_hand_mano21
 from xr_camera_teleop.operator.wrapper import WiLoRTeleWrapper
@@ -165,3 +168,81 @@ def test_crossed_hands_trigger_the_swap_guard_only_when_enabled(guard):
     for _ in range(30):                                                                     # 0.6 s
         step(crossed)
     assert bool(w.swapped) == guard
+
+
+# ---------------------------------------------------------------------------------------------- full-body decoders
+
+# a right-controller CONTROLLER_MOVE side as Vuer 0.0.60 delivered it (data/quest-runs/input-probe-20261112-170509)
+REAL_CTRL_POSE = [0.19666488468647003, 0.9555712342262268, -0.21956032514572144, 0, -0.9661439657211304,
+                  0.1507280170917511, -0.20939688384532928, 0, -0.16699978709220886, 0.25330784916877747,
+                  0.9528620839118958, 0, 0.2565622329711914, 0.944469690322876, -0.4672059714794159, 1]
+IDLE_STATE = {"trigger": False, "squeeze": False, "touchpad": False, "thumbstick": False, "aButton": False,
+              "bButton": False, "triggerValue": 0, "squeezeValue": 0, "touchpadValue": [0, 0],
+              "thumbstickValue": [0, 0], "aButtonValue": False, "bButtonValue": False}
+PLACEHOLDER = msgpack.ExtType(0, b"\x00")          # JS `undefined` through msgpackr: no hand / no controller
+
+
+def test_client_time_units():
+    assert client_time_s(1794495937037.0) == pytest.approx(1794495937.037)     # HEAD_MOVE: ms
+    assert client_time_s(1794495937.037) == pytest.approx(1794495937.037)      # HAND/CONTROLLER_MOVE: s
+    assert client_time_s(None) is None and client_time_s("x") is None and client_time_s(float("nan")) is None
+
+
+def test_head_decode_and_basis_change():
+    H = np.eye(4)
+    H[:3, :3] = rot_y(0.5)                        # turned left by 0.5 rad
+    H[:3, 3] = [0.1, 1.6, -0.2]
+    T = decode_head({"matrix": H.T.ravel().tolist()})
+    assert np.allclose(T[:3, :3], rot_z(0.5)) and np.allclose(T[:3, 3], [0.2, -0.1, 1.6])
+    assert decode_head({"matrix": [0] * 16}) is None          # what the client sends before its first XR frame
+    assert decode_head({"matrix": [1, 2, 3]}) is None and decode_head({}) is None
+
+
+def test_legacy_head_is_a_proper_basis_change():
+    """A level head looking forward is the identity in the camera frame (was S R: a reflection-like matrix)."""
+    H = np.eye(4)
+    H[:3, 3] = [0.0, 1.6, 0.0]
+    msg = build_message(0, 0.0, 0.0, {}, H.T.ravel().tolist())
+    Hc = np.asarray(msg["head"])
+    assert np.allclose(Hc[:3, :3], np.eye(3)) and np.allclose(Hc[:3, 3], [0, -1.6, 0])
+    H[:3, :3] = rot_y(0.4)                        # turned left: in the camera frame (y down) that is -0.4 about y
+    Hc = np.asarray(build_message(0, 0.0, 0.0, {}, H.T.ravel().tolist())["head"])
+    assert np.allclose(Hc[:3, :3], rot_y(-0.4))
+    gaze = Hc[:3, :3] @ [0, 0, 1]                 # +z_cam of the head = its gaze, toward -x_cam (left)
+    assert gaze[0] < 0 and np.isclose(gaze[1], 0)
+
+
+def test_controller_decode_real_payload():
+    value = {"left": PLACEHOLDER, "leftState": {}, "right": REAL_CTRL_POSE,
+             "rightState": dict(IDLE_STATE, thumbstickValue=[0.25, -0.75], triggerValue=0.4, aButton=True,
+                                squeeze=True, squeezeValue=1)}
+    assert decode_controller(value, "left") is None
+    c = decode_controller(value, "right")
+    P = np.asarray(REAL_CTRL_POSE).reshape(4, 4).T
+    assert np.allclose(c.T, xr_pose_to_floor(P))
+    assert np.allclose(c.T[:3, 3], [0.4672059714794159, -0.2565622329711914, 0.944469690322876])
+    assert np.allclose(c.T[:3, :3] @ [1, 0, 0], xr_points_to_floor(P[:3, :3] @ [0, 0, -1]))   # +X_F along the ray
+    assert np.allclose(c.stick, [0.25, 0.75])     # pushed forward: WebXR y < 0, ours > 0
+    assert (c.trigger, c.squeeze, c.a, c.b, c.squeeze_press, c.trigger_press) == (0.4, 1.0, True, False, True, False)
+    assert c.stamp.seq == 0 and not c.stamp.valid  # stamps are the assembler's
+
+
+def test_controller_decode_rejects_garbage():
+    assert decode_controller({"right": [0] * 16, "rightState": IDLE_STATE}, "right") is None
+    assert decode_controller({"right": REAL_CTRL_POSE}, "right") is None                 # no state
+    c = decode_controller({"right": REAL_CTRL_POSE,
+                           "rightState": dict(IDLE_STATE, thumbstickValue=[3.0, None], triggerValue=7)}, "right")
+    assert np.allclose(c.stick, [0.0, 0.0]) and c.trigger == 1.0
+    assert decode_controller(None, "right") is None
+
+
+def test_hand_decode():
+    R = palm_down_forward(0.3)
+    p, flat = xr_hand("left", np.array([-0.15, 1.0, -0.3]), R)
+    h = decode_hand({"left": flat, "leftState": {"pinchValue": 0.05}, "right": PLACEHOLDER, "rightState": {}}, "left")
+    assert np.allclose(h.joints, xr_points_to_floor(p))
+    assert np.allclose(h.T[:3, 3], xr_points_to_floor(p[0]))
+    assert np.allclose(h.T[:3, :3], C_F_XR @ R @ C_F_XR.T)
+    assert h.pinch == pytest.approx(0.05)
+    assert decode_hand({"right": PLACEHOLDER, "rightState": {}}, "right") is None
+    assert np.isnan(decode_hand({"left": flat, "leftState": {}}, "left").pinch)

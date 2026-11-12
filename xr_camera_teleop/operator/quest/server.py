@@ -1,18 +1,24 @@
 #!/usr/bin/env python
-"""Quest hand-tracking server: Meta Quest browser (WebXR via Vuer) -> the perception ZMQ stream of CONTRACT.md.
+"""Quest server: Meta Quest browser (WebXR via Vuer) -> the operator data streams.
 
-A drop-in alternative to the WiLoR perception server: same msgpack message on its own ports, so the live UI's
-WiLoRTeleWrapper, clutch, filters, Dex3 retargeting and preview run unchanged (`xrcam-ui --source quest`).
-Run with data/quest-venv (vuer==0.0.60, params-proto<3, numpy<2, pyzmq, msgpack, opencv):
-
-    data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server
+    data/quest-env/bin/python -m xr_camera_teleop.operator.quest.server
 
 Quest browser:  https://<this machine>/  (443 is redirected to :8012 on MSI), Enter VR.
 
-    Vuer HTTPS/WSS :8012  --HAND_MOVE / CAMERA_MOVE-->  convert.build_message  --> ZMQ PUB :5594 (msgpack)
-    HTTP :8771  /  /overlay.mjpg (hands seen from the headset)  /latest.json  /health
+Two streams, both msgpack on ZMQ PUB:
+  :5596 xr_frame (fullbody/xr_frame.py): head, both hands and both controllers in the operator floor frame, each
+        with its own sample time, receive time, sample counter and validity. One snapshot per new sample.
+  :5594 perception message of CONTRACT.md (unchanged), so the live UI's WiLoRTeleWrapper, clutch, filters, Dex3
+        retargeting and preview run on the Quest hands (`xrcam-ui --source quest`).
+
+    Vuer HTTPS/WSS :8012  --HEAD_MOVE / HAND_MOVE / CONTROLLER_MOVE-->  assembler --> :5596 xr_frame
+                                                                        convert.build_message --> :5594 perception
+    HTTP :8771  /  /overlay.mjpg (hands seen from the headset)  /latest.json  /health  /view?mode=
     --camera: robot ZED left/right JPEGs (deploy/zed_stereo_stream.py, ZMQ) -> head-locked plane per eye in the
     headset, forwarded without re-encoding; removed when the stream stalls so a frozen view never looks live.
+
+Vuer streams head (Head, getViewerPose), hands (Hands) and controllers (MotionControllers) together; each is
+sampled every XR frame and sent at --input-fps. Only the most recent headset connection is used.
 """
 from __future__ import annotations
 
@@ -31,8 +37,12 @@ import msgpack
 import numpy as np
 import zmq
 
-from xr_camera_teleop.operator.quest.convert import (WEBXR_BONES, build_message, joint_matrices, pose_from_flat16,
-                                                     project_head_view)
+from xr_camera_teleop.fullbody.xr_frame import SOURCES as XR_SOURCES
+from xr_camera_teleop.fullbody.xr_frame import encode as encode_xr_frame
+from xr_camera_teleop.fullbody.xr_frame import source as xr_source
+from xr_camera_teleop.operator.quest.assembler import XRFrameAssembler
+from xr_camera_teleop.operator.quest.convert import (WEBXR_BONES, build_message, client_time_s, joint_matrices,
+                                                     pose_from_flat16, project_head_view)
 
 REPO = Path(__file__).resolve().parents[3]
 DATA = REPO / "data"
@@ -142,6 +152,15 @@ class QuestServer:
         self.pub.setsockopt(zmq.SNDHWM, 2)
         self.pub.setsockopt(zmq.LINGER, 0)
         self.pub.bind(a.zmq)
+        self.xr_pub = ctx.socket(zmq.PUB)
+        self.xr_pub.setsockopt(zmq.SNDHWM, 100)
+        self.xr_pub.setsockopt(zmq.LINGER, 0)
+        self.xr_pub.bind(a.xr_zmq)
+        self.assembler = XRFrameAssembler()
+        self.active_ws = None                # only the most recent headset connection feeds the streams
+        self.xr_frames = 0
+        self.xr_rate = {k: RateWin() for k in XR_SOURCES}     # distinct samples per source
+        self.xr_seq = {k: 0 for k in XR_SOURCES}
         self.frame_id = 0
         self.head_flat = None
         self.latest_msg = None
@@ -157,9 +176,48 @@ class QuestServer:
         self.view = a.view            # live: GET /view?mode=none|ego|immersive switches it without a restart
 
     # ------------------------------------------------------------------ vuer handlers
-    async def on_hand_move(self, event, session):
+    def _active(self, session):
+        return session.CURRENT_WS_ID == self.active_ws
+
+    def publish_xr(self, frame):
+        """Called on the event loop only (the ZMQ socket is not thread-safe)."""
+        if frame is None:
+            return
+        self.xr_pub.send(encode_xr_frame(frame))
         now = time.monotonic()
+        with self.lock:
+            self.xr_frames += 1
+            for k in XR_SOURCES:
+                seq = xr_source(frame, k).stamp.seq
+                if seq > self.xr_seq[k]:
+                    self.xr_rate[k].tick(now)
+                self.xr_seq[k] = seq
+
+    async def on_head_move(self, event, session):
+        if not self._active(session):
+            return
         v = event.value if isinstance(event.value, dict) else {}
+        self.publish_xr(self.assembler.head_event(event.ts, v, time.time()))
+        H = pose_from_flat16(v.get("matrix"))
+        if H is None or not np.any(H[:3, :3]):
+            return
+        with self.lock:
+            self.head_flat = list(v["matrix"])
+            self.xr["head"] = H
+            self.rate["head"].tick(time.monotonic())
+
+    async def on_controller_move(self, event, session):
+        if not self._active(session):
+            return
+        v = event.value if isinstance(event.value, dict) else {}
+        self.publish_xr(self.assembler.controllers_event(event.ts, v, time.time()))
+
+    async def on_hand_move(self, event, session):
+        if not self._active(session):
+            return
+        v = event.value if isinstance(event.value, dict) else {}
+        self.publish_xr(self.assembler.hands_event(event.ts, v, time.time()))
+        now = time.monotonic()
         msg = build_message(self.frame_id, now, time.monotonic(), v, self.head_flat)
         ts = getattr(event, "ts", None)
         with self.lock:
@@ -178,37 +236,37 @@ class QuestServer:
                     if n == 0:
                         print(f"[quest] {s} hand payload not decoded (lost hand?): type={key[1]} len={key[2]} "
                               f"sample={repr(raw)[:80]}", flush=True)
-            if ts is not None:
-                try:
-                    self.skew.append((time.time() - ts.timestamp()) * 1e3)
-                except Exception:  # noqa: BLE001
-                    pass
+            t_client = client_time_s(ts)
+            if t_client is not None:
+                self.skew.append((time.time() - t_client) * 1e3)
             self.latest_msg = msg
         msg["t_publish"] = time.monotonic()
         self.pub.send(msgpack.packb(msg, use_bin_type=True))
         if self.record:
             self.record.write(json.dumps({"t_wall": time.time(), **msg}) + "\n")
 
-    async def on_cam_move(self, event, session):
-        try:
-            m = event.value["camera"]["matrix"]
-        except Exception:  # noqa: BLE001
-            return
-        H = pose_from_flat16(m)
-        if H is None:
-            return
-        with self.lock:
-            self.head_flat = list(m)
-            self.xr["head"] = H
-            self.rate["head"].tick(time.monotonic())
-
     async def main(self, session):
-        import asyncio
-        from vuer.schemas import Hands
+        self.active_ws = session.CURRENT_WS_ID
         self.connected += 1
         print(f"[quest] headset connected (sessions so far: {self.connected})", flush=True)
-        session.upsert(Hands(stream=True, key="hands", fps=self.a.hand_fps, hideLeft=not self.a.show_hands,
-                             hideRight=not self.a.show_hands), to="bgChildren")
+        self.publish_xr(self.assembler.connect(time.time()))
+        try:
+            await self.serve(session)
+        finally:
+            if self.active_ws == session.CURRENT_WS_ID:
+                self.active_ws = None
+                self.publish_xr(self.assembler.disconnect(time.time()))
+                print("[quest] headset disconnected", flush=True)
+
+    async def serve(self, session):
+        import asyncio
+        from vuer.schemas import Hands, Head, MotionControllers
+        fps = self.a.input_fps
+        session.upsert([Head(stream=True, key="head", fps=fps),
+                        Hands(stream=True, key="hands", fps=fps, hideLeft=not self.a.show_hands,
+                              hideRight=not self.a.show_hands),
+                        MotionControllers(stream=True, key="controllers", fps=fps, left=True, right=True)],
+                       to="bgChildren")
         if self.camera is None:
             while True:
                 await asyncio.sleep(1.0)
@@ -295,7 +353,11 @@ class QuestServer:
                 "head_hz": self.rate["head"].hz(now),
                 "frames": self.frame_id,
                 "sessions": self.connected,
-                "hand_fps_requested": self.a.hand_fps,
+                "input_fps_requested": self.a.input_fps,
+                "xr_frame": {"frames": self.xr_frames, "session": self.assembler.frame.session,
+                             "epoch": self.assembler.frame.epoch, "connected": self.assembler.frame.connected,
+                             "sample_hz": {k: self.xr_rate[k].hz(now) for k in XR_SOURCES},
+                             "valid": {k: xr_source(self.assembler.frame, k).stamp.valid for k in XR_SOURCES}},
                 "undecoded": {f"{s}:{t}:{n}": c for (s, t, n), c in self.undecoded.items()},
                 "view": self.view if self.camera else "none",
                 "view_hz": self.view_rate.hz(now),
@@ -368,6 +430,11 @@ class QuestServer:
     def status_loop(self):
         while not self.stop.wait(5.0):
             h = self.health()
+            x = h["xr_frame"]
+            hz = {k: f"{v:5.1f}" + ("" if x["valid"][k] else "-") for k, v in x["sample_hz"].items()}
+            print(f"[quest] xr_frame samples/s: head {hz['head']}  hand L {hz['hands.left']} R {hz['hands.right']}"
+                  f"  ctrl L {hz['controllers.left']} R {hz['controllers.right']}  frames {x['frames']}"
+                  f"  session {x['session']} epoch {x['epoch']}", flush=True)
             print(f"[quest] events {h['fps']:5.1f} Hz  hands L {h['hand_hz']['left']:5.1f} R {h['hand_hz']['right']:5.1f}"
                   f"  head {h['head_hz']:5.1f}  frames {h['frames']}"
                   + (f"  jitter p50/p99 {h['event_age_jitter_ms']['p50_minus_min']:.0f}/"
@@ -397,9 +464,11 @@ def main():
     ap.add_argument("--port", type=int, default=8012, help="Vuer HTTPS/WSS port the Quest opens")
     ap.add_argument("--zmq", default="tcp://127.0.0.1:5594", help="perception-format PUB address")
     ap.add_argument("--http-host", default="127.0.0.1")
-    ap.add_argument("--http-port", type=int, default=8771, help="/overlay.mjpg, /health, /latest.json")
-    ap.add_argument("--hand-fps", type=float, default=90.0,
-                    help="HAND_MOVE send rate requested from the Vuer client (its default is 30)")
+    ap.add_argument("--http-port", type=int, default=8771, help="/overlay.mjpg, /health, /latest.json, /view")
+    ap.add_argument("--xr-zmq", default="tcp://127.0.0.1:5596", help="xr_frame PUB address")
+    ap.add_argument("--input-fps", type=float, default=90.0,
+                    help="send rate requested for head, hand and controller events (Vuer's default is 30); the "
+                         "sample rate is capped by the headset's XR frame rate")
     ap.add_argument("--show-hands", action="store_true", help="render the tracked hands in the headset")
     ap.add_argument("--cert", default=str(DATA / "quest-cert" / "cert.pem"))
     ap.add_argument("--key", default=str(DATA / "quest-cert" / "key.pem"))
@@ -420,8 +489,9 @@ def main():
 
     srv = QuestServer(a)
     app = make_vuer_app(a.port, a.cert, a.key, DATA / "quest-static")
+    app.add_handler("HEAD_MOVE")(srv.on_head_move)
     app.add_handler("HAND_MOVE")(srv.on_hand_move)
-    app.add_handler("CAMERA_MOVE")(srv.on_cam_move)
+    app.add_handler("CONTROLLER_MOVE")(srv.on_controller_move)
     app.spawn(start=False)(srv.main)
     srv.http()
     threading.Thread(target=srv.overlay_loop, daemon=True).start()
@@ -429,7 +499,8 @@ def main():
 
     for ip in lan_ips():
         print(f"[quest] Quest browser:  https://{ip}/  (or https://{ip}:{a.port}/?ws=wss://{ip}:{a.port})", flush=True)
-    print(f"[quest] ZMQ {a.zmq}   HTTP http://{a.http_host}:{a.http_port}/   hand fps requested {a.hand_fps:g}"
+    print(f"[quest] xr_frame {a.xr_zmq}   perception {a.zmq}   HTTP http://{a.http_host}:{a.http_port}/"
+          f"   input fps requested {a.input_fps:g}"
           + (f"   camera {a.camera} view {a.view}" if a.camera else "   no camera"), flush=True)
 
     def _term(*_):
@@ -445,7 +516,7 @@ def main():
     signal.signal(signal.SIGTERM, _term)
     signal.signal(signal.SIGINT, _term)
     try:
-        app.run()
+        app.start()
     except KeyboardInterrupt:
         pass
     finally:

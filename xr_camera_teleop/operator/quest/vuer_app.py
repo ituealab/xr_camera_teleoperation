@@ -1,45 +1,28 @@
 """The one place a Vuer app for the Quest is built, shared by the Quest server and the input probe.
 
-- Vuer serves `static_root` at /static to the whole network: it gets an empty directory, never the repo (the TLS
-  key lives under data/).
-- The headset page must survive server restarts without anyone touching the headset: GET / without a `reconnect`
-  query is redirected to /?reconnect=N&interval=MS, which the Vuer client reads as its websocket retry policy
-  (its default is 3 attempts, then it gives up). The operator only ever opens https://<host>/.
+Runs in data/quest-env (vuer==0.1.6, envs/quest-env.freeze.txt). Vuer serves its client build at / and the
+`workspace` directory at /workspace to the whole network: it gets an empty directory, never the repo (the TLS key
+lives under data/).
+
+Reconnects: the 0.1.6 client retries a dropped websocket 5 times (after 1, 2, 4, 8, 16 s) and then gives up; the
+`?reconnect=` query that 0.0.60 honoured is gone. A server that is down for more than ~30 s needs the headset page
+reopened (deploy/quest_adb.sh open) and Enter VR pressed again.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import urlencode
 
-RECONNECT_ATTEMPTS = 1_000_000
-RECONNECT_INTERVAL_MS = 1000
+VUER_VERSION = "0.1.6"
 
 
-def reconnect_redirect(query: dict) -> str | None:
-    """The redirect target for a page request, or None when the retry policy is already in the query."""
-    if "reconnect" in query:
-        return None
-    q = dict(query)
-    q.update(reconnect=str(RECONNECT_ATTEMPTS), interval=str(RECONNECT_INTERVAL_MS))
-    return "/?" + urlencode(q)
+def make_vuer_app(port: int, cert: str, key: str, workspace: Path):
+    from importlib.metadata import version
 
-
-def make_vuer_app(port: int, cert: str, key: str, static_root: Path):
-    from aiohttp import web
+    found = version("vuer")
+    if found != VUER_VERSION:
+        raise RuntimeError(f"vuer {found} found, {VUER_VERSION} expected: run with data/quest-env")
     from vuer import Vuer
 
-    static_root.mkdir(parents=True, exist_ok=True)
-    app = Vuer(host="0.0.0.0", port=port, cert=cert, key=key, queries=dict(grid=False), queue_len=3,
-               static_root=str(static_root))
-
-    @web.middleware
-    async def _retry_policy(request, handler):
-        if (request.method == "GET" and request.path == "/"
-                and request.headers.get("Upgrade", "").lower() != "websocket"):
-            target = reconnect_redirect(dict(request.query))
-            if target is not None:
-                raise web.HTTPFound(target)
-        return await handler(request)
-
-    app.app.middlewares.append(_retry_policy)
-    return app
+    workspace.mkdir(parents=True, exist_ok=True)
+    return Vuer(host="0.0.0.0", port=port, cert=cert, key=key, queries=dict(grid=False), queue_len=3,
+                workspace=str(workspace))

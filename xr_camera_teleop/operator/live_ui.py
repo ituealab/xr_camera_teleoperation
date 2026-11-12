@@ -4,7 +4,7 @@
     data/xr-env/bin/python -m xr_camera_teleop.operator.live_ui     # (or `xrcam-ui`), then open http://127.0.0.1:8780/
 
 Needs the hand server (wilor-venv):  data/wilor-venv/bin/python -m xr_camera_teleop.operator.perception.server --source zed
-or, with --source quest, the Quest server (quest-venv):  data/quest-venv/bin/python -m xr_camera_teleop.operator.quest.server
+or, with --source quest, the Quest server (quest-env):  data/quest-env/bin/python -m xr_camera_teleop.operator.quest.server
 Pipeline (same as tools/render_session.py, live): ZMQ :5590 -> WiLoRTeleWrapper (ego clutch, filters)
 -> SafeG1_29_ArmIK (the same IK code the robot runs) -> Dex3 HandRetargeting -> G1Sim (kinematic MuJoCo, pelvis fixed);
 floating hands via HandMapper (shared anchor). The left panel is the server's own /overlay.mjpg.

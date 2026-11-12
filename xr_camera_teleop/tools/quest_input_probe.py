@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 """P0 input probe (docs/quest-sonic/PLAN.md): what the Quest 3S delivers through Vuer when head, hand and controller
-streams are all requested at once, optionally while a stereo view is shown.
+streams are all requested at once, optionally while a stereo view is shown. Raw Vuer events, no decoding: for the
+decoded, timestamped stream use the Quest server's xr_frame (tools/xr_frame_record.py).
 
-    data/quest-venv/bin/python -m xr_camera_teleop.tools.quest_input_probe --cert C --key K [--stereo]
+    data/quest-env/bin/python -m xr_camera_teleop.tools.quest_input_probe [--stereo]
 
 Quest browser: https://<this machine>/ (443 is redirected to :8012 on MSI), Enter VR.
 
-Every HEAD (CAMERA_MOVE), HAND_MOVE and CONTROLLER_MOVE event is appended to a JSONL log with the MSI monotonic
+Every HEAD_MOVE, HAND_MOVE and CONTROLLER_MOVE event is appended to a JSONL log with the MSI monotonic
 receive time and the browser timestamp. Once a second it prints, per stream: rate of events, rate of distinct
 samples (a repeated payload is not a new measurement), and per side whether a tracked hand and/or a controller is
 present, with thumbstick and button state. Nothing is published; this tool only observes.
@@ -22,6 +23,8 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
+
+from xr_camera_teleop.operator.quest.convert import client_time_s
 
 REPO = Path(__file__).resolve().parents[2]
 DATA = REPO / "data"
@@ -94,13 +97,8 @@ class Probe:
         self.stop = threading.Event()
 
     def _record(self, etype, event, now):
-        ts = getattr(event, "ts", None)
-        ts_ms = None
-        if ts is not None:
-            try:
-                ts_ms = ts.timestamp() * 1e3
-            except Exception:  # noqa: BLE001
-                ts_ms = ts if isinstance(ts, (int, float)) else None
+        t_client = client_time_s(getattr(event, "ts", None))
+        ts_ms = None if t_client is None else t_client * 1e3
         if ts_ms is not None:
             self.skew[etype].append(time.time() * 1e3 - ts_ms)
         value = event.value if isinstance(event.value, dict) else {}
@@ -116,7 +114,7 @@ class Probe:
         now = time.monotonic()
         with self.lock:
             v = self._record("head", event, now)
-            m = (v.get("camera") or {}).get("matrix")
+            m = v.get("matrix")
             if m:
                 self.head.tick(now, _key(m))
                 self.head_pos = m[12:15] if len(m) == 16 else None
@@ -143,12 +141,12 @@ class Probe:
                     self.ctrl_state[s] = st
 
     async def main(self, session):
-        from vuer.schemas import Hands, MotionControllers
+        from vuer.schemas import Hands, Head, MotionControllers
         self.sessions += 1
         print(f"[probe] headset connected (session {self.sessions})", flush=True)
-        session.upsert(Hands(stream=True, key="hands", fps=self.a.fps, hideLeft=False, hideRight=False),
-                       to="bgChildren")
-        session.upsert(MotionControllers(stream=True, key="controllers", fps=self.a.fps, left=True, right=True),
+        session.upsert([Head(stream=True, key="head", fps=self.a.fps),
+                        Hands(stream=True, key="hands", fps=self.a.fps, hideLeft=False, hideRight=False),
+                        MotionControllers(stream=True, key="controllers", fps=self.a.fps, left=True, right=True)],
                        to="bgChildren")
         if not self.a.stereo:
             while True:
@@ -201,7 +199,7 @@ def main():
     ap.add_argument("--port", type=int, default=8012)
     ap.add_argument("--cert", default=str(DATA / "quest-cert" / "cert.pem"))
     ap.add_argument("--key", default=str(DATA / "quest-cert" / "key.pem"))
-    ap.add_argument("--fps", type=float, default=90.0, help="send rate requested for hand and controller events")
+    ap.add_argument("--fps", type=float, default=90.0, help="send rate requested for head, hand and controller events")
     ap.add_argument("--stereo", action="store_true", help="show a synthetic 960x540 stereo view while probing")
     ap.add_argument("--stereo-hz", type=float, default=30.0)
     ap.add_argument("--log", default=str(DATA / "quest-runs" / f"input-probe-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"))
@@ -212,7 +210,7 @@ def main():
     from xr_camera_teleop.operator.quest.vuer_app import make_vuer_app
     probe = Probe(a)
     app = make_vuer_app(a.port, a.cert, a.key, DATA / "quest-static")
-    app.add_handler("CAMERA_MOVE")(probe.on_head)
+    app.add_handler("HEAD_MOVE")(probe.on_head)
     app.add_handler("HAND_MOVE")(probe.on_hand)
     app.add_handler("CONTROLLER_MOVE")(probe.on_ctrl)
     app.spawn(start=False)(probe.main)
@@ -232,7 +230,7 @@ def main():
     signal.signal(signal.SIGTERM, _term)
     signal.signal(signal.SIGINT, _term)
     try:
-        app.run()
+        app.start()
     except KeyboardInterrupt:
         pass
     finally:

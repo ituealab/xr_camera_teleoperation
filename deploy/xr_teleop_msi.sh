@@ -73,7 +73,7 @@ case "${1:-start}" in
           exit 1
         fi
         printf 'Quest sunucusu başlatılıyor (robot kamerası: %s, %s)...\n' "$QUEST_CAMERA" "$view"
-        launch quest "$REPO/data/quest-venv/bin/python" -u -m xr_camera_teleop.operator.quest.server \
+        launch quest "$REPO/data/quest-env/bin/python" -u -m xr_camera_teleop.operator.quest.server \
           --camera "$QUEST_CAMERA" --view "$view" --view-width "$QUEST_VIEW_WIDTH" 9>&-
       fi
       wait_http quest http://127.0.0.1:8771/health

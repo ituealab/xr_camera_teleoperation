@@ -21,8 +21,8 @@ keeps doing so if the XR session freezes, so only a distinct sample proves the s
 and an in-hand controller never produce bit-identical poses on consecutive frames).
 
 Frame-level fields:
-  seq          frame counter of this server run (strictly increasing)
-  t_pub        MSI wall-clock publish time
+  seq          frame counter of this server run (strictly increasing; a gap means the subscriber dropped frames)
+  t_pub        MSI wall-clock time the snapshot was assembled (= receive time of the event that triggered it)
   session      headset connections since the server started (0 = none yet); every source restarts at seq 0
   epoch        recenters detected in this session (Vuer does not forward the WebXR `reset` event; the server
                detects the re-origin from the head pose). A change of session or epoch invalidates a calibration.
@@ -49,6 +49,7 @@ from xr_camera_teleop.fullbody.frames import is_rigid
 SCHEMA = "xr_frame"
 VERSION = 1
 SIDES = ("left", "right")
+SOURCES = ("head",) + tuple(f"{kind}.{side}" for kind in ("hands", "controllers") for side in SIDES)
 N_HAND_JOINTS = 25
 BUTTONS = ("a", "b", "stick_press", "trigger_press", "squeeze_press")
 _T_RX_SLACK = 1e-3          # t may exceed t_rx only by float rounding
@@ -112,6 +113,14 @@ class XRFrame:
     head: Head = field(default_factory=Head)
     hands: dict = field(default_factory=lambda: {s: Hand() for s in SIDES})
     controllers: dict = field(default_factory=lambda: {s: Controller() for s in SIDES})
+
+
+def source(f: XRFrame, key: str):
+    """A source of a frame by its SOURCES key: "head", "hands.left", "controllers.right", ..."""
+    if key == "head":
+        return f.head
+    kind, side = key.split(".")
+    return getattr(f, kind)[side]
 
 
 # ---------------------------------------------------------------------------------------------------- encode
