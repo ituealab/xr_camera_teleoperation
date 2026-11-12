@@ -84,6 +84,55 @@ def is_rigid(T, tol=RIGID_TOL):
             and abs(np.linalg.det(R) - 1.0) < tol)
 
 
+def rpy_pose(p, rpy):
+    """4x4 from a position and roll/pitch/yaw (rad): R = Rz(yaw) Ry(pitch) Rx(roll)."""
+    r, pi, y = (float(a) for a in rpy)
+    return pose(rot_z(y) @ rot_y(pi) @ rot_x(r), p)
+
+
+def rotation_log(R):
+    """Rotation vector (axis * angle, |angle| <= pi) of a rotation matrix."""
+    R = np.asarray(R, dtype=float)[:3, :3]
+    c = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
+    angle = float(np.arccos(c))
+    w = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+    if angle < 1e-9:
+        return 0.5 * w
+    if np.pi - angle < 1e-4:
+        # near pi sin(angle) ~ 0: R = 2 k k^T - I, so k is the largest column of (R + I) / 2, signed by w
+        S = (R + np.eye(3)) / 2.0
+        i = int(np.argmax(np.diag(S)))
+        k = S[:, i] / np.sqrt(S[i, i])
+        if w @ k < 0.0:
+            k = -k
+        return angle * k
+    return angle * w / (2.0 * np.sin(angle))
+
+
+def rotation_exp(v):
+    """Rotation matrix of a rotation vector (Rodrigues)."""
+    v = np.asarray(v, dtype=float)
+    angle = float(np.linalg.norm(v))
+    if angle < 1e-12:
+        return np.eye(3)
+    k = v / angle
+    K = np.array([[0.0, -k[2], k[1]], [k[2], 0.0, -k[0]], [-k[1], k[0], 0.0]])
+    return np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * K @ K
+
+
+def rotation_angle(R0, R1):
+    """Angle (rad) of the rotation taking R0 to R1."""
+    return float(np.linalg.norm(rotation_log(np.asarray(R0)[:3, :3].T @ np.asarray(R1)[:3, :3])))
+
+
+def interpolate_pose(T0, T1, s):
+    """Pose a fraction s in [0, 1] of the way from T0 to T1: straight line for the position, shortest-arc slerp for
+    the rotation."""
+    T0, T1 = np.asarray(T0, dtype=float), np.asarray(T1, dtype=float)
+    R0 = T0[:3, :3]
+    return pose(R0 @ rotation_exp(s * rotation_log(R0.T @ T1[:3, :3])), (1.0 - s) * T0[:3, 3] + s * T1[:3, 3])
+
+
 def wrap_angle(a):
     """Angle(s) wrapped to [-pi, pi)."""
     return (np.asarray(a, dtype=float) + np.pi) % (2.0 * np.pi) - np.pi

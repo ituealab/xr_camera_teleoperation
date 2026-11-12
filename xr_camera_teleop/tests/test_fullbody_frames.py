@@ -104,3 +104,22 @@ def test_is_rigid_rejects_garbage():
     T[0, 0] = np.nan
     assert not is_rigid(T)
     assert is_rigid(xr_pose_to_floor(xr_head(yaw=1.0, pitch=0.2)))
+
+
+# ---------------------------------------------------------------------------------------------------- interpolation
+
+def test_rotation_log_exp_roundtrip_including_near_pi():
+    from xr_camera_teleop.fullbody.frames import rotation_exp, rotation_log
+    rng = np.random.default_rng(5)
+    for v in list(rng.normal(size=(20, 3))) + [np.array([np.pi - 1e-6, 0, 0]), np.array([0, 0, np.pi]),
+                                                 np.array([1e-10, 0, 0])]:
+        R = rotation_exp(v)
+        assert np.allclose(rotation_exp(rotation_log(R)), R, atol=1e-6)
+
+
+def test_interpolate_pose_endpoints_and_midpoint():
+    from xr_camera_teleop.fullbody.frames import interpolate_pose, pose, rot_z, rotation_angle
+    A, B = pose(rot_z(0.2), [0, 0, 0]), pose(rot_z(1.0), [1, 2, 3])
+    assert np.allclose(interpolate_pose(A, B, 0.0), A) and np.allclose(interpolate_pose(A, B, 1.0), B)
+    M = interpolate_pose(A, B, 0.5)
+    assert np.allclose(M[:3, 3], [0.5, 1, 1.5]) and np.isclose(rotation_angle(A, M), 0.4)

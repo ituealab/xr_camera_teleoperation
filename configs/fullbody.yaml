@@ -1,0 +1,42 @@
+# Full-body teleop node (docs/quest-sonic/PLAN.md §4, §6; docs/quest-sonic/P2_node.md).
+#   data/xr-env/bin/python -m xr_camera_teleop.fullbody.node --source script --scenario square
+# SONIC's ports are not repeated here: they are the deploy config's (single source).
+
+sonic_config: sonic_sim.yaml     # configs/<file>, its deploy.zmq_host / zmq_port (we bind PUB) / zmq_out_port (telemetry)
+
+node:
+  rate_hz: 50
+  xr_frame_addr: tcp://127.0.0.1:5596   # Quest server xr_frame PUB (operator/quest/server.py)
+  release_s: 0.5                 # on exit without STOP: STANDBY (IDLE, VR off, hands open) this long, then quit
+  status_period_s: 5.0           # console status line
+
+quest:                           # fullbody/quest_source.py
+  head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED
+
+lifecycle:                       # sonic/lifecycle.py
+  start_resend_s: 0.2
+  start_timeout_s: 30.0          # long enough for a relaunch of the binary after a stop
+  arm_s: 0.5                     # VR-less messages after control starts (planner init ~0.14 s, P1)
+  control_timeout_s: 0.3         # g1_debug (50 Hz) silent this long: SONIC is not controlling
+  present_timeout_s: 5.0         # no telemetry at all (robot_config every ~2 s): binary absent
+  stop_resend_s: 0.1
+  stop_timeout_s: 5.0
+
+supervisor:                      # fullbody/supervisor.py
+  engage_blend_s: 1.0            # upper body blends to the operator's targets on entering ACTIVE
+  pause_blend_s: 1.5             # and to neutral on entering PAUSED (PLAN §6)
+
+# Link poses in the pelvis frame (+X forward, +Y left, +Z up), R = Rz(yaw) Ry(pitch) Rx(roll).
+# torso = torso_link, left/right = left/right_wrist_yaw_link; sonic/adapter.py turns them into SONIC's VR points.
+postures:
+  idle:                          # SONIC's standing upper body with VR off: g1_debug vr_3point_* in IDLE (P2),
+    torso: {p: [-0.0224, 0.0007, 0.0547], rpy_deg: [1.3, 4.6, 0.0]}          # proxies converted back to links
+    left: {p: [0.0742, 0.1794, -0.0590], rpy_deg: [43.7, 74.8, -3.8]}
+    right: {p: [0.1177, -0.2048, -0.0659], rpy_deg: [-8.0, 73.7, 41.4]}
+  neutral:                       # FK of the upstream G1 at SONIC's default angles with shoulder pitch 0, shoulder
+    torso: {p: [-0.0040, 0.0, 0.0540], rpy_deg: [0.0, 0.0, 0.0]}             # roll +-0.2, elbow 0 (forearms
+    left: {p: [0.1998, 0.1870, 0.1007], rpy_deg: [11.46, 0.0, 0.0]}           # forward, hands clear of the hips)
+    right: {p: [0.1998, -0.1870, 0.1007], rpy_deg: [-11.46, 0.0, 0.0]}
+  hands_open:                    # Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, index1), rad
+    left: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    right: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
