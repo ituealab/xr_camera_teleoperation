@@ -35,6 +35,12 @@ cameras:
   port: 5555                   # PUB, upstream sim camera format: msgpack {timestamps, images: base64 JPEG}
   jpeg_quality: 80
 
+camera_bridge:                 # sim/camera_bridge.py: this stream -> the Quest server's stereo input (P5)
+  sim_host: 127.0.0.1          # where cameras.port is
+  bind: tcp://127.0.0.1:5605   # PUB, the stereo format of deploy/zed_stereo_stream.py (server --camera)
+  quality: 80                  # re-encoded JPEG per eye (the sim's own JPEG stores RGB as BGR, P1)
+  burn_clock: true             # sim time + state wall time (ms) in the top-left corner of both eyes
+
 stats:
   endpoint: tcp://127.0.0.1:5598   # sim processes connect PUB here; tools/sim_perf.py binds SUB
   period_s: 1.0
