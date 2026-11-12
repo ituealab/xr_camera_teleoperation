@@ -29,7 +29,9 @@ Frame-level fields:
   connected    a headset websocket is open. The last frame of a session has connected=False.
   clock_offset estimated MSI wall clock minus Quest clock plus the minimum one-way delay (s), diagnostic.
 
-Controllers: `T` is the WebXR target-ray pose (+X along the ray in F). `stick` = [x, y], x right-positive,
+Controllers: physical controllers only (a tracked hand's own pointer input source is not one; the server drops it,
+operator/quest/assembler.py), so on each side at most one of hand and controller is valid. `T` is the WebXR
+target-ray pose (+X along the ray in F). `stick` = [x, y], x right-positive,
 y forward-positive (WebXR's axes[3] is negated), each in [-1, 1]. `a`/`b` are A/B on the right controller and X/Y
 on the left one.
 Hands: `T` is the WebXR wrist joint pose; `joints` the 25 WebXR joint positions (wrist first, see
@@ -268,3 +270,15 @@ def check(f: XRFrame) -> list:
             if not (0.0 <= c.trigger <= 1.0 + 1e-6 and 0.0 <= c.squeeze <= 1.0 + 1e-6):
                 out.append(f"controllers.{s}: trigger/squeeze outside [0, 1]")
     return out
+
+
+def shifted(f: XRFrame, dt: float) -> XRFrame:
+    """The same frame with every MSI time (t_pub, each source's t and t_rx) moved by dt seconds: replaying a
+    recording "now" keeps sample ages exactly as they were when it was recorded."""
+    from dataclasses import replace
+
+    def st(s: Stamp) -> Stamp:
+        return replace(s, t=s.t + dt, t_rx=s.t_rx + dt) if s.seq > 0 else s
+    return replace(f, t_pub=f.t_pub + dt, head=replace(f.head, stamp=st(f.head.stamp)),
+                   hands={k: replace(h, stamp=st(h.stamp)) for k, h in f.hands.items()},
+                   controllers={k: replace(c, stamp=st(c.stamp)) for k, c in f.controllers.items()})

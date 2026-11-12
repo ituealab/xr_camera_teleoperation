@@ -127,6 +127,39 @@ def test_mixed_hand_and_controller():
     assert decode(encode(f)).hands["left"].pinch == pytest.approx(0.07)
 
 
+def test_a_tracked_hands_pointer_is_not_a_controller():
+    """Quest 3S + Vuer 0.1.6: a tracked hand is also an input source with a gamepad, so MotionControllers reports it
+    as a controller (pointer ray, pinch on the trigger). Measured in data/fullbody-runs/20261112-195840: every tracked
+    hand came with such a "controller" on the same side. Only physical controllers may reach the xr_frame."""
+    from xr_camera_teleop.tests.test_quest_convert import palm_down_forward, xr_hand
+    asm = XRFrameAssembler()
+    asm.connect(0.0)
+    q = Quest(asm)
+    _, flat = xr_hand("right", np.array([0.15, 1.0, -0.3]), palm_down_forward())
+    hands = {"left": PLACEHOLDER, "leftState": {}, "right": flat, "rightState": {"pinchValue": 0.05}}
+    no_hands = {"left": PLACEHOLDER, "leftState": {}, "right": PLACEHOLDER, "rightState": {}}
+
+    f = q.ctrl(1.0, right_pos=[0.2, 1.0, -0.3])             # a real controller in the right hand
+    assert f.controllers["right"].stamp.valid
+    # put down, Quest switches to hands; the pointer's controller event comes first (separate timers)
+    f = q.ctrl(2.0, right_pos=[0.25, 1.05, -0.35])
+    assert f.controllers["right"].stamp.valid                # not yet known to be a hand: at most one send period
+    f = asm.hands_event(2.001 + QUEST_AHEAD, hands, 2.005)
+    assert f.hands["right"].stamp.valid and not f.controllers["right"].stamp.valid
+    for k in range(1, 5):                                    # the pointer keeps coming while the hand is tracked
+        assert q.ctrl(2.0 + 0.011 * k, right_pos=[0.25, 1.05 + 0.001 * k, -0.35]) is None
+    assert not asm.frame.controllers["right"].stamp.valid and check(asm.frame) == []
+    # hand order first: the controller event of the same XR frame is dropped at once
+    f = asm.hands_event(3.0 + QUEST_AHEAD, no_hands, 3.004)
+    assert not f.hands["right"].stamp.valid and not f.controllers["right"].stamp.valid
+    f = q.ctrl(3.01, right_pos=[0.2, 1.0, -0.3], stick=(0.0, -1.0))     # controller picked up again
+    assert f.controllers["right"].stamp.valid and np.allclose(f.controllers["right"].stick, [0.0, 1.0])
+    # the other side is independent: a hand on the left never touches the right controller
+    _, left = xr_hand("left", np.array([-0.15, 1.0, -0.3]), palm_down_forward())
+    f = asm.hands_event(3.02 + QUEST_AHEAD, dict(no_hands, left=left), 3.024)
+    assert f.hands["left"].stamp.valid and f.controllers["right"].stamp.valid
+
+
 def test_recenter_increments_epoch():
     asm = XRFrameAssembler()
     asm.connect(0.0)

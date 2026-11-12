@@ -9,6 +9,15 @@ Clock: Vuer stamps events with the Quest's Date.now(). `ClockSync` maps them ont
 minimum of (receive time - client time) over a sliding window: offset + minimum one-way delay. Mapped times are
 never after their receive time, and the delivery bursts measured in P0 (100-160 ms) do not move them.
 
+Controllers are physical controllers. Vuer's MotionControllers takes any input source with a gamepad of >= 6
+buttons, and on the Quest a tracked hand is such an input source (its gamepad carries the pinch as the trigger; its
+pose is the hand's pointer ray, ~13 cm from the wrist): measured on a Quest 3S, every tracked hand also arrived as a
+"controller" with no stick, squeeze or face buttons. WebXR's primary input sources hold at most one source per hand,
+either a hand or a controller (the Quest has no hand-plus-controller on the same side), so a controller event for a
+side whose hand is tracked is that hand's pointer and is dropped; a hand becoming tracked ends that side's
+controller. The two events come on separate timers, so at a switch the pointer can show as a controller for at most
+one send period (~13 ms) before the hand event arrives.
+
 Recenter: the WebXR `reset` event is not forwarded by Vuer. A Quest recenter re-origins local-floor under the head
 with the head's heading as the new forward, so the head pose steps, off any continuous motion, to (x, y) ~ 0 and
 yaw ~ 0 in F (`RecenterDetector`). That increments `epoch`.
@@ -173,13 +182,16 @@ class XRFrameAssembler:
                     hands[s], changed = replace(old, stamp=replace(old.stamp, valid=False)), True
             elif not (old.stamp.valid and _same_hand(new, old)):
                 hands[s], changed = replace(new, stamp=Stamp(t, t_rx, old.stamp.seq + 1, True)), True
-        return self._emit(t_rx, hands=hands) if changed else None
+        ctrls = self._without_hand_pointers(hands, self.frame.controllers)
+        changed |= ctrls is not self.frame.controllers
+        return self._emit(t_rx, hands=hands, controllers=ctrls) if changed else None
 
     def controllers_event(self, ts, value, t_rx: float):
         t = self.clock.map(client_time_s(ts), t_rx)
         ctrls, changed = dict(self.frame.controllers), False
         for s in SIDES:
-            new, old = decode_controller(value, s), self.frame.controllers[s]
+            old = self.frame.controllers[s]
+            new = None if self.frame.hands[s].stamp.valid else decode_controller(value, s)   # the hand's pointer
             if new is None:
                 if old.stamp.valid:
                     ctrls[s], changed = replace(old, stamp=replace(old.stamp, valid=False)), True
@@ -188,6 +200,17 @@ class XRFrameAssembler:
         return self._emit(t_rx, controllers=ctrls) if changed else None
 
     # ------------------------------------------------------------------ internals
+    @staticmethod
+    def _without_hand_pointers(hands, ctrls):
+        """`ctrls` with every side whose hand is tracked marked invalid (the same object when nothing changes)."""
+        ended = [s for s in SIDES if hands[s].stamp.valid and ctrls[s].stamp.valid]
+        if not ended:
+            return ctrls
+        out = dict(ctrls)
+        for s in ended:
+            out[s] = replace(ctrls[s], stamp=replace(ctrls[s].stamp, valid=False))
+        return out
+
     def _emit(self, now: float, **changes) -> XRFrame:
         self._seq += 1
         changes.setdefault("clock_offset", self.clock.offset)
