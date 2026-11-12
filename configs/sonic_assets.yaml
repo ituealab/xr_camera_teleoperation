@@ -1,0 +1,58 @@
+# External NVIDIA SONIC assets (PLAN D10: referenced, never copied into this repo).
+# Check:  data/xr-env/bin/python -m xr_camera_teleop.sonic.assets verify
+# A moved checkout is a change to `roots` only. A new asset is pinned with `... sonic.assets hash <name>`.
+
+roots:
+  sonic_source: /home/aksoy-msi/code/groot_n17_apple_wbc/third_party/GR00T-WholeBodyControl
+  models: /home/aksoy-msi/code/humanoid-lab-main/data/models
+
+# GR00T-WholeBodyControl v1.1. Must be a clean checkout at this commit.
+source:
+  root: sonic_source
+  commit: a0732b642c0333077e127a2f56ab0014c196bca4
+  # sys.path entries of data/sonic-sim-venv (written as a .pth by deploy/setup_sonic_sim_env.sh):
+  # gear_sonic (the MuJoCo sim) and the vendored unitree_sdk2py (its DDS bridge).
+  python_paths: [".", external_dependencies/unitree_sdk2_python]
+
+files:
+  # SONIC v1.1 policy (HF nvidia/GEAR-SONIC @ 9c0ff22b, see models/sonic/MODEL_PROVENANCE.json).
+  # TensorRT engine caches (*.trt) are written next to the ONNX files by the deploy binary; they are not pinned.
+  encoder:
+    root: models
+    path: sonic/sonic_v1_1/model_encoder.onnx
+    sha256: fb97de22819b2057b41459802128d91723d91a25f0ad73e7bfc41a9cf8365bae
+  decoder:
+    root: models
+    path: sonic/sonic_v1_1/model_decoder.onnx
+    sha256: 34bae8570d4a4421a5391a5c2befd745d4a02d182ec539e5f9da44c091c67509
+  observation_config:
+    root: models
+    path: sonic/sonic_v1_1/observation_config.yaml
+    sha256: 4a67713b310932e50aca81f19188c8d76013148e98b15c8b5bbea995f12e59f0
+  # Kinematic planner. The deploy binary reads the planner version from a "V0"/"V1"/"V2" token in this path.
+  planner:
+    root: models
+    path: sonic-isaac/planner/target_vel/V2/planner_sonic.onnx
+    sha256: 39b553e197f62f077975ba38512bc04781a3fc37c2af7c6756e04629f760edea
+  # Prebuilt x86 g1_deploy_onnx_ref (TensorRT 10.9, ONNX Runtime 1.20.1), built from the pinned source commit.
+  deploy_binary:
+    root: models
+    path: sonic-deploy/g1_deploy_onnx_ref
+    sha256: d194e7fec2b3393c3a9954abf119493da2c8b9372655ab8fbec8effabb014ddf
+
+dirs:
+  deploy_libs:
+    root: models
+    path: sonic-deploy/lib
+    sha256: 3f9224c12b535aa3bd78fcdc30691a21cb560678950d48749709c4d151baf0a9
+  # Reference motion clips. The deploy binary needs a motion directory even in planner mode.
+  reference_motions:
+    root: models
+    path: sonic-isaac/reference/example
+    sha256: 72306b8c835773b81db1c4287553ebcb154ca2abae0a3510a8d7d23848a9db51
+
+deploy:
+  # DDS domain compiled into deploy_binary. Upstream uses 0; this build was patched to 42 to keep simulation
+  # traffic off the real robot's domain. The sim follows this value; the binary is not changed.
+  dds_domain: 42
+  planner_version: V2
