@@ -20,6 +20,7 @@
 // per stdin line and gets one reply line on stdout starting with "@@ ". Commands:
 //   {"id": n, "set": {...}}   deep-merge into the operator state (below), applied every frame from then on
 //   {"id": n, "recenter": 1}  Quest recenter          {"id": n, "bitmaps": 1}  image decode log (and clear it)
+//   {"id": n, "probe": 1}     XR sessions, XR frames rendered, puppet steps applied, head position
 //   {"id": n, "quit": 1}
 // State (WebXR world, metres, quaternions [x, y, z, w]):
 //   head {pos, quat}, mode "controller" | "hand",
@@ -57,6 +58,7 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1280, height: 720 } });
 page.on('pageerror', (e) => console.log('[emulator] page error:', e.message));
+page.on('console', (m) => { if (m.type() === 'error') console.log('[emulator] console error:', m.text().slice(0, 300)); });
 await page.addInitScript(() => {
   // every decoded image: (call time, decoded time) on the wall clock, ms, and the blob size
   window.__bitmaps = [];
@@ -98,7 +100,28 @@ const ok = await page.evaluate(async () => {
   return true;
 });
 if (ok !== true) { console.log('[emulator]', ok); await browser.close(); process.exit(1); }
-await page.getByRole('button', { name: /virtual reality/i }).first().click();
+// Enter VR, and make sure the immersive session really renders: under load (SONIC loading TensorRT on the same GPU)
+// a click can come before the page is ready and start nothing. Frames are counted on the session's own rAF.
+await page.evaluate(() => {
+  window.__xrFrames = 0;
+  const request = navigator.xr.requestSession;
+  navigator.xr.requestSession = async (...a) => {
+    const session = await request(...a);
+    const tick = () => { window.__xrFrames += 1; session.requestAnimationFrame(tick); };
+    session.requestAnimationFrame(tick);
+    return session;
+  };
+});
+let rendering = false;
+for (let attempt = 1; attempt <= 4 && !rendering; attempt += 1) {
+  await page.getByRole('button', { name: /virtual reality/i }).first().click();
+  for (let k = 0; k < 40 && !rendering; k += 1) {
+    await page.waitForTimeout(250);
+    rendering = await page.evaluate(() => window.__xrFrames > 10);
+  }
+  if (!rendering) console.log(`[emulator] Enter VR attempt ${attempt}: no XR frames yet`);
+}
+if (!rendering) { console.log('[emulator] the immersive session does not render'); await browser.close(); process.exit(1); }
 if (puppet) {
   await runPuppet();
   await browser.close();
@@ -197,6 +220,7 @@ async function runPuppet() {
         put(h, hs, k++);
         if (last.pinch[side] !== hs.pinch) { h.updatePinchValue(hs.pinch); last.pinch[side] = hs.pinch; }
       }
+      window.__steps = (window.__steps || 0) + 1;
       setTimeout(step, 5);
     };
     step();
@@ -213,7 +237,10 @@ async function runPuppet() {
     if (cmd.recenter) await page.evaluate(() => window.__dev.recenter());
     if (cmd.bitmaps) reply.bitmaps = await page.evaluate(() => window.__bitmaps.splice(0));
     if (cmd.quit) { console.log('@@ ' + JSON.stringify(reply)); break; }
-    if (cmd.xr) reply.xr = await page.evaluate(() => window.__xr);
+    if (cmd.probe) {
+      reply.probe = await page.evaluate(() => ({ xr: window.__xr, xrFrames: window.__xrFrames, puppetSteps: window.__steps,
+        head: [window.__dev.position.x, window.__dev.position.y, window.__dev.position.z], loads: performance.getEntriesByType('navigation').length }));
+    }
     console.log('@@ ' + JSON.stringify(reply));
   }
 }

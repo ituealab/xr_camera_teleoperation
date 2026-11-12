@@ -28,7 +28,8 @@ loop, publishes its requests and upserts the pictures: the panel as a world-lock
 head-locked `ImageBackground` while the panel is closed, each pointer's ray as a `Line`.
 
 Vuer streams head (Head, getViewerPose), hands (Hands) and controllers (MotionControllers) together; each is
-sampled every XR frame and sent at --input-fps. Only the most recent headset connection is used.
+sampled every XR frame and sent at --input-fps. The connection whose immersive session renders (distinct head
+samples) drives the streams, not merely the most recent one (operator/quest/connections.py).
 """
 from __future__ import annotations
 
@@ -53,6 +54,7 @@ from xr_camera_teleop.fullbody.xr_frame import encode as encode_xr_frame
 from xr_camera_teleop.fullbody.xr_frame import source as xr_source
 from xr_camera_teleop.operator.quest import ui
 from xr_camera_teleop.operator.quest.assembler import XRFrameAssembler
+from xr_camera_teleop.operator.quest.connections import HeadsetArbiter
 from xr_camera_teleop.operator.quest.convert import (WEBXR_BONES, build_message, client_time_s, joint_matrices,
                                                      pose_from_flat16, project_head_view)
 
@@ -212,7 +214,7 @@ class QuestServer:
         self.xr_pub.setsockopt(zmq.LINGER, 0)
         self.xr_pub.bind(a.xr_zmq)
         self.assembler = XRFrameAssembler()
-        self.active_ws = None                # only the most recent headset connection feeds the streams
+        self.arbiter = HeadsetArbiter()      # the connection whose immersive session renders feeds the streams
         self.xr_frames = 0
         self.xr_rate = {k: RateWin() for k in XR_SOURCES}     # distinct samples per source
         self.xr_seq = {k: 0 for k in XR_SOURCES}
@@ -238,13 +240,15 @@ class QuestServer:
         self.ui_pub.bind(a.ui_zmq)
         self.outbox = ActionOutbox(self.server_id)
         self.node = NodeStatusFeed(a.node_status)
+        # One panel for the server's life: a reconnect (Wi-Fi drop, a second socket from the page) keeps the same
+        # immersive session and reference space, so an open panel stays where it is and keeps its pause.
         self.panel = ui.Panel()
         self.ui_state = {}                   # panel.describe() of the last step (GET /state)
         self.actions_log = deque(maxlen=50)
 
     # ------------------------------------------------------------------ vuer handlers
     def _active(self, session):
-        return session.CURRENT_WS_ID == self.active_ws
+        return session.CURRENT_WS_ID == self.arbiter.active
 
     def publish_xr(self, frame):
         """Called on the event loop only (the ZMQ socket is not thread-safe)."""
@@ -261,9 +265,12 @@ class QuestServer:
                 self.xr_seq[k] = seq
 
     async def on_head_move(self, event, session):
+        v = event.value if isinstance(event.value, dict) else {}
+        if self.arbiter.head(session.CURRENT_WS_ID, v.get("matrix"), time.time()):
+            self.publish_xr(self.assembler.connect(time.time()))           # a new xr_frame session starts
+            print(f"[quest] headset drives (connection {str(session.CURRENT_WS_ID)[:8]} renders in VR)", flush=True)
         if not self._active(session):
             return
-        v = event.value if isinstance(event.value, dict) else {}
         self.publish_xr(self.assembler.head_event(event.ts, v, time.time()))
         H = pose_from_flat16(v.get("matrix"))
         if H is None or not np.any(H[:3, :3]):
@@ -313,16 +320,14 @@ class QuestServer:
             self.record.write(json.dumps({"t_wall": time.time(), **msg}) + "\n")
 
     async def main(self, session):
-        self.active_ws = session.CURRENT_WS_ID
+        self.arbiter.connected(session.CURRENT_WS_ID)
         self.connected += 1
-        self.panel = ui.Panel()              # the panel belongs to a headset session: a new one starts closed
-        print(f"[quest] headset connected (sessions so far: {self.connected})", flush=True)
-        self.publish_xr(self.assembler.connect(time.time()))
+        print(f"[quest] headset connected (sessions so far: {self.connected}); it drives once it renders in VR",
+              flush=True)
         try:
             await self.serve(session)
         finally:
-            if self.active_ws == session.CURRENT_WS_ID:
-                self.active_ws = None
+            if self.arbiter.closed(session.CURRENT_WS_ID):
                 self.publish_xr(self.assembler.disconnect(time.time()))
                 print("[quest] headset disconnected", flush=True)
 
@@ -395,7 +400,8 @@ class QuestServer:
 
         loop = asyncio.get_running_loop()
         panel_pic, strip_pic, rays_sent = None, None, {}
-        t_panel = t_strip = t_rays = 0.0
+        t_panel = t_strip = t_rays = t_rates = 0.0
+        rates = {}
         shown = {"panel": False, "strip": False}
         period = 1.0 / UI_HZ
         while True:
@@ -405,7 +411,9 @@ class QuestServer:
                 continue
             panel = self.panel
             status, status_rx = self.node.latest()
-            out = panel.step(now, self.assembler.frame, status, status_rx, self.view, self.rates())
+            if now - t_rates >= 0.5:                 # the Sistem page's numbers; no need for 60 Hz
+                rates, t_rates = self.rates(), now
+            out = panel.step(now, self.assembler.frame, status, status_rx, self.view, rates)
             for r in out.requests:
                 a = self.outbox.add(r.kind, now, r.key, r.value)
                 self.actions_log.append({"seq": a.seq, "kind": a.kind.value, "key": a.key, "value": a.value, "t": a.t})

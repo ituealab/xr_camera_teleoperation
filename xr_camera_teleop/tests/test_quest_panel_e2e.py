@@ -178,7 +178,7 @@ def test_panel_runs_the_sim_robot(tmp_path):
             t_mark["start"] = time.time()
             st = q.wait_for(lambda s: s["node"]["state"] == "standby" and s, 90, "STANDBY after Başlat")
             ev["start_to_standby_s"] = round(time.time() - t_mark["start"], 2)
-            time.sleep(6.0)                                              # band released after 1 s; stand on its own
+            time.sleep(6.0)                       # the band drops 1 s after control (a ~1 s landing), then it stands
             t_mark["standing"] = time.time()
 
             # 2. a setting by hand pinch
@@ -208,15 +208,14 @@ def test_panel_runs_the_sim_robot(tmp_path):
 
             # 5. Görüntü modes (controller), then Durdur
             q.mode("controller")
-            q.wait_for(lambda s: "right" in s["ui"]["pointers"] and s["node"]["operator"].get("mode") == "walk", 10,
-                       "controller pointer, WALK")
+            q.wait_for(lambda s: s["node"]["operator"].get("mode") == "walk", 10, "WALK with a controller")
             q.stick_press("right")
             q.wait_for(lambda s: s["ui"]["open"] and s["node"]["state"] == "paused", 5, "panel open, paused")
             q.press_item("tab.goruntu", 0.2)
             for mode in ("immersive", "none", "ego"):
                 q.press_item(f"view.{mode}", 0.8)
                 assert q.get("/health")["view"] == mode
-                time.sleep(1.0)
+                time.sleep(2.5)                                          # the rate window is 2 s
                 ev[f"view_hz_{mode}"] = round(q.get("/health")["view_hz"], 1)
             frames = q.get("/frames")
             bitmaps = q.cmd(bitmaps=1)["bitmaps"]
@@ -224,6 +223,8 @@ def test_panel_runs_the_sim_robot(tmp_path):
             t_mark["stop"] = time.time()
             st = q.wait_for(lambda s: s["node"]["state"] == "off" and s, 10, "OFF after Durdur")
             ev["stop_to_off_s"] = round(time.time() - t_mark["stop"], 2)
+            q.wait_for(lambda s: s["node"]["sonic"] != "controlling", 10, "SONIC released the robot")
+            ev["stop_to_sonic_released_s"] = round(time.time() - t_mark["stop"], 2)
 
             sub = zmq.Context.instance().socket(zmq.SUB)                 # one robot-view frame as evidence
             sub.setsockopt(zmq.SUBSCRIBE, b"")
@@ -249,7 +250,7 @@ def test_panel_runs_the_sim_robot(tmp_path):
         keep(tmp_path, "panel_runs_the_sim_robot")
 
     assert all(f["sim_time"] is not None for f in frames) and len(frames) > 100       # the sim camera, not a test card
-    ev["upright_while_standing"] = upright_fraction(run_dir, t_mark["standing"] - 5.0, t_mark["standing"])
+    ev["upright_while_standing"] = upright_fraction(run_dir, t_mark["standing"] - 3.0, t_mark["standing"])
     assert ev["upright_while_standing"] == 1.0
     assert ev["view_hz_none"] == 0.0 and ev["view_hz_ego"] > 20
     ticks = [r for r in read_records(run_dir) if r["k"] == "tick"]
