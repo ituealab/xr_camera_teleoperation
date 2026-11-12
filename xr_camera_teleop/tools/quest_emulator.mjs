@@ -61,29 +61,38 @@ console.log(`[emulator] in emulated VR at ${url}, playing ${seconds} s`);
 
 await page.evaluate((seconds) => new Promise((resolve) => {
   const dev = window.__dev, t0 = performance.now();
-  const S = { recentered: false, mode: 'controller', aHeld: false, left: true };
+  const S = { mode: 'controller', aHeld: false, left: true };
+  // After the recenter the script keeps playing the same room motion, seen from the new origin: a Quest recenter
+  // moves local-floor's origin under the head and turns it to the head's heading (rc).
+  let rc = null;
   const quatYaw = (a) => [0, Math.sin(a / 2), 0, Math.cos(a / 2)];
+  const place = (obj, x, y, z, yaw = 0) => {
+    if (rc) {
+      const dx = x - rc.x, dz = z - rc.z, c = Math.cos(-rc.yaw), s = Math.sin(-rc.yaw);
+      [x, z, yaw] = [c * dx + s * dz, -s * dx + c * dz, yaw - rc.yaw];   // rotation about +Y by -rc.yaw
+    }
+    obj.position.set(x, y, z);
+    obj.quaternion.set(...quatYaw(yaw));
+  };
   const step = () => {
     const t = (performance.now() - t0) / 1000;
     if (t > seconds) { resolve(); return; }
     const yaw = (30 * Math.PI / 180) * Math.sin(2 * Math.PI * 0.1 * t);
-    const y = 1.65 - (t >= 20 && t < 23 ? 0.2 : 0);
-    dev.position.set(0.03 * Math.sin(2 * Math.PI * 0.3 * t), y, 0.02 * Math.cos(2 * Math.PI * 0.2 * t));
-    dev.quaternion.set(...quatYaw(yaw));
-    if (t >= 28 && !S.recentered) { dev.recenter(); S.recentered = true; }
+    const hx = 0.03 * Math.sin(2 * Math.PI * 0.3 * t), hz = 0.02 * Math.cos(2 * Math.PI * 0.2 * t);
+    if (t >= 28 && !rc) { rc = { x: hx, z: hz, yaw }; dev.recenter(); }
+    place(dev, hx, 1.65 - (t >= 20 && t < 23 ? 0.2 : 0), hz, yaw);
     const mode = t >= 15 && t < 25 ? 'hand' : 'controller';
     if (mode !== S.mode) { dev.primaryInputMode = mode; S.mode = mode; }
     const r = dev.controllers.right;
-    r.position.set(0.2 + 0.02 * Math.sin(2 * Math.PI * 0.5 * t), 1.1, -0.35);
+    place(r, 0.2 + 0.02 * Math.sin(2 * Math.PI * 0.5 * t), 1.1, -0.35);
     r.updateAxes('thumbstick', 0, t >= 5 && t < 8 ? -1 : 0);
     const a = t >= 10 && t < 11;
     if (a !== S.aHeld) { r.updateButtonValue('a-button', a ? 1 : 0); S.aHeld = a; }
     for (const [side, h] of Object.entries(dev.hands)) {
-      h.position.set((side === 'left' ? -0.2 : 0.2) + 0.03 * Math.sin(2 * Math.PI * 0.5 * t), 1.1, -0.3);
+      place(h, (side === 'left' ? -0.2 : 0.2) + 0.03 * Math.sin(2 * Math.PI * 0.5 * t), 1.1, -0.3);
     }
-    const l = dev.controllers.left;
-    l.position.set(-0.2, 1.1 + 0.02 * Math.sin(2 * Math.PI * 0.4 * t), -0.35);
-    if (t >= 32 && S.left) { l.connected = false; S.left = false; }
+    place(dev.controllers.left, -0.2, 1.1 + 0.02 * Math.sin(2 * Math.PI * 0.4 * t), -0.35);
+    if (t >= 32 && S.left) { dev.controllers.left.connected = false; S.left = false; }
     setTimeout(step, 5);
   };
   step();

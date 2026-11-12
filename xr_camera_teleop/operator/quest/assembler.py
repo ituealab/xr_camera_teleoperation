@@ -10,8 +10,8 @@ minimum of (receive time - client time) over a sliding window: offset + minimum 
 never after their receive time, and the delivery bursts measured in P0 (100-160 ms) do not move them.
 
 Recenter: the WebXR `reset` event is not forwarded by Vuer. A Quest recenter re-origins local-floor under the head
-with the head's heading as the new forward, so the head pose jumps, faster than a head can move, to (x, y) ~ 0 and
-yaw ~ 0 in F. Both conditions together increment `epoch`.
+with the head's heading as the new forward, so the head pose steps, off any continuous motion, to (x, y) ~ 0 and
+yaw ~ 0 in F (`RecenterDetector`). That increments `epoch`.
 """
 from __future__ import annotations
 
@@ -55,24 +55,65 @@ class ClockSync:
 
 @dataclass(frozen=True)
 class RecenterParams:
-    max_speed: float = 3.0                       # m/s a head cannot exceed horizontally
-    max_yaw_rate: float = math.radians(1000.0)   # rad/s a head cannot exceed
-    min_jump: float = 0.15                       # m, smaller horizontal jumps never count
-    min_yaw_jump: float = math.radians(25.0)
-    max_gap: float = 0.1                         # s, the speed limits are applied over at most this long
+    min_yaw_jump: float = math.radians(10.0)     # rad, heading off its constant-rate prediction by more than this
+    max_yaw_accel: float = math.radians(1500.0)  # rad/s^2, plus what a head's acceleration explains over the gap
+    min_jump: float = 0.08                       # m, or horizontal position off its prediction by more than this
+    max_accel: float = 5.0                       # m/s^2
+    rate_baseline: float = 0.05                  # s, rates are taken over at least this long (sample times jitter
+                                                 #   by a send period, ~11 ms, so two neighbours give no rate)
+    max_gap: float = 0.2                         # s, = the supervisor's head staleness limit (PLAN §6)
     origin_radius: float = 0.15                  # m, the new head position must be this close to the origin
     origin_yaw: float = math.radians(10.0)       # rad, and the new heading this close to forward
 
 
-def is_recenter(T_prev, t_prev, T, t, p: RecenterParams = RecenterParams()) -> bool:
-    """True when the head moved from T_prev to T (both T_F_head) the way a Quest recenter moves it."""
-    dt = min(max(t - t_prev, 1e-3), p.max_gap)
-    jump_xy = float(np.linalg.norm(T[:2, 3] - T_prev[:2, 3]))
-    yaw = yaw_of(T)
-    jump_yaw = abs(float(wrap_angle(yaw - yaw_of(T_prev))))
-    jumped = jump_xy > max(p.min_jump, p.max_speed * dt) or jump_yaw > max(p.min_yaw_jump, p.max_yaw_rate * dt)
-    at_origin = float(np.linalg.norm(T[:2, 3])) < p.origin_radius and abs(yaw) < p.origin_yaw
-    return jumped and at_origin
+class RecenterDetector:
+    """Flags the head sample at which a Quest recenter happened.
+
+    A head moves with continuous velocity, so each new sample is close to the constant-rate extrapolation of the
+    recent ones, within what its acceleration explains (a 2 Hz +-30 deg head shake misses it by a few degrees). A
+    recenter is a step: the new sample misses the prediction by the whole re-origin and lands at (x, y) ~ 0,
+    yaw ~ 0. Both are required.
+
+    Across a head gap longer than max_gap nothing can be told apart (the head may have done anything meanwhile), so
+    nothing is flagged; the supervisor pauses on such a gap anyway (PLAN §6) and should not resume without a new
+    calibration if the head came back somewhere else."""
+
+    def __init__(self, params: RecenterParams = RecenterParams()):
+        self.p = params
+        self._hist = deque()                          # (t, yaw, xy) of recent samples, oldest first
+
+    def reset(self):
+        self._hist.clear()
+
+    def _rate(self):
+        """(yaw rate, xy velocity) over the most recent span of at least rate_baseline, or zeros."""
+        t1, yaw1, xy1 = self._hist[-1]
+        for t0, yaw0, xy0 in reversed(self._hist):
+            if t1 - t0 >= self.p.rate_baseline:
+                if t1 - t0 > self.p.max_gap:
+                    break
+                return float(wrap_angle(yaw1 - yaw0)) / (t1 - t0), (xy1 - xy0) / (t1 - t0)
+        return 0.0, np.zeros(2)
+
+    def update(self, T, t: float) -> bool:
+        yaw, xy = yaw_of(T), np.asarray(T[:2, 3], dtype=float)
+        hit = False
+        if self._hist and 0.0 < t - self._hist[-1][0] <= self.p.max_gap:
+            t1, yaw1, xy1 = self._hist[-1]
+            dt = t - t1
+            w, v = self._rate()
+            yaw_miss = abs(float(wrap_angle(yaw - (yaw1 + w * dt))))
+            xy_miss = float(np.linalg.norm(xy - (xy1 + v * dt)))
+            jumped = (yaw_miss > self.p.min_yaw_jump + 0.5 * self.p.max_yaw_accel * dt * dt
+                      or xy_miss > self.p.min_jump + 0.5 * self.p.max_accel * dt * dt)
+            at_origin = float(np.linalg.norm(xy)) < self.p.origin_radius and abs(yaw) < self.p.origin_yaw
+            hit = jumped and at_origin
+        if hit:
+            self._hist.clear()
+        self._hist.append((t, yaw, xy))
+        while self._hist[0][0] < t - 2 * self.p.max_gap:
+            self._hist.popleft()
+        return hit
 
 
 def _same(a, b) -> bool:
@@ -95,7 +136,7 @@ class XRFrameAssembler:
 
     def __init__(self, clock_window_s: float = 30.0, recenter: RecenterParams = RecenterParams()):
         self.clock = ClockSync(clock_window_s)
-        self.recenter = recenter
+        self.recenter = RecenterDetector(recenter)
         self.frame = XRFrame()
         self._seq = 0
 
@@ -103,6 +144,7 @@ class XRFrameAssembler:
     def connect(self, now: float) -> XRFrame:
         """A headset websocket opened: new session, every source starts over."""
         self.clock.reset()
+        self.recenter.reset()
         return self._emit(now, session=self.frame.session + 1, epoch=0, connected=True, clock_offset=0.0,
                           head=Head(), hands={s: Hand() for s in SIDES},
                           controllers={s: Controller() for s in SIDES})
@@ -117,9 +159,7 @@ class XRFrameAssembler:
         old = self.frame.head
         if T is None or _same(T, old.T):
             return None                     # nothing tracked yet, or a resend of the last sample
-        epoch = self.frame.epoch
-        if old.T is not None and is_recenter(old.T, old.stamp.t, T, t, self.recenter):
-            epoch += 1
+        epoch = self.frame.epoch + self.recenter.update(T, t)
         head = Head(Stamp(t, t_rx, old.stamp.seq + 1, True), T)
         return self._emit(t_rx, head=head, epoch=epoch)
 

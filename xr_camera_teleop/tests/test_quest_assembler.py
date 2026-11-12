@@ -6,9 +6,9 @@ import msgpack
 import numpy as np
 import pytest
 
-from xr_camera_teleop.fullbody.frames import pose, rot_y, yaw_of
+from xr_camera_teleop.fullbody.frames import pose, rot_y, rot_z, yaw_of
 from xr_camera_teleop.fullbody.xr_frame import check, decode, encode
-from xr_camera_teleop.operator.quest.assembler import ClockSync, RecenterParams, XRFrameAssembler, is_recenter
+from xr_camera_teleop.operator.quest.assembler import ClockSync, RecenterDetector, XRFrameAssembler
 
 PLACEHOLDER = msgpack.ExtType(0, b"\x00")
 STATE = {"trigger": False, "squeeze": False, "touchpad": False, "thumbstick": False, "aButton": False,
@@ -142,14 +142,48 @@ def test_recenter_increments_epoch():
     assert f.epoch == 1
 
 
-def test_fast_head_motion_is_not_a_recenter():
-    p = RecenterParams()
-    T0 = pose(None, [0.3, 0.0, 1.6])
-    T1 = pose(None, [0.0, 0.0, 1.6])
-    assert not is_recenter(T0, 0.0, T1, 0.2, p)          # 0.3 m in 0.2 s: a quick step, not a jump
-    assert is_recenter(T0, 0.0, T1, 0.011, p)            # 0.3 m in 11 ms: no head does that
-    far = pose(None, [1.0, 0.5, 1.6])
-    assert not is_recenter(T0, 0.0, far, 0.011, p)       # a tracking glitch that does not land on the origin
+def head_T(yaw_deg, x=0.0, y=0.0):
+    return pose(rot_z(math.radians(yaw_deg)), [x, y, 1.6])
+
+
+def test_head_shake_through_forward_is_not_a_recenter():
+    """A fast 2 Hz +-30 deg head shake while standing on the origin: crosses yaw 0 at 377 deg/s every 0.25 s."""
+    d = RecenterDetector()
+    hits = [d.update(head_T(30 * math.sin(2 * math.pi * 2 * t)), t) for t in np.arange(0, 3, 1 / 40)]
+    assert not any(hits)
+
+
+def test_recenter_after_a_small_turn_is_detected():
+    """Turned only 15 deg (below any fixed jump threshold a head turn could also cross) and recentered."""
+    d = RecenterDetector()
+    for k in range(5):
+        assert not d.update(head_T(15.0 + 0.1 * k, x=0.02), 0.025 * k)
+    assert d.update(head_T(0.0), 0.125)
+    assert not d.update(head_T(0.1), 0.15)              # and it continues from there
+
+
+def test_send_time_jitter_does_not_fake_a_rate():
+    """Two samples 5 ms apart in send time (frames are ~14 ms apart; the send timer jitters), then a 66 ms gap:
+    a rate taken from the neighbours would predict -9 deg and flag the next, ordinary sample (seen in the e2e run)."""
+    d = RecenterDetector()
+    for t, yaw in ((14.404, 3.53), (14.421, 3.43), (14.465, 3.07), (14.470, 2.25), (14.536, 2.15), (14.574, 0.9)):
+        assert not d.update(head_T(yaw, -0.02, -0.01), t)
+
+
+def test_slow_sampling_gives_no_false_recenters():
+    """Samples 0.6 s apart (a renderer that cannot keep up) of a head swaying around the origin: never a recenter."""
+    d = RecenterDetector()
+    hits = [d.update(head_T(30 * math.sin(2 * math.pi * 0.1 * t), 0.03 * math.sin(t)), t)
+            for t in np.arange(0, 60, 0.6)]
+    assert not any(hits)
+
+
+def test_jumps_that_do_not_land_on_the_origin_are_glitches():
+    d = RecenterDetector()
+    d.update(head_T(40.0, 0.5, 0.5), 0.0)
+    d.update(head_T(40.0, 0.5, 0.5), 0.02)
+    assert not d.update(head_T(-20.0, 1.0, -0.4), 0.04)
+    assert not d.update(head_T(0.0, 0.5, 0.5), 0.06)    # yaw back to forward, but nowhere near the origin
 
 
 def test_clock_sync_window():
