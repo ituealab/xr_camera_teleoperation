@@ -52,6 +52,7 @@ Two Python environments, because the dependencies do not mix:
 | --- | --- | --- |
 | operator env (`data/xr-env` on the laptop) | UI, preview, tests | conda-forge pinocchio from `envs/robot-conda.yml`, then `pip install -e .[operator]` |
 | perception env (`data/wilor-venv`) | WiLoR server (torch, GPU) | `envs/perception.freeze.txt` + external WiLoR checkout |
+| SONIC sim env (`data/sonic-sim-venv`) | MuJoCo sim of the SONIC full-body path + its tools | `deploy/setup_sonic_sim_env.sh` (`envs/sonic-sim.freeze.txt` + pinned SONIC checkout, `configs/sonic_assets.yaml`); see [`docs/quest-sonic/P1_sim.md`](docs/quest-sonic/P1_sim.md) |
 
 **Why conda-forge for pinocchio.** The UI's preview IK uses `pinocchio.casadi`, which the PyPI `pin` wheels do not contain.
 The robot side is set up by robot-runtime (`~/robot_runtime_ws`) and needs nothing from these environments.
