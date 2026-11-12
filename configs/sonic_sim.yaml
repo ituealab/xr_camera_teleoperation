@@ -13,6 +13,9 @@ physics:
   dt: 0.005                    # 200 Hz (upstream SIMULATE_DT)
   elastic_band: true           # upstream: the robot starts hanging from a virtual band; key 9 drops it
   max_lag_s: 0.05              # further behind real time than this: drop the backlog (counted), never burst-step
+  # Upstream's DDS bridge decodes SONIC's rt/lowcmd + 2x rt/dex3/*/cmd (500 Hz each) in Python listener threads.
+  # With CPython's default 5 ms GIL switch interval a step could wait up to 5 ms behind them; 0.5 ms bounds that.
+  gil_switch_interval_s: 0.0005
 
 keys:                          # sim operator keys (upstream handle_keyboard_button: 9, backspace, up/down/left/right)
   endpoint: tcp://127.0.0.1:5599   # the sim binds PULL; the viewer window and scripted tools PUSH key names

@@ -4,7 +4,7 @@
 #   sim    MuJoCo sim (upstream gear_sonic physics, our scene + real-time loop, viewer and robot cameras)
 #   sonic  prebuilt SONIC deploy binary (zmq_manager input on :5556, telemetry on :5557)
 #
-#   deploy/xr_fullbody_sim.sh start [--no-viewer]   # start both (the robot hangs from the sim's elastic band)
+#   deploy/xr_fullbody_sim.sh start [--no-viewer] [--no-cameras]  # start both (the robot hangs from the sim's elastic band)
 #   deploy/xr_fullbody_sim.sh stop | status | logs
 #   deploy/xr_fullbody_sim.sh key 9                  # sim key: 9 = drop/re-hang band, backspace = reset robot
 #   deploy/xr_fullbody_sim.sh attach sim|sonic       # the process's terminal (sonic: `o` = emergency stop)
@@ -49,6 +49,7 @@ case "${1:-start}" in
     for arg in "$@"; do
       case "$arg" in
         --no-viewer) sim_args+=(--no-viewer) ;;
+        --no-cameras) sim_args+=(--no-cameras) ;;
         *) printf 'Unknown option: %s\n' "$arg" >&2; exit 2 ;;
       esac
     done
@@ -87,5 +88,5 @@ case "${1:-start}" in
   logs)
     tail -n 40 -F "$LOG_DIR/sim.log" "$LOG_DIR/sonic.log"
     ;;
-  *) printf 'Usage: %s start [--no-viewer] | stop | status | key K | attach sim|sonic | logs\n' "$0" >&2; exit 2 ;;
+  *) printf 'Usage: %s start [--no-viewer] [--no-cameras] | stop | status | key K | attach sim|sonic | logs\n' "$0" >&2; exit 2 ;;
 esac

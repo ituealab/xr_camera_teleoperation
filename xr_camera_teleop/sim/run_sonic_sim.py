@@ -184,6 +184,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     cfg = sim_config.load(a.config)
+    sys.setswitchinterval(float(cfg["physics"]["gil_switch_interval_s"]))
     manifest = assets.load()
     scene = scene_builder.write_scene(a.course or cfg["course"], manifest.source_root)
     wbc = upstream_wbc_config(scene, cfg, manifest.dds_domain)

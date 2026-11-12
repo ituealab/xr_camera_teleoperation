@@ -40,7 +40,6 @@ PLANNER_HZ = 50.0
 # itself commands when a planner message has no hand joints (input_interface.hpp GetHandPose default).
 HAND_OPEN = (np.zeros(7), np.zeros(7))
 HAND_CLOSED = (np.array([0, 0, 1.75, -1.57, -1.75, -1.57, -1.75]), np.array([0, 0, -1.75, 1.57, 1.75, 1.57, 1.75]))
-SQUAT_MODES = {M.IDLE_SQUAT, M.IDLE_KNEEL_TWO_LEGS, M.IDLE_KNEEL, M.IDLE_LYING_FACE_DOWN, M.CRAWLING, M.ELBOW_CRAWLING}
 
 
 def yaw_of(q_wxyz) -> float:
@@ -142,15 +141,16 @@ class RobotMonitor:
             a = np.array(self.base)
         return a[a[:, 0] >= a[-1, 0] - seconds] if a.size else a
 
-    def fallen(self, mode: int) -> str | None:
+    def fallen(self) -> str | None:
+        """Down = pelvis tilted past 60 deg or below 0.2 m. Height alone is no criterion: squats reach 0.44 m."""
         s = self.latest()
         if s is None:
             return None
         z, q = s[3], s[4:8]
         if up_z(q) < 0.5:
             return f"tilted (up_z {up_z(q):.2f}, z {z:.2f})"
-        if z < (0.2 if mode in SQUAT_MODES else 0.45):
-            return f"pelvis low (z {z:.2f})"
+        if z < 0.2:
+            return f"pelvis on the ground (z {z:.2f})"
         return None
 
 
@@ -224,7 +224,7 @@ class Driver:
             time.sleep(3.0)
         s = self.mon.latest()
         self.log(f"standing: pelvis z {s[3]:.3f}, up_z {up_z(s[4:8]):.3f}")
-        if self.mon.fallen(M.IDLE):
+        if self.mon.fallen():
             raise SystemExit("robot is down after start")
 
     def hold(self, cmd: Cmd, seconds: float, label: str = "") -> dict:
@@ -234,7 +234,7 @@ class Driver:
         resets0 = self.mon.resets
         fall = None
         while time.perf_counter() < t_end:
-            fall = self.mon.fallen(cmd.mode) or ("sim reset" if self.mon.resets > resets0 else None)
+            fall = self.mon.fallen() or ("sim reset" if self.mon.resets > resets0 else None)
             if fall:
                 break
             time.sleep(0.02)
@@ -358,20 +358,31 @@ def scenario_heights(d: Driver, a) -> dict:
     return {"trials": trials, "transitions": transitions}
 
 
+VR_WRISTS_FORWARD = (np.array([0.25, 0.2, 0.15, 0.25, -0.2, 0.15, 0.0, 0.0, 0.35]), np.tile([1.0, 0.0, 0.0, 0.0], 3))
+
+
 def scenario_hands(d: Driver, a) -> dict:
+    """Open/close cycles with the arms in SONIC's idle pose (hands beside the hips), then with the wrists held in
+    front of the torso through VR 3-point targets (hands clear of the body)."""
     d.stand(2.0)
     samples = []
-    for cycle in range(a.cycles):
-        for name, target in (("closed", HAND_CLOSED), ("open", HAND_OPEN)):
-            d.hold(replace(d.sonic.cmd, hands=target), 2.5, f"hands {name}")
-            err, dq = {}, {}
-            for i, side in enumerate(("left", "right")):
-                q, v = d.mon.hand[side]
-                err[side] = float(np.abs(q - target[i]).max())
-                dq[side] = float(np.abs(v).max())
-            samples.append({"cycle": cycle, "target": name, "max_err": err, "max_dq_at_rest": dq})
-            d.log(f"hands {name:6s}: max |q - target| L {err['left']:.3f} R {err['right']:.3f} rad, "
-                  f"max |dq| at rest L {dq['left']:.3f} R {dq['right']:.3f} rad/s")
+    for arms, vr in (("idle", None), ("forward", VR_WRISTS_FORWARD)):
+        d.sonic.cmd = replace(d.sonic.cmd, vr=vr)
+        d.stand(3.0, f"arms {arms}")
+        for cycle in range(a.cycles):
+            for name, target in (("closed", HAND_CLOSED), ("open", HAND_OPEN)):
+                d.hold(replace(d.sonic.cmd, hands=target), 2.5, f"hands {name}")
+                err, dq, qs = {}, {}, {}
+                for i, side in enumerate(("left", "right")):
+                    q, v = d.mon.hand[side]
+                    err[side] = float(np.abs(q - target[i]).max())
+                    dq[side] = float(np.abs(v).max())
+                    qs[side] = q.round(3).tolist()
+                samples.append({"arms": arms, "cycle": cycle, "target": name, "max_err": err, "max_dq_at_rest": dq,
+                                "q": qs})
+                d.log(f"arms {arms:7s} hands {name:6s}: max |q - target| L {err['left']:.3f} R {err['right']:.3f} "
+                      f"rad, max |dq| at rest L {dq['left']:.3f} R {dq['right']:.3f} rad/s")
+    d.sonic.cmd = replace(d.sonic.cmd, vr=None)
     # while walking, closed hands
     r = d.hold(walk_cmd(replace(d.sonic.cmd, hands=HAND_CLOSED), M.WALK, (1.0, 0.0), 1.0), 6.0, "walk, hands closed")
     q, v = d.mon.hand["left"]
@@ -387,12 +398,11 @@ def scenario_hands(d: Driver, a) -> dict:
 def scenario_vr(d: Driver, a) -> dict:
     """VR 3-point fields on/off while standing; watch SONIC's log for encoder-mode switches."""
     d.stand(2.0)
-    # Upstream default VR targets (input_interface.hpp) would be a neutral pose; here: wrists in front of the torso.
-    pos = np.array([0.25, 0.2, 0.15, 0.25, -0.2, 0.15, 0.0, 0.0, 0.35])
-    orn = np.tile([1.0, 0.0, 0.0, 0.0], 3)
+    pos, orn = VR_WRISTS_FORWARD
     out = []
     for i in range(3):
         d.hold(replace(d.sonic.cmd, vr=(pos, orn)), 4.0, f"vr on {i}")
+        d.sonic.cmd = replace(d.sonic.cmd, vr=None)
         r = d.stand(4.0, f"vr off {i}")
         out.append({"cycle": i, "fall": r["fall"]})
         d.log(f"vr cycle {i}: on 4 s, off 4 s, fall {r['fall']}")
@@ -458,6 +468,7 @@ def main(argv=None) -> int:
     ap.add_argument("--run", action="store_true", help="speeds: include RUN mode")
     ap.add_argument("--cycles", type=int, default=3, help="hands: open/close cycles")
     ap.add_argument("--minutes", type=float, default=10.0, help="endurance: duration")
+    ap.add_argument("--tag", default="", help="suffix of the result file: data/sonic-p1/<scenario>[-tag].json")
     a = ap.parse_args(argv)
     cfg = sim_config.load(a.config)
     d = Driver(cfg, assets.load().dds_domain)
@@ -479,7 +490,7 @@ def main(argv=None) -> int:
     result.update(scenario=a.scenario, started=t0, duration_s=time.time() - t0, falls=d.falls,
                   planner_messages=d.sonic.sent, events=d.events)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / f"{a.scenario}.json"
+    out = OUT_DIR / f"{a.scenario}{'-' + a.tag if a.tag else ''}.json"
     out.write_text(json.dumps(result, indent=1, default=float))
     print(f"wrote {out}; falls {d.falls}")
     return 0 if d.falls == 0 else 1
