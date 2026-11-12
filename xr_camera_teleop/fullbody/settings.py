@@ -72,13 +72,16 @@ assert set(KNOBS) == {f.name for f in fields(OperatorSettings)}
 
 class UiKind(str, Enum):
     """What the headset panel can ask for. START/STOP/CALIBRATE/PAUSE/RESUME map to fullbody.types.Event in the
-    Quest source; SET changes one OperatorSettings field (key, value) and is applied by the node."""
+    Quest source; SET changes one OperatorSettings field (key, value) and is applied by the node. MARK (value
+    "start" | "end") brackets a trial in the run log (the panel's Sistem page); the node handles it and never passes
+    it to the source."""
     START = "start"
     STOP = "stop"
     CALIBRATE = "calibrate"       # calibrate now and engage (the panel's "Kalibre et ve devral")
     PAUSE = "pause"
     RESUME = "resume"
     SET = "set"
+    MARK = "mark"
 
 
 @dataclass(frozen=True)

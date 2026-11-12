@@ -6,6 +6,7 @@ import numpy as np
 from xr_camera_teleop.fullbody.frames import pose
 from xr_camera_teleop.fullbody.node import NodeCore, load_config, make_source, run_meta, tick_record, CONFIG
 from xr_camera_teleop.fullbody.runlog import RunWriter, read_records
+from xr_camera_teleop.fullbody.settings import UiAction, UiKind
 from xr_camera_teleop.fullbody.types import Event, OperatorData, State
 from xr_camera_teleop.fullbody.xr_frame import Head, Stamp, XRFrame, to_dict
 from xr_camera_teleop.sonic.lifecycle import Phase, SonicObservation
@@ -31,7 +32,7 @@ class FakeSonic:
         return SonicObservation(self.t_ctrl, now)
 
 
-def simulate(source_desc, seconds, run_dir=None, frames=None, kill_events=None):
+def simulate(source_desc, seconds, run_dir=None, frames=None, kill_events=None, ui=None):
     core = NodeCore(make_source(source_desc, CFG["fullbody"]), CFG["fullbody"])
     sonic, tick, ticks = FakeSonic(), None, []
     writer = RunWriter(run_dir, run_meta(core.source, CFG, CONFIG)) if run_dir else None
@@ -42,7 +43,7 @@ def simulate(source_desc, seconds, run_dir=None, frames=None, kill_events=None):
         if writer and frame is not None:
             writer.write("xr_frame", t, frame=to_dict(frame))
         node_events = tuple(kill_events.get(i, ())) if kill_events else ()
-        tick = core.step(t, OperatorData(frame), obs, node_events)
+        tick = core.step(t, OperatorData(frame, ui=tuple(ui.get(i, ())) if ui else ()), obs, node_events)
         ticks.append(tick)
         if writer:
             writer.write("tick", t, **tick_record(tick, i, obs, node_events))
@@ -96,3 +97,49 @@ def test_quest_source_liveness_and_replay(tmp_path):
     assert live[0] and not live[-1] and not any(tk.input.ready for tk in ticks)
     assert all(tk.sup.state is State.OFF for tk in ticks)            # nobody starts SONIC from the headset yet
     assert fullbody_replay.replay(tmp_path / "q")["passed"]
+
+
+def test_panel_settings_are_the_nodes_and_replay(tmp_path):
+    """SET changes the settings the source sees from that tick on (clamped by the knob range), a bad SET is refused
+    with a note, MARK stays in the node, and the run replays with the panel actions."""
+    seen = []
+
+    class Spy:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def describe(self):
+            return self.inner.describe()
+
+        @property
+        def result(self):
+            return self.inner.result
+
+        def step(self, now, data, state):
+            seen.append(data)
+            return self.inner.step(now, data, state)
+
+    ui = {10: (UiAction(UiKind.SET, "speed_scale", 0.5, t=1000.2, seq=1),),
+          20: (UiAction(UiKind.SET, "speed_scale", 7.0, t=1000.4, seq=2), UiAction(UiKind.MARK, value="start", seq=3),
+               UiAction(UiKind.START, seq=4)),
+          30: (UiAction(UiKind.SET, "no_such_knob", 1.0, seq=5), UiAction(UiKind.SET, "heading_lock", True, seq=6))}
+    core = NodeCore(make_source({"kind": "quest"}, CFG["fullbody"]), CFG["fullbody"])
+    core.source = Spy(core.source)
+    t = 1000.0
+    ticks = []
+    for i in range(40):
+        ticks.append(core.step(t, OperatorData(None, ui=ui.get(i, ())), SonicObservation(None, None)))
+        t += 0.02
+    assert seen[9].settings.speed_scale == CFG["fullbody"]["operator_settings"]["speed_scale"]
+    assert seen[10].settings.speed_scale == 0.5 and [a.seq for a in seen[10].ui] == [1]
+    assert seen[20].settings.speed_scale == 1.0                         # clamped to the knob's range
+    assert [a.kind for a in seen[20].ui] == [UiKind.SET, UiKind.START]  # MARK never reaches the source
+    assert core.segment and core.marks == 1
+    assert seen[30].settings.heading_lock is True and [a.seq for a in seen[30].ui] == [6]
+    assert any("refused" in n for n in ticks[30].notes)
+    assert seen[31].ui == ()
+
+    simulate({"kind": "quest"}, 1.0, tmp_path / "p", frames=lambda t: head_frame(t), ui=ui)
+    recs = [r for r in read_records(tmp_path / "p") if r["k"] == "tick"]
+    assert recs[20]["settings"]["speed_scale"] == 1.0 and len(recs[20]["ui"]) == 3
+    assert fullbody_replay.replay(tmp_path / "p")["passed"]

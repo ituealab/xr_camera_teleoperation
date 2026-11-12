@@ -14,7 +14,9 @@ What each state commands:
                 A pause entered because the input stopped being live (stale head) ends by itself once the input
                 has been live and ready again for auto_resume_s (PLAN §6: a hand <-> controller switch stalls the
                 head 0.6-1.5 s and two free hands have no button). A pause from the operator, or because the input
-                stopped being ready (recenter, new session: calibration gone), needs RESUME / ENGAGE.
+                stopped being ready (recenter, new session: calibration gone), needs RESUME / ENGAGE. A PAUSE during
+                an automatic pause turns it into the operator's (the headset panel pauses the robot while it is open,
+                and a head coming back must not resume it underneath the panel).
 
 Heading: the Intent's heading is relative to the facing at engage; the supervisor anchors it so that engaging never
 turns the robot (facing = anchor + heading). The facing restarts at 0 whenever SONIC starts, because SONIC
@@ -111,6 +113,11 @@ class Supervisor:
         self._auto_resume = False                  # this pause ends by itself when the input is usable again
         self._usable_since: Optional[float] = None
 
+    @property
+    def resumes_by_itself(self) -> bool:
+        """PAUSED, and the pause ends without the operator once the input is usable again."""
+        return self.state is State.PAUSED and self._auto_resume
+
     # ------------------------------------------------------------------ transitions
     def _go(self, state: State, notes: list, why: str):
         notes.append(f"{self.state.value} -> {state.value}: {why}")
@@ -153,6 +160,9 @@ class Supervisor:
                     notes.append(f"{ev.value} refused: {why_not}")
             elif ev is Event.PAUSE and self.state is State.ACTIVE:
                 self._pause(now, notes, "operator")
+            elif ev is Event.PAUSE and self.state is State.PAUSED and self._auto_resume:
+                self._auto_resume = False            # the operator takes the pause over: it no longer ends by itself
+                notes.append("paused: operator (no automatic resume)")
             elif ev is Event.DISENGAGE and self.state in (State.ACTIVE, State.PAUSED):
                 self._release(notes, State.STANDBY, "disengage")
             else:

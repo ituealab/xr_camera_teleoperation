@@ -4,8 +4,12 @@ run.msgpack is a stream of msgpack maps, one record each: {"k": kind, "t": MSI w
 ...payload}. Kinds:
   xr_frame        {"frame": fullbody.xr_frame.to_dict(...)}       a received xr_frame (the node: a new one it used)
   xr_frame_error  {"error": str}                                    a message that failed xr_frame validation
-  tick            fullbody.node.tick_record(...)                    one per node tick: logged inputs, state, phase,
-                                                                    planner fields as sent, command messages, notes
+  tick            fullbody.node.tick_record(...)                    one per node tick: logged inputs (telemetry
+                                                                    times, node events, panel actions received), the
+                                                                    operator settings in effect, the source's status,
+                                                                    state, phase, planner fields as sent, command
+                                                                    messages, notes
+  ui_error        {"error": str}                                    a panel-link message that failed to decode
   robot           {"state": sonic.telemetry.RobotState.to_dict()}   a SONIC telemetry sample (t = receive time)
 meta.json: who wrote the run and from which code (git sha, dirty flag), plus whatever the writer adds (the node: its
 source description and effective configs).

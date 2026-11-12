@@ -9,6 +9,23 @@ node:
   xr_frame_addr: tcp://127.0.0.1:5596   # Quest server xr_frame PUB (operator/quest/server.py)
   release_s: 0.5                 # on exit without STOP: STANDBY (IDLE, VR off, hands open) this long, then quit
   status_period_s: 5.0           # console status line
+  # headset panel link (fullbody/operator_link.py, docs/quest-sonic/P5_ui.md); the Quest server takes the same
+  # addresses as --ui-zmq / --node-status
+  ui_addr: tcp://127.0.0.1:5597  # Quest server UiAction PUB (we connect SUB)
+  ui_max_age_s: 1.0              # a panel action older than this on arrival is dropped (never applied late)
+  status_addr: tcp://127.0.0.1:5595   # node status PUB (we bind), shown on the panel and the status strip
+  status_hz: 10
+
+# Operator settings the headset panel changes at run time (fullbody/settings.py: ranges and labels in KNOBS).
+# These are the defaults of every run; a panel change lasts until the node restarts and is in the run log.
+operator_settings:
+  speed_scale: 1.0               # x the configured maximum walk speed
+  stick_deadzone: 0.15           # radial
+  heading_lock: false
+  crouch_enabled: true
+  lean_gain: 1.0
+  arm_tracking: true
+  fingers: true
 
 quest:                           # fullbody/quest_source.py
   head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED

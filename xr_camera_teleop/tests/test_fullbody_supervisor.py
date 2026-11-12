@@ -115,3 +115,15 @@ def test_a_stale_head_pause_resumes_by_itself_but_not_a_recenter_or_button():
     s.step(5.1, OperatorInput(events=(Event.RESUME,), **OK), True)
     s.step(5.2, OperatorInput(events=(Event.PAUSE,), **OK), True)
     assert s.step(9.0, OperatorInput(**OK), True).state is State.PAUSED
+
+
+def test_a_pause_during_an_automatic_pause_becomes_the_operators():
+    """The headset panel pauses the robot while it is open; a head coming back must not resume it underneath."""
+    s = sup_running()
+    s.step(0.0, OperatorInput(events=(Event.ENGAGE,), **OK), True)
+    assert s.step(1.0, OperatorInput(live=False, ready=True), True).state is State.PAUSED
+    assert s.resumes_by_itself
+    step = s.step(1.1, OperatorInput(live=False, ready=True, events=(Event.PAUSE,)), True)
+    assert step.state is State.PAUSED and not s.resumes_by_itself and any("operator" in n for n in step.notes)
+    assert s.step(5.0, OperatorInput(**OK), True).state is State.PAUSED                     # head back, still paused
+    assert s.step(5.1, OperatorInput(events=(Event.RESUME,), **OK), True).state is State.ACTIVE

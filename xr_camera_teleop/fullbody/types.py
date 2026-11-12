@@ -134,11 +134,17 @@ class Event(str, Enum):
 class OperatorInput:
     """One tick of the operator side.
     live    the operator's input is alive (Quest: connected, head sample fresh). Not live -> PAUSED.
-    ready   the source can produce targets (Quest: calibrated for this headset session and recenter epoch)."""
+    ready   the source can produce targets (Quest: calibrated for this headset session and recenter epoch).
+    status  operator-side facts the headset panel and status strip show, as plain values (str, bool, number). The
+            node logs and publishes it as it is and never acts on it. Keys the Quest source is expected to fill:
+              mode          "walk" | "hands"  (PLAN D8: walk while a physical controller is tracked)
+              heading_lock  bool, the heading lock in effect (setting, button or squat)
+              calibrating   float 0..1 while a calibration gesture is held, else absent"""
     live: bool = False
     ready: bool = False
     events: tuple = ()
     intent: Intent = field(default_factory=Intent)
+    status: dict = field(default_factory=dict)
 
 
 class State(str, Enum):

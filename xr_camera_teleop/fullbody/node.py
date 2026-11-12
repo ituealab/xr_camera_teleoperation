@@ -7,20 +7,27 @@
 
 One tick (`NodeCore.step`, pure):
 
-    OperatorData ─► InputSource.step ─► OperatorInput ─┬─ START/STOP ─► sonic/lifecycle ─► command messages
-     (xr_frame)      (quest | script)   (live, ready,   │                    │ phase
-                                         events, intent)└──────────► Supervisor ─► FullBodyCommand ─► sonic/adapter
-                                                                                                   ─► planner message
+    OperatorData ─► settings ─► InputSource.step ─► OperatorInput ─┬─ START/STOP ─► sonic/lifecycle ─► commands
+     (xr_frame,     (SET, MARK   (quest | script)   (live, ready,   │                    │ phase
+      panel          applied)                        events, intent)└──────────► Supervisor ─► FullBodyCommand
+      actions)                                                                              ─► sonic/adapter ─► planner
+
+Operator settings (fullbody/settings.py) are the node's: they start from configs/fullbody.yaml `operator_settings`,
+each panel SET changes one with `OperatorSettings.with_value`, and the source sees the values in effect in
+`OperatorData.settings` together with this tick's other panel actions in `OperatorData.ui`. MARK actions (trial
+brackets) stay in the node: they are logged, never passed on.
 
 Around it (`run`, the only I/O): SONIC's ZMQ ends (PUB bound on deploy.zmq_port, telemetry SUB on zmq_out_port),
 the xr_frame input (Quest source only: the Quest server's SUB, or with --xr-replay the xr_frame records of a
-recorded run played back in real time, times shifted to now; the node exits when the recording ends), the run log,
-absolute 20 ms deadlines. A planner message goes out on every
+recorded run played back in real time, times shifted to now; the node exits when the recording ends), the headset
+panel link (fullbody/operator_link.py: panel actions SUB on node.ui_addr, node status PUB on node.status_addr; not
+with --xr-replay), the run log, absolute 20 ms deadlines. A planner message goes out on every
 tick in every state, so SONIC never sees its 1 s planner timeout while the node runs.
 
 Run log (fullbody/runlog.py, data/fullbody-runs/<time>/): per tick a `tick` record (inputs that are not the source's
-own: telemetry receive times and node-injected events; outputs: supervisor state, lifecycle phase, the planner
-fields exactly as sent, command messages, transition notes), an `xr_frame` record whenever a new frame was used, and
+own: telemetry receive times, node-injected events, the panel actions received; outputs: the settings in effect,
+supervisor state, lifecycle phase, the planner fields exactly as sent, command messages, transition notes), an
+`xr_frame` record whenever a new frame was used, and
 a `robot` record per new telemetry sample (joints, IMU, hands, the VR targets SONIC saw). meta.json holds the
 source description and the effective configs, so tools/fullbody_replay.py can rebuild the node and re-derive every
 tick.
@@ -44,11 +51,15 @@ from typing import Optional
 import numpy as np
 import yaml
 
+from xr_camera_teleop.fullbody.operator_link import ActionInbox, LinkError, NodeStatus, action_to_dict
 from xr_camera_teleop.fullbody.quest_source import QuestParams, QuestSource
 from xr_camera_teleop.fullbody.runlog import RunWriter, new_run_dir
 from xr_camera_teleop.fullbody.scripted import SCENARIOS, ScriptSource
+from xr_camera_teleop.fullbody.settings import OperatorSettings, UiKind
 from xr_camera_teleop.fullbody.supervisor import Postures, Supervisor, SupervisorParams, SupervisorStep
 from xr_camera_teleop.fullbody.types import Event, InputSource, OperatorData, OperatorInput, State
+from xr_camera_teleop.fullbody.xr_frame import SOURCES as XR_SOURCES
+from xr_camera_teleop.fullbody.xr_frame import source as xr_source
 from xr_camera_teleop.fullbody.xr_frame import to_dict as xr_frame_to_dict
 from xr_camera_teleop.paths import CONFIGS
 from xr_camera_teleop.sonic import protocol
@@ -84,32 +95,63 @@ def make_source(desc: dict, fullbody_cfg: dict) -> InputSource:
 @dataclass(frozen=True)
 class Tick:
     t: float
+    received: tuple                     # panel actions received this tick (UiAction), as delivered
+    data: OperatorData                  # what the source saw: frame, settings in effect, panel actions for it
     input: OperatorInput
     life: LifecycleStep
     sup: SupervisorStep
     planner: dict                       # protocol.planner() keyword arguments
+    panel_notes: tuple = ()
 
     @property
     def notes(self) -> tuple:
-        return self.life.notes + self.sup.notes
+        return self.panel_notes + self.life.notes + self.sup.notes
 
 
 class NodeCore:
-    """Source -> lifecycle + supervisor -> adapter, one tick at a time. Deterministic given its inputs."""
+    """Settings -> source -> lifecycle + supervisor -> adapter, one tick at a time. Deterministic given its inputs."""
 
     def __init__(self, source: InputSource, fullbody_cfg: dict):
         self.source = source
         self.lifecycle = Lifecycle(LifecycleParams.from_config(fullbody_cfg["lifecycle"]))
         self.supervisor = Supervisor(Postures.from_config(fullbody_cfg["postures"]),
                                      SupervisorParams.from_config(fullbody_cfg["supervisor"]))
+        self.settings = OperatorSettings.from_dict(fullbody_cfg.get("operator_settings"))
+        self.segment = False                # a trial bracket (MARK start) is open
+        self.marks = 0
+
+    def _apply_panel(self, actions: tuple) -> tuple[tuple, tuple]:
+        """SET and MARK are the node's; the rest goes to the source. Returns (actions for the source, notes)."""
+        passed, notes = [], []
+        for a in actions:
+            if a.kind is UiKind.SET:
+                try:
+                    self.settings = self.settings.with_value(a.key, a.value)
+                except (KeyError, TypeError, ValueError) as e:
+                    notes.append(f"panel: setting refused ({e})")
+                    continue
+                notes.append(f"panel: {a.key} = {getattr(self.settings, a.key)!r}")
+                passed.append(a)
+            elif a.kind is UiKind.MARK:
+                self.marks += 1
+                self.segment = a.value == "start"
+                notes.append(f"panel: segment {a.value} (mark {self.marks})")
+            else:
+                notes.append(f"panel: {a.kind.value}")
+                passed.append(a)
+        return tuple(passed), tuple(notes)
 
     def step(self, now: float, data: OperatorData, obs: SonicObservation, node_events: tuple = ()) -> Tick:
-        inp = self.source.step(now, data, self.supervisor.state)
+        """`data` is what the operator side delivered: the latest frame and the panel actions received since the
+        previous tick (`data.ui`; its `settings` are not read, the node owns them)."""
+        ui, panel_notes = self._apply_panel(tuple(data.ui))
+        seen = OperatorData(frame=data.frame, settings=self.settings, ui=ui)
+        inp = self.source.step(now, seen, self.supervisor.state)
         if node_events:
             inp = replace(inp, events=tuple(inp.events) + tuple(node_events))
         life = self.lifecycle.step(now, obs, start=Event.START in inp.events, stop=Event.STOP in inp.events)
         sup = self.supervisor.step(now, inp, life.phase is Phase.RUNNING)
-        return Tick(now, inp, life, sup, planner_fields(sup.cmd))
+        return Tick(now, tuple(data.ui), seen, inp, life, sup, planner_fields(sup.cmd), panel_notes)
 
 
 def encode_planner(fields: dict) -> dict:
@@ -121,8 +163,10 @@ def tick_record(tick: Tick, i: int, obs: SonicObservation, node_events: tuple) -
     """Payload of a run-log `tick` record."""
     return {"i": i, "obs": {"t_control": obs.t_control, "t_present": obs.t_present},
             "node_events": [e.value for e in node_events],
+            "ui": [action_to_dict(a) for a in tick.received],
+            "settings": tick.data.settings.to_dict(),
             "input": {"live": tick.input.live, "ready": tick.input.ready,
-                      "events": [e.value for e in tick.input.events]},
+                      "events": [e.value for e in tick.input.events], "status": dict(tick.input.status)},
             "state": tick.sup.state.value, "phase": tick.life.phase.value, "sonic": tick.life.sonic,
             "planner": encode_planner(tick.planner),
             "commands": [{"start": c.start, "stop": c.stop} for c in tick.life.commands],
@@ -248,6 +292,66 @@ class RecordedXRFrames:
         pass
 
 
+class PanelLink:
+    """The headset panel's end in the node (fullbody/operator_link.py): panel actions in (SUB, connect to the Quest
+    server's PUB), node status out (PUB, bound)."""
+
+    def __init__(self, ui_addr: str, status_addr: str, max_age_s: float):
+        import zmq
+
+        self._zmq = zmq
+        ctx = zmq.Context.instance()
+        self.sub = ctx.socket(zmq.SUB)
+        self.sub.setsockopt(zmq.LINGER, 0)
+        self.sub.setsockopt(zmq.SUBSCRIBE, b"")
+        self.sub.connect(ui_addr)
+        self.pub = ctx.socket(zmq.PUB)
+        self.pub.setsockopt(zmq.LINGER, 0)
+        self.pub.setsockopt(zmq.SNDHWM, 4)
+        self.pub.bind(status_addr)
+        self.inbox = ActionInbox(max_age_s)
+
+    def poll(self, now: float) -> tuple[tuple, list]:
+        """(new panel actions in order, errors)."""
+        actions, errors = [], []
+        while True:
+            try:
+                raw = self.sub.recv(self._zmq.NOBLOCK)
+            except self._zmq.Again:
+                break
+            try:
+                actions += self.inbox.accept(raw, now)
+            except LinkError as e:
+                errors.append(str(e))
+        return tuple(actions), errors
+
+    def publish(self, status: NodeStatus):
+        try:
+            self.pub.send(status.encode(), self._zmq.NOBLOCK)
+        except self._zmq.Again:
+            pass
+
+    def close(self):
+        self.sub.close()
+        self.pub.close()
+
+
+def node_status(core: NodeCore, tick: Tick, now: float, i: int, rate_hz: float, overruns: int, data: OperatorData,
+                obs: SonicObservation, run_dir: Optional[Path], last_ui_seq: int, notes) -> NodeStatus:
+    ages = {}
+    f = data.frame
+    for k in XR_SOURCES:
+        st = xr_source(f, k).stamp if f is not None else None
+        ages[k] = round(1e3 * (now - st.t), 1) if st is not None and st.valid and st.seq > 0 else None
+    ages["telemetry"] = round(1e3 * (now - obs.t_present), 1) if obs.t_present is not None else None
+    return NodeStatus(t=now, tick=i, state=tick.sup.state.value, resumes_by_itself=core.supervisor.resumes_by_itself,
+                      phase=tick.life.phase.value, sonic=tick.life.sonic, live=tick.input.live,
+                      ready=tick.input.ready, operator=dict(tick.input.status), settings=core.settings.to_dict(),
+                      rate_hz=round(rate_hz, 2), overruns=overruns, ages_ms=ages,
+                      run=run_dir.name if run_dir else None, segment=core.segment, marks=core.marks,
+                      last_ui_seq=last_ui_seq, notes=list(notes))
+
+
 def run_meta(source: InputSource, cfg: dict, config_path: Path) -> dict:
     from xr_camera_teleop.sonic import assets
 
@@ -271,11 +375,14 @@ def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Pa
     xr = None
     if isinstance(source, QuestSource):
         xr = RecordedXRFrames(xr_replay) if xr_replay else XRFrameInput(node_cfg["xr_frame_addr"])
+    panel = None if xr_replay else PanelLink(node_cfg["ui_addr"], node_cfg["status_addr"],
+                                              float(node_cfg["ui_max_age_s"]))
     meta = run_meta(source, cfg, config_path)
     if xr_replay:
         meta["xr_replay"] = str(xr_replay)
     writer = RunWriter(run_dir, meta) if run_dir else None
     period = 1.0 / float(node_cfg["rate_hz"])
+    status_period = 1.0 / float(node_cfg["status_hz"])
 
     signals = {"n": 0}
 
@@ -290,21 +397,30 @@ def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Pa
     i, overruns, last_status, frame_seq = 0, 0, time.time(), None
     shutdown_at, release_until = None, None
     late_max = 0.0
+    last_panel, panel_ticks, recent_notes = time.time(), 0, []
     next_t = time.perf_counter()
     try:
         while True:
             now = time.time()
             obs, robot = link.poll()
-            data = OperatorData()
+            frame = None
             if xr is not None:
-                frame, err = xr.poll()
+                _, err = xr.poll()
                 if err is not None and writer:
                     writer.write("xr_frame_error", now, error=err)
                 if xr.frame is not None and xr.frame.seq != frame_seq:
                     frame_seq = xr.frame.seq
                     if writer:
                         writer.write("xr_frame", now, frame=xr_frame_to_dict(xr.frame))
-                data = OperatorData(frame=xr.frame)
+                frame = xr.frame
+            actions = ()
+            if panel is not None:
+                actions, errors = panel.poll(now)
+                for err in errors:
+                    print(f"[node] bad panel message: {err}", flush=True)
+                    if writer:
+                        writer.write("ui_error", now, error=err)
+            data = OperatorData(frame=frame, ui=actions)
             if robot is not None and writer:
                 writer.write("robot", robot[0], state=robot[1].to_dict())
 
@@ -325,7 +441,13 @@ def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Pa
                 writer.write("tick", now, **tick_record(tick, i, obs, node_events))
             for note in tick.notes:
                 print(f"[node] {time.strftime('%H:%M:%S')} {note}", flush=True)
+                recent_notes = (recent_notes + [f"{time.strftime('%H:%M:%S')} {note}"])[-5:]
             i += 1
+            panel_ticks += 1
+            if panel is not None and now - last_panel >= status_period:
+                panel.publish(node_status(core, tick, now, i, panel_ticks / (now - last_panel), overruns, data, obs,
+                                          run_dir, panel.inbox.last_seq, recent_notes))
+                last_panel, panel_ticks = now, 0
 
             if now - last_status >= float(node_cfg["status_period_s"]):
                 last_status = now
@@ -359,6 +481,8 @@ def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Pa
         link.close()
         if xr is not None:
             xr.close()
+        if panel is not None:
+            panel.close()
     if result is not None:
         print(f"[node] {'OK' if result.ok else 'FAILED'}: {result.reason}", flush=True)
         return 0 if result.ok else 1
