@@ -136,6 +136,39 @@ def launcher(*args, timeout=240):
     return subprocess.run([str(LAUNCHER), *args], cwd=REPO, capture_output=True, text=True, timeout=timeout)
 
 
+class ViewRecorder:
+    """Robot-view frames from the camera bridge (:5605) as (state wall time, small grey left image), in a thread."""
+
+    def __init__(self, addr="tcp://127.0.0.1:5605"):
+        import threading
+        self.frames, self._stop = [], threading.Event()
+        self._t = threading.Thread(target=self._run, args=(addr,), daemon=True)
+        self._t.start()
+
+    def _run(self, addr):
+        import cv2
+        import msgpack
+        import zmq
+        sub = zmq.Context.instance().socket(zmq.SUB)
+        sub.setsockopt(zmq.SUBSCRIBE, b"")
+        sub.setsockopt(zmq.RCVTIMEO, 200)
+        sub.connect(addr)
+        while not self._stop.is_set():
+            try:
+                p = msgpack.unpackb(sub.recv(), raw=False)
+            except zmq.Again:
+                continue
+            img = cv2.imdecode(np.frombuffer(p["left"], np.uint8), cv2.IMREAD_GRAYSCALE)
+            img[:40, :420] = 0                                    # the burnt-in clock changes every frame
+            self.frames.append((p["stamp_ns"] / 1e9, cv2.resize(img, (160, 90), interpolation=cv2.INTER_AREA)))
+        sub.close()
+
+    def stop(self):
+        self._stop.set()
+        self._t.join(timeout=2)
+        return self.frames
+
+
 def upright_fraction(run_dir: Path, t0: float, t1: float, max_tilt_deg: float = 15.0) -> float:
     """Share of SONIC telemetry samples in [t0, t1] with the pelvis tilted less than max_tilt_deg (IMU)."""
     from xr_camera_teleop.fullbody.runlog import read_records
@@ -161,7 +194,7 @@ def test_panel_runs_the_sim_robot(tmp_path):
     started = launcher("start", "--no-viewer", "--", "--source", "quest")
     (tmp_path / "launcher.log").write_text(started.stdout + started.stderr)
     assert started.returncode == 0, started.stdout + started.stderr
-    ev, t_mark, frames, bitmaps = {}, {}, [], []
+    ev, t_mark, frames, bitmaps, lean_frames = {}, {}, [], [], []
     run_dir = None
     try:
         with EmulatedQuest("https://localhost:8012/?ws=wss://localhost:8012", "http://127.0.0.1:8771",
@@ -197,6 +230,18 @@ def test_panel_runs_the_sim_robot(tmp_path):
             assert not st["ui"]["open"]
             st = q.wait_for(lambda s: s["node"]["state"] == "active" and s, 15, "ACTIVE after calibration")
             ev["calibrated"] = st["node"]["ready"]
+
+            # 3b. head motion -> robot camera motion: lean steps (posture leans the torso, the camera moves with it)
+            view_rec = ViewRecorder()
+            time.sleep(1.5)
+            for k in range(4):                   # 15 cm over 0.3 s (a jump would look like a recenter: assembler.py)
+                t_mark.setdefault("lean", []).append(time.time())
+                for n in range(1, 16):
+                    z = -0.01 * n if k % 2 == 0 else -0.15 + 0.01 * n
+                    q.set({"head": {"pos": [0.0, 1.65, z]}})
+                    time.sleep(0.02)
+                time.sleep(2.5)
+            lean_frames = view_rec.stop()
 
             # 4. left palm toward the eyes opens the panel: the robot is paused; closing resumes it
             q.palm_toward_eyes("left")
@@ -261,6 +306,8 @@ def test_panel_runs_the_sim_robot(tmp_path):
     lat = view_latency.image_path(view_latency.match(frames, bitmaps))
     ev["image_latency"] = lat
     ev["head_age_at_node"] = view_latency.head_age_at_node(run_dir)
+    onsets = view_latency.motion_onsets(lean_frames, view_latency.head_steps(run_dir, t_mark["lean"], 0.01))
+    ev["head_step_to_camera_motion_ms"] = [None if d is None else round(1e3 * d, 1) for d in onsets]
     ev["replay"] = fullbody_replay.replay(run_dir)["passed"]
     (tmp_path / "evidence.json").write_text(json.dumps(ev, indent=1))
     keep(tmp_path, "panel_runs_the_sim_robot")

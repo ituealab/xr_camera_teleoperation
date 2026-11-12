@@ -437,3 +437,4 @@ def test_pictures_render():
     silent = ui.Panel(P)
     silent.step(1.0, None, None, None, "ego")
     assert silent.strip().segments[0][1] == "bad"
+

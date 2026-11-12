@@ -12,8 +12,11 @@ Image path (robot state -> image decoded in the headset page), from two logs:
   size seen twice within the window is skipped as ambiguous.
 Head path: from a node run log, the age of each new head sample when the node first used it (tick time - sample
 time): Quest -> server -> xr_frame -> 50 Hz tick.
-The rest of the chain (SONIC and physics turning a command into motion, the headset compositor) is not visible
-here; docs/quest-sonic/P5_ui.md adds it from P2's tracking-lag measurement.
+Head motion -> robot camera motion (`motion_onsets`), measured directly: the operator's head steps (the node's
+posture mapping leans the torso, and the camera on it moves), and the onset is the first robot-view frame whose
+picture departs from the frames just before the step by more than their own jitter. Latency = wall time of the
+physics state in that frame - sample time of the first head sample after the step. Adding state_to_decoded and
+the headset's display gives head motion -> image.
 """
 from __future__ import annotations
 
@@ -72,6 +75,46 @@ def head_age_at_node(run_dir: Path) -> dict:
             ages.append(r["t"] - pending)
             pending = None
     return _stats(ages)
+
+
+def head_steps(run_dir: Path, t_marks: list, min_step_m: float = 0.05) -> list:
+    """Sample time of the first head sample after each mark (wall time) that moved >= min_step_m horizontally from
+    where the head was at the mark, from the node's xr_frame records."""
+    from xr_camera_teleop.fullbody.runlog import read_records
+    heads = []
+    for r in read_records(run_dir):
+        if r["k"] == "xr_frame" and r["frame"]["head"].get("T") is not None and r["frame"]["head"]["valid"]:
+            T = np.frombuffer(r["frame"]["head"]["T"], dtype="<f4").reshape(4, 4)
+            heads.append((r["frame"]["head"]["t"], T[:2, 3].astype(float)))
+    out = []
+    for tm in t_marks:
+        before = [p for t, p in heads if t <= tm]
+        if not before:
+            continue
+        p0 = before[-1]
+        hit = next((t for t, p in heads if t > tm and np.linalg.norm(p - p0) >= min_step_m), None)
+        if hit is not None:
+            out.append(hit)
+    return out
+
+
+def motion_onsets(frames: list, t_steps: list, pre_s: float = 0.6, post_s: float = 1.5, k: float = 3.0,
+                  floor: float = 0.8) -> list:
+    """frames: [(state_wall_time, grey image array)] in time order. For each head step time: the delay to the first
+    frame (within post_s) whose mean absolute difference to the mean of the pre_s frames before the step exceeds
+    max(k * the largest such difference among those frames, floor grey levels). None where nothing moved."""
+    out = []
+    for ts in t_steps:
+        pre = [img.astype(float) for t, img in frames if ts - pre_s <= t <= ts]
+        if len(pre) < 3:
+            out.append(None)
+            continue
+        ref = np.mean(pre, axis=0)
+        noise = max(float(np.abs(img - ref).mean()) for img in pre)
+        thr = max(k * noise, floor)
+        hit = next((t for t, img in frames if ts < t <= ts + post_s and float(np.abs(img - ref).mean()) > thr), None)
+        out.append(None if hit is None else hit - ts)
+    return out
 
 
 def main(argv=None) -> int:

@@ -63,7 +63,7 @@ def test_emulated_quest_end_to_end(tmp_path):
     emulator = None
     try:
         emulator = subprocess.Popen(["node", str(EMULATOR), "--url", f"https://localhost:{port}/?ws=wss://localhost:{port}",
-                                     "--seconds", "36"], cwd=REPO, stdout=open(tmp_path / "emulator.log", "w"),
+                                     "--seconds", "36", "--gl", "gl-egl"], cwd=REPO, stdout=open(tmp_path / "emulator.log", "w"),
                                     stderr=subprocess.STDOUT)
         run = tmp_path / "run"
         xr_frame_record.main(["--addr", f"tcp://127.0.0.1:{xr}", "--seconds", "33", "--out", str(run),
@@ -114,7 +114,7 @@ def test_page_reconnects_after_a_long_outage_without_reentering_vr(tmp_path):
     emulator = recorder = None
     try:
         emulator = subprocess.Popen(["node", str(EMULATOR), "--url", f"https://localhost:{port}/?ws=wss://localhost:{port}",
-                                     "--seconds", str(OUTAGE_S + 60)], cwd=REPO,
+                                     "--seconds", str(OUTAGE_S + 60), "--gl", "gl-egl"], cwd=REPO,
                                     stdout=open(tmp_path / "emulator.log", "w"), stderr=subprocess.STDOUT)
         recorder = subprocess.Popen([sys.executable, "-m", "xr_camera_teleop.tools.xr_frame_record", "--addr",
                                      f"tcp://127.0.0.1:{xr}", "--seconds", str(OUTAGE_S + 40), "--out",
@@ -182,7 +182,7 @@ def test_node_follows_the_emulated_quest(tmp_path):
                             stdout=open(tmp_path / "node.log", "w"), stderr=subprocess.STDOUT)
     try:
         emulator = subprocess.run(["node", str(EMULATOR), "--url", f"https://localhost:{port}/?ws=wss://localhost:{port}",
-                                   "--seconds", "20"], cwd=REPO, stdout=open(tmp_path / "emulator.log", "w"),
+                                   "--seconds", "20", "--gl", "gl-egl"], cwd=REPO, stdout=open(tmp_path / "emulator.log", "w"),
                                   stderr=subprocess.STDOUT, timeout=120)
         assert emulator.returncode == 0, (tmp_path / "emulator.log").read_text()
         time.sleep(2.0)
