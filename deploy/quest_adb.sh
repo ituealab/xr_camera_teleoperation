@@ -5,7 +5,7 @@
 #   deploy/quest_adb.sh watch          # loop (systemd quest-keepalive.service): re-applies keepalive after a
 #                                      # Quest reboot; needs the USB cable plugged in to re-enable wireless ADB
 #   deploy/quest_adb.sh open [URL]     # open the teleop page in Quest Browser (Enter VR stays a user click)
-#   deploy/quest_adb.sh shot [FILE]    # screenshot of the headset view (PNG)
+#   deploy/quest_adb.sh shot [FILE]    # screenshot of what the wearer sees, VR layers included (JPEG/PNG)
 #   deploy/quest_adb.sh status
 #
 # Uses its own adb server port so another user's adb server on 5037 is left alone.
@@ -62,9 +62,30 @@ case "${1:-status}" in
     adb -s "$TCP" shell am start -a android.intent.action.VIEW -d "${2:-$QUEST_URL}" com.oculus.browser >/dev/null
     echo "opened ${2:-$QUEST_URL}" ;;
   shot)
+    # `screencap` reads SurfaceFlinger's 2D surfaces only; an immersive WebXR session is composed by the VR
+    # compositor, so it comes out black. Meta's own capture service (com.oculus.metacam, what the Quest's
+    # screenshot button uses) grabs the composed view and writes it to /sdcard/Oculus/Screenshots. Untested on
+    # this Quest 3S (docs/quest-sonic/P5_ui.md lists what to try if it does not work); screencap stays the fallback.
     ensure_tcp
-    out="${2:-quest-$(date +%Y%m%d-%H%M%S).png}"
-    adb -s "$TCP" exec-out screencap -p > "$out"; echo "$out" ;;
+    out="${2:-quest-$(date +%Y%m%d-%H%M%S)}"
+    dir=/sdcard/Oculus/Screenshots
+    before=$(adb -s "$TCP" shell "ls -t $dir 2>/dev/null | head -1" | tr -d '\r')
+    adb -s "$TCP" shell am startservice -n com.oculus.metacam/.capture.CaptureService -a TAKE_SCREENSHOT \
+      >/dev/null 2>&1 || true
+    new=""
+    for ((i = 0; i < 20; i++)); do
+      sleep 0.5
+      new=$(adb -s "$TCP" shell "ls -t $dir 2>/dev/null | head -1" | tr -d '\r')
+      [ -n "$new" ] && [ "$new" != "$before" ] && break
+      new=""
+    done
+    if [ -n "$new" ]; then
+      sleep 0.5                                   # let the writer finish the file
+      adb -s "$TCP" pull "$dir/$new" "$out.${new##*.}" >/dev/null && echo "$out.${new##*.}"
+    else
+      echo "metacam wrote no screenshot; falling back to screencap (black for VR layers)" >&2
+      adb -s "$TCP" exec-out screencap -p > "$out.png"; echo "$out.png"
+    fi ;;
   status)
     adb devices -l
     tcp_ok && adb -s "$TCP" shell dumpsys power | grep -E "mWakefulness=|mStayOn=" || true ;;
