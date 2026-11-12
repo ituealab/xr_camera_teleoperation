@@ -152,3 +152,13 @@ def test_config_parses_nested_values():
     assert p.torso_axis == ((0, 0, -0.1), (0, 0, 0.3)) and p.robot_shoulders == (0, 0, 0.2)
     with pytest.raises(KeyError):
         ArmsParams.from_config({"scal": 1.0})
+
+
+def test_a_stalled_loop_never_becomes_a_jump():
+    """The node missed 0.9 s of ticks (the old lazy Dex3 load): ramps resume and the step stays rate-limited."""
+    from xr_camera_teleop.operator.filters import MAX_STEP_DT
+    arms = Arms()
+    drive(arms, 5, both(), mode=OperatorMode.WALK)                  # parked
+    a = arms.step(0.10, both()(0.10, 5), OperatorMode.HANDS, SH, UPRIGHT, S)    # tracking starts, ramp 0.7 s
+    b = arms.step(1.00, both()(1.00, 6), OperatorMode.HANDS, SH, UPRIGHT, S)    # next tick 0.9 s later
+    assert np.linalg.norm(b.left[:3, 3] - a.left[:3, 3]) <= P.max_lin * MAX_STEP_DT + 1e-9

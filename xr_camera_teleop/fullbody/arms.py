@@ -14,7 +14,8 @@ The WebXR wrist rotation is used as is (PLAN §5), One-Euro filtered with the po
 Cheap geometric safety, no collision model: in the torso frame the wrist stays within `reach_m` of its shoulder,
 the wrist origin and the hand point (hand_point_m along the fingers) stay outside the torso capsule, and in the
 pelvis frame the wrist stays above z_min; then the two wrists stay wrist_gap_m apart. A violating target is
-projected onto the boundary. Afterwards velocity limits (max_lin, max_ang) bound every output.
+projected onto the boundary. Afterwards velocity limits (max_lin, max_ang) bound every output; ramps and limits
+integrate at most operator/filters.MAX_STEP_DT per step, so a stalled loop never turns into a jump.
 
 Per side (HandMode):
   TRACKED  HANDS mode, arm tracking on, the hand fresh: the mapped target. Entered with a half-cosine ramp from the
@@ -37,7 +38,7 @@ from xr_camera_teleop.fullbody.operator_mode import OperatorMode
 from xr_camera_teleop.fullbody.settings import OperatorSettings
 from xr_camera_teleop.fullbody.supervisor import half_cosine
 from xr_camera_teleop.fullbody.xr_frame import SIDES
-from xr_camera_teleop.operator.filters import PoseOneEuro, PoseRateLimiter
+from xr_camera_teleop.operator.filters import MAX_STEP_DT, PoseOneEuro, PoseRateLimiter, step_dt
 from xr_camera_teleop.operator.hand_geometry import ego_wrist_offset
 
 
@@ -159,17 +160,19 @@ def separate(Tl, Tr, gap: float):
 
 # ---------------------------------------------------------------------------------------------------- state
 
-@dataclass
 class _Ramp:
-    start: np.ndarray
-    t0: float
-    duration: float
+    """Half-cosine blend from a fixed start pose to a (moving) goal over `duration`; it advances by step_dt per step,
+    so a stalled loop resumes the blend where it was instead of jumping to its end."""
+
+    def __init__(self, start, duration: float):
+        self.start, self.duration, self.x, self.t = np.asarray(start, dtype=float), float(duration), 0.0, None
 
     def apply(self, now: float, goal) -> tuple[np.ndarray, bool]:
-        x = (now - self.t0) / self.duration if self.duration > 0 else 1.0
-        if x >= 1.0:
+        self.x += step_dt(self.t, now) / self.duration if self.duration > 0 else 1.0
+        self.t = now
+        if self.x >= 1.0:
             return np.asarray(goal, dtype=float), True
-        return interpolate_pose(self.start, goal, half_cosine(x)), False
+        return interpolate_pose(self.start, goal, half_cosine(self.x)), False
 
 
 class _Side:
@@ -185,12 +188,12 @@ class _Side:
         self.filter = PoseOneEuro(p.filter_pos_min_cutoff, p.filter_pos_beta, p.filter_rot_min_cutoff,
                                   p.filter_rot_beta)
         self.ramp: Optional[_Ramp] = None
-        self.limiter = PoseRateLimiter(p.max_lin, p.max_ang)
+        self.limiter = PoseRateLimiter(p.max_lin, p.max_ang, MAX_STEP_DT)
 
     def enter(self, mode: HandMode, now: float, duration: float):
         if mode is not self.mode:
             self.mode = mode
-            self.ramp = _Ramp(self.out.copy(), now, duration) if duration > 0 else None
+            self.ramp = _Ramp(self.out.copy(), duration) if duration > 0 else None
 
 
 class Arms:

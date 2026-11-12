@@ -7,7 +7,8 @@ Input: a node run that replayed a synthetic operator stream (tools/xr_synth.py, 
 recording, with the sim's odometry (odom.msgpack, tools/fullbody_sim_test.py) and SONIC telemetry. Built on
 tools/fullbody_metrics.py (segments, FK, VR tracking). What is measured, per scenario of tools/xr_synth.py:
 
-  always         falls (pelvis < 0.3 m or up_z < 0.5 while ACTIVE), supervisor time per state, pauses
+  always         falls (pelvis < 0.3 m or up_z < 0.5 while ACTIVE), supervisor time per state, pauses, arm joint
+                 peak velocity / acceleration over the ACTIVE time, the node's largest tick gap
   p4_figure8     the figure eight's closure (distance from the start mark after both loops), the stop after
                  releasing the stick (distance travelled until still), path length
   p4_stops       per direction: speed before the release and the distance travelled until still
@@ -237,7 +238,7 @@ def p6_hands(run, kin) -> dict:
                     "pos_p95_cm": [round(100 * b[w]["pos_m"]["p95"], 2) for w in ("left", "right")],
                     "rot_median_deg": [round(b[w]["rot_deg"]["median"], 2) for w in ("left", "right")],
                     "best_lag_s": vr["best_lag_s"]}
-    for name in ("hands in", "right hand lost", "right hand back", "hands -> controllers (stall)",
+    for name in ("controllers -> hands", "right hand lost", "right hand back", "hands -> controllers (stall)",
                  "walk mode: arms park", "hands again"):
         s = seg(run, name)
         if s:
@@ -331,6 +332,12 @@ def analyze(run_dir: Path, kin=None) -> dict:
     run = load(run_dir)
     kin = kin or fm.G1Kinematics()
     out = {"run": str(run_dir), "scenario": run["scenario"], "states": state_summary(run), **falls(run)}
+    act = [t for t, st, _, _ in run["states"] if st == "active"]
+    if act:
+        out["arm_rates_active"] = arm_derivatives(run, act[0], act[-1])
+    tt = np.array([t for t, _, _, _ in run["states"]])
+    if len(tt) > 1:
+        out["tick_gap_max_s"] = round(float(np.diff(tt).max()), 4)
     fn = ANALYSES.get(run["scenario"])
     if fn is not None:
         out[run["scenario"]] = fn(run, kin)

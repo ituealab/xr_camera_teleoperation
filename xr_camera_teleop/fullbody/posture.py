@@ -33,7 +33,7 @@ import numpy as np
 from xr_camera_teleop.fullbody.calibration import Calibration
 from xr_camera_teleop.fullbody.frames import in_yaw_frame, operator_body_frame, pose, rot_y, rot_x, rot_z
 from xr_camera_teleop.fullbody.settings import OperatorSettings
-from xr_camera_teleop.operator.filters import HysteresisQuantizer
+from xr_camera_teleop.operator.filters import HysteresisQuantizer, step_dt
 
 
 class Crouch(str, Enum):
@@ -161,7 +161,7 @@ class Posture:
         if self.n0 is None:
             raise RuntimeError("posture: not calibrated")
         p = self.p
-        dt = 0.0 if self._t is None else max(0.0, now - self._t)
+        dt = step_dt(self._t, now)
         self._t = now
         n = neck_pivot(T_head, p.neck_in_head)
         pitch, roll = self.lean(n, psi_body)

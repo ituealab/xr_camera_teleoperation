@@ -35,7 +35,7 @@ from dataclasses import dataclass, fields
 from typing import Optional
 
 from xr_camera_teleop.fullbody.frames import wrap_angle
-from xr_camera_teleop.operator.filters import HysteresisQuantizer
+from xr_camera_teleop.operator.filters import HysteresisQuantizer, step_dt
 
 
 @dataclass(frozen=True)
@@ -109,7 +109,7 @@ class Heading:
         if self.psi_body is None:
             self.reset(psi_head)
         p = self.p
-        dt = 0.0 if self._t is None else max(0.0, now - self._t)
+        dt = step_dt(self._t, now)
         self._t = now
         diff = float(wrap_angle(psi_head - self.psi_body))
         if not self._turning:

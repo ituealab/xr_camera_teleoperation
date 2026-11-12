@@ -5,6 +5,7 @@
                        hemisphere (sign) continuity
 - limit_pose_step    : linear / angular velocity limits
 - HysteresisQuantizer: steps of a fixed size that do not dither at a step boundary
+- step_dt            : the time step a rate limit may integrate (a stalled loop must not become a jump)
 """
 from __future__ import annotations
 
@@ -180,6 +181,15 @@ class PoseOneEuro:
 
 
 # ---------------------------------------------------------------- rate limits
+MAX_STEP_DT = 0.03     # s: at most this much time is integrated per step (the full-body node ticks every 0.02 s)
+
+
+def step_dt(t_prev, t, max_dt=MAX_STEP_DT) -> float:
+    """Time step for a rate limit or a ramp: t - t_prev, 0 for the first step, never above max_dt. After a stalled
+    loop (e.g. 0.9 s) a limited quantity then moves at most max_dt * rate, instead of the whole stall's worth at once."""
+    return 0.0 if t_prev is None else min(max(0.0, t - t_prev), max_dt)
+
+
 def limit_pose_step(p_prev, R_prev, p_tgt, R_tgt, dt, max_lin=1.2, max_ang=4.0):
     """Move (p_prev,R_prev) toward target obeying linear/angular speed limits."""
     dp = np.asarray(p_tgt, float) - p_prev
@@ -194,8 +204,8 @@ def limit_pose_step(p_prev, R_prev, p_tgt, R_tgt, dt, max_lin=1.2, max_ang=4.0):
 
 
 class PoseRateLimiter:
-    def __init__(self, max_lin=1.2, max_ang=4.0):
-        self.max_lin, self.max_ang = max_lin, max_ang
+    def __init__(self, max_lin=1.2, max_ang=4.0, max_dt=None):
+        self.max_lin, self.max_ang, self.max_dt = max_lin, max_ang, max_dt    # max_dt None: any gap (wrapper)
         self.reset()
 
     def reset(self, p=None, R=None, t=None):
@@ -207,6 +217,8 @@ class PoseRateLimiter:
             self.p, self.R, self.t = p.copy(), np.asarray(R, float).copy(), t
             return self.p.copy(), self.R.copy()
         dt = max(t - self.t, 1e-4)
+        if self.max_dt is not None:
+            dt = min(dt, self.max_dt)
         self.p, self.R = limit_pose_step(self.p, self.R, p, np.asarray(R, float), dt,
                                          self.max_lin, self.max_ang)
         self.t = t

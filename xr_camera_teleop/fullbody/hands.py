@@ -11,7 +11,8 @@ Per side, by the arm's HandMode (arms.py):
   PARKED   rest (D8: fingers neutral while walking or when the hand is gone)
 Every output moves toward its target at <= max_rate_rad_s per joint, so a mode switch never snaps the fingers.
 `rest` is the supervisor's hands_open (configs/fullbody.yaml aliases one into the other).
-dex-retargeting needs torch: the retargeter is built on the first tracked hand (~0.7 s), not at import.
+dex-retargeting needs torch: the retargeter is built with FingerTargets (~0.7 s, at node start), never inside the
+50 Hz loop (built lazily on the first tracked hand it stalled the loop 0.7-0.9 s, and the arms jumped).
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from xr_camera_teleop.fullbody.arms import HandMode
 from xr_camera_teleop.fullbody.settings import OperatorSettings
 from xr_camera_teleop.fullbody.types import N_HAND_JOINTS, Hands
 from xr_camera_teleop.fullbody.xr_frame import SIDES
+from xr_camera_teleop.operator.filters import step_dt
 from xr_camera_teleop.operator.hand_geometry import unitree_hand_points
 
 
@@ -70,22 +72,16 @@ class Dex3Retargeter:
 
 
 class FingerTargets:
-    def __init__(self, params: HandsParams = HandsParams(), retargeter: Optional[Dex3Retargeter] = None):
+    def __init__(self, params: HandsParams = HandsParams(), retargeter=None):
         self.p = params
-        self._retargeter = retargeter
+        self.retargeter = retargeter if retargeter is not None else Dex3Retargeter(params.thumb_shaping)
         self._target = {s: params.rest_of(s) for s in SIDES}
         self._out = {s: params.rest_of(s) for s in SIDES}
         self._seq = {s: None for s in SIDES}
         self._t: Optional[float] = None
 
-    @property
-    def retargeter(self) -> Dex3Retargeter:
-        if self._retargeter is None:
-            self._retargeter = Dex3Retargeter(self.p.thumb_shaping)
-        return self._retargeter
-
     def step(self, now: float, hands: dict, modes: dict, settings: OperatorSettings) -> Hands:
-        dt = 0.0 if self._t is None else max(0.0, now - self._t)
+        dt = step_dt(self._t, now)
         self._t = now
         for s in SIDES:
             mode, h = modes[s], hands[s]
