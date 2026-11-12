@@ -7,8 +7,8 @@ Branch: `quest_emin` (`quest-xr`'dan, 3144d6d). Tarih: 2026-11-12.
 | Faz | Durum |
 |---|---|
 | P0 | Tamam. Gerçek headset kaydı `data/fullbody-runs/20261112-195840` (300 s); bulgular `P0_quest_probe.md` §6–7. Kafa ~36 Hz (robot görüntüsü açıkken 72 Hz / 2); Quest 3S Quest Browser'da karışık el+kontrolcü modu yok (D8). |
-| P1 | Tamam, kameralar kapalıyken: 10 dk dayanıklılık düşmesiz, §7a fizik hedefleri geçiyor (`P1_sim.md`). Kameralar açıkken açık: GPU 20 W güç kilidi (§7a, §11). |
-| P2 | Sürüyor. |
+| P1 | Tamam: 10 dk dayanıklılık düşmesiz, §7a fizik hedefleri geçiyor (`P1_sim.md`). GPU 20 W kilidi uykudan dönüş hatasıydı; yeniden başlatmadan sonra kameralar açık da geçiyor (`P1_sim.md` §3a). |
+| P2 | Tamam (`P2_node.md`): node, girdi kaynağı ara yüzü, lifecycle, script senaryoları, kill ve replay testleri; sapmalar orada §5. |
 | P3 | Tamam. Gerçek kayıt §6 kurallarıyla doğrulandı; takip edilen elin işaretçisi artık kontrolcü akışına girmiyor. |
 | P4–P8 | Başlamadı. |
 
@@ -222,7 +222,7 @@ DISCONNECTED ─(SONIC hazır + Quest bağlı)→ STANDBY ─(kalibrasyon)→ AC
   1. `command{start=1, planner=1}` gönderilir.
   2. Planner init beklenir. P1: telemetri (`g1_debug`, :5557) start'tan ~0.2 s sonra akmaya başlıyor, planner init ~140 ms. Sabit gecikme yerine bu sinyal kullanılır (P2).
   3. **VR yeniden kurma:** VR alanları olmadan bir mesaj, ardından VR alanlarıyla mesajlar gönderilir. Bu, upstream'deki "init encoder modunu sıfırlar, VR enable kenar tetikli" davranışına karşı gerekli.
-  4. Kapanışta `command{stop=1}` gönderilir. `stop` binary'yi kapatır (süreç çıkar, motorlar sönüm moduna geçer); yeniden başlatmak için süreç yeniden açılmalı.
+  4. Durdurmada `command{stop=1}` gönderilir. `stop` binary'yi kapatır (süreç çıkar, motorlar sönüm moduna geçer); yeniden başlatmak için süreç yeniden açılmalı (sim'de `run_deploy --respawn`, ~28 s). P2: node kapanırken stop göndermez; STOP operatörün açık isteğidir (`P2_node.md` §5).
 - **Kabul edilen risk:** stok SONIC 1 s planner timeout'unda VR bayrağını temizlemez (P1'de gözlendi: VR modu mesaj başına `vr_position` varlığıyla açılıp kapanıyor, timeout ona dokunmuyor). Simde bacaklar `IDLE`'a geçer, üst gövde son hedefte kalır; senaryo 9 bunu ölçer. Gerçek robot öncesi SONIC tarafı watchdog'u gerekir (§12).
 
 **Kontrolcü düzeni** (eşleme config'te):
@@ -297,7 +297,7 @@ Torch kurulmaz; sim yolu torch import etmiyor, doğrulandı. Kurulum listesi `en
   - sahnede gereksiz kontak çifti yok;
   - mesh'ler sadeleştirilmiş görsel/çarpışma ayrımıyla.
 - Ölçülen RTF ya da fps hedefin altına düşerse ilgili faz kapanmaz.
-- **Açık donanım sorunu (P1):** laptop dGPU'su 20 W firmware güç sınırında (`SW Power Cap: Active`, `nvidia-smi -pl` desteklenmiyor). Kameralar açıkken GPU paylaşılıyor: SONIC'in gözlem→komut adımı ~28 ms (bütçe 20 ms) ve robot düşüyor. Kameralar kapalıyken her şey çalışıyor. Kullanıcı kontrol ediyor (adaptör, güç modu); düzelene kadar sim `--no-cameras` ile çalışır (`P1_sim.md` §3a).
+- **GPU güç bütçesi (P1, çözüldü):** dGPU uykudan başarısız dönüşte 20 W'ta kalmıştı. O halde kameralar açıkken SONIC'in gözlem→komut adımı ~28 ms (bütçe 20 ms) ve robot düşüyordu. Yeniden başlatmadan sonra 145 W, gözlem→komut p99 3.2 ms. Sim açılışta güç limitini kontrol eder ve < 50 W'ta uyarır (`sim/gpu.py`, `P1_sim.md` §3a).
 
 **Başlatma:** `sim/run_sonic_sim.py`, `SimLoopConfig.load_wbc_yaml` + `SimulatorFactory.create_simulator` ile upstream `DefaultEnv`'i kurar (ROBOT_SCENE, DOMAIN_ID); döngü bizimdir. Upstream'in `BaseSimulator.start()` döngüsü kullanılmaz: kamera render'ı ve viewer senkronu fizik adımının içinde, uyku göreli, dolayısıyla RTF < 1. `camera_configs` upstream'e verilmez; kameralar ve viewer bizim alt süreçlerimizde, durum anlık görüntüsünden render eder. Upstream dosyalarına dokunulmaz.
 
@@ -339,7 +339,7 @@ Her fazın çıktısı birim testleriyle ve bir commit ile kapanır.
 - Ölçülecekler: modların hız aralıkları, squat ve kneel yükseklik aralığı, DDS domain'i, el modeli kararlılığı.
 - **Çıkış:** klavye ile 10 dk yürü, dön, squat; düşme yok. §7a performans hedefleri karşılanır (kameralar açıkken dahil). Ölçümler `docs/quest-sonic/P1_sim.md`'ye yazılır.
 
-### P2 — SONIC adaptörü ve başsız node (script ile girdi)
+### P2 — SONIC adaptörü ve başsız node (script ile girdi) — tamam
 - `sonic/protocol.py`: upstream `zmq_planner_sender.py` çıktısıyla bayt bayt karşılaştıran golden test (P1'de yapıldı).
 - `sonic/adapter.py`, `sonic/lifecycle.py`, `fullbody/types.py`, `fullbody/supervisor.py`, `fullbody/node.py` (girdi kaynağı soyut: Quest ya da script).
 - Script senaryoları: kare yürüyüş, yerinde 180° dönüş, bilek daireleri, gövde eğme, squat.
@@ -409,7 +409,7 @@ Bilek hatası yetmezse §11'e geçilir.
 | Prebuilt binary ile kaynak uyumsuz | P1 | Pinli kaynaktan x86 build tarifi (`docs/quest-sonic/build_sonic.md`) |
 | Eğimlerde düşme | P8 | Karakterizasyon olarak raporlanır; kabul kapısı sadece 5° |
 | Squat aralığı beklenenden dar | P1: `height` 0.3–0.8 (pelvis 0.44–0.79) | Çömelme kademeleri ölçüme göre ayarlanır |
-| dGPU 20 W güç kilidi | P1: kameralar açıkken politika adımı ~28 ms, robot düşüyor | Donanım kullanıcıda; o zamana kadar kameralar kapalı. P5'in görüntü hedefi buna bağlı. |
+| dGPU 20 W güç kilidi | P1: kameralar açıkken politika adımı ~28 ms, robot düşüyor | Uykudan dönüş hatası; yeniden başlat. Sim açılışta uyarır (`sim/gpu.py`). |
 
 ## 12. Sonrası için tasarım garantileri (PC2 ve gerçek robot)
 
