@@ -54,5 +54,6 @@ dirs:
 deploy:
   # DDS domain compiled into deploy_binary. Upstream uses 0; this build was patched to 42 to keep simulation
   # traffic off the real robot's domain. The sim follows this value; the binary is not changed.
+  # Verified in P1: the sim publishing only on 42 is driven by the binary (docs/quest-sonic/P1_sim.md §4).
   dds_domain: 42
   planner_version: V2
