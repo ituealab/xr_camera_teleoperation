@@ -23,6 +23,7 @@ from typing import Optional, Protocol
 
 import numpy as np
 
+from xr_camera_teleop.fullbody.settings import OperatorSettings
 from xr_camera_teleop.fullbody.xr_frame import XRFrame
 
 N_HAND_JOINTS = 7          # Dex3 per hand
@@ -163,6 +164,8 @@ class OperatorData:
     """Everything the operator side delivered by this tick. The node logs it and replay feeds it back, so a source
     is a deterministic function of (time, OperatorData, State) sequences."""
     frame: Optional[XRFrame] = None          # latest xr_frame received (a full snapshot), None before the first
+    settings: OperatorSettings = field(default_factory=OperatorSettings)   # current panel settings (node-owned)
+    ui: tuple = ()                           # UiActions confirmed on the headset panel since the previous tick
 
 
 @dataclass(frozen=True)
