@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Full-body teleop in simulation (PLAN §3, §4): one tmux session per process, logs in ~/.local/state/xr_fullbody.
-# P1 brings up the first two processes; later phases add camera_bridge, quest_server and fullbody_node here.
+# Later phases add camera_bridge and quest_server here.
 #   sim    MuJoCo sim (upstream gear_sonic physics, our scene + real-time loop, viewer and robot cameras)
 #   sonic  prebuilt SONIC deploy binary (zmq_manager input on :5556, telemetry on :5557), relaunched whenever it
 #          exits (SONIC's `stop` ends the process); the sim's gantry drops / re-hangs the robot with SONIC's control
+#   node   fullbody_node (data/xr-env), started with the arguments after `--`; its session ends when it exits
 #
-#   deploy/xr_fullbody_sim.sh start [--no-viewer] [--no-cameras]  # start both (the robot hangs from the sim's elastic band)
+#   deploy/xr_fullbody_sim.sh start [--no-viewer] [--no-cameras] [-- NODE_ARGS...]
+#       e.g. start -- --source script --scenario all                        (scripted operator)
+#            start -- --source quest --xr-replay data/fullbody-runs/<time>  (a recorded headset session)
+#            start -- --source quest                                        (the live Quest server, :5596)
+#   deploy/xr_fullbody_sim.sh node NODE_ARGS...      # (re)start only the node
 #   deploy/xr_fullbody_sim.sh stop | status | logs
 #   deploy/xr_fullbody_sim.sh key 9                  # sim key: 9 = drop/re-hang band, backspace = reset robot
 #   deploy/xr_fullbody_sim.sh attach sim|sonic       # the process's terminal (sonic: `o` = emergency stop; relaunched)
@@ -13,6 +18,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LOG_DIR="$HOME/.local/state/xr_fullbody"
 SIM_PY="$REPO/data/sonic-sim-venv/bin/python"
+NODE_PY="$REPO/data/xr-env/bin/python"
 PREFIX=xr-fullbody
 
 running() { tmux has-session -t "=$PREFIX-$1" 2>/dev/null; }
@@ -42,17 +48,25 @@ wait_log() {   # wait_log name pattern seconds
   return 1
 }
 
+start_node() {
+  stop_one node
+  launch node "$NODE_PY" -u -m xr_camera_teleop.fullbody.node "$@"
+  printf 'Node started (%s). Watch: %s attach node | log %s/node.log\n' "$*" "$0" "$LOG_DIR"
+}
+
 [[ -x "$SIM_PY" ]] || { printf 'Missing %s: run deploy/setup_sonic_sim_env.sh\n' "$SIM_PY" >&2; exit 1; }
 case "${1:-start}" in
   start)
     shift || true
     sim_args=()
-    for arg in "$@"; do
-      case "$arg" in
+    while (($#)); do
+      case "$1" in
         --no-viewer) sim_args+=(--no-viewer) ;;
         --no-cameras) sim_args+=(--no-cameras) ;;
-        *) printf 'Unknown option: %s\n' "$arg" >&2; exit 2 ;;
+        --) shift; break ;;
+        *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
       esac
+      shift
     done
     mkdir -p "$LOG_DIR"
     "$SIM_PY" -m xr_camera_teleop.sonic.assets verify
@@ -65,17 +79,27 @@ case "${1:-start}" in
       launch sonic "$SIM_PY" -u -m xr_camera_teleop.sonic.run_deploy --respawn
       wait_log sonic 'Init Done' 120
     fi
-    printf 'Sim and SONIC are up (robot on the elastic band, SONIC waiting for command start).\n'
-    printf 'Drive it: %s -m xr_camera_teleop.fullbody.node --source script --scenario square\nLogs: %s\n' \
-      "$REPO/data/xr-env/bin/python" "$LOG_DIR"
+    printf 'Sim and SONIC are up (robot on the elastic band, SONIC waiting for command start). Logs: %s\n' "$LOG_DIR"
+    if (($#)); then
+      start_node "$@"
+    else
+      printf 'Drive it: %s start -- --source script --scenario square   (or: %s node ...)\n' "$0" "$0"
+    fi
+    ;;
+  node)
+    shift
+    (($#)) || { printf 'Usage: %s node NODE_ARGS... (see fullbody/node.py --help)\n' "$0" >&2; exit 2; }
+    running sonic || { printf 'sim/SONIC are not running: %s start first\n' "$0" >&2; exit 1; }
+    start_node "$@"
     ;;
   stop)
+    stop_one node       # SIGINT: the node disengages and leaves SONIC standing
     stop_one sonic      # SIGINT ends the respawn loop and the binary
     stop_one sim
     printf 'Stopped.\n'
     ;;
   status)
-    for name in sim sonic; do
+    for name in sim sonic node; do
       if running "$name"; then printf '%s: running\n' "$name"; else printf '%s: stopped\n' "$name"; fi
     done
     ;;
@@ -85,10 +109,10 @@ case "${1:-start}" in
     tmux send-keys -t "=$PREFIX-sim:" "$2" Enter
     ;;
   attach)
-    tmux attach -t "=$PREFIX-${2:?sim or sonic}"
+    tmux attach -t "=$PREFIX-${2:?sim, sonic or node}"
     ;;
   logs)
-    tail -n 40 -F "$LOG_DIR/sim.log" "$LOG_DIR/sonic.log"
+    tail -n 40 -F "$LOG_DIR/sim.log" "$LOG_DIR/sonic.log" "$LOG_DIR/node.log"
     ;;
-  *) printf 'Usage: %s start [--no-viewer] [--no-cameras] | stop | status | key K | attach sim|sonic | logs\n' "$0" >&2; exit 2 ;;
+  *) printf 'Usage: %s start [--no-viewer] [--no-cameras] [-- NODE_ARGS] | node NODE_ARGS | stop | status | key K | attach sim|sonic|node | logs\n' "$0" >&2; exit 2 ;;
 esac

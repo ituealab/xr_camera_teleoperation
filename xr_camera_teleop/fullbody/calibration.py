@@ -1,14 +1,14 @@
 """Neutral-pose calibration (PLAN §5, Kalibrasyon). Pure: frames in, `Calibration` out.
 
-The operator stands upright looking forward while a button is held (~1 s; the button logic is the supervisor's);
-the frames received meanwhile are passed to `calibrate`. Recorded, all in the floor frame F of fullbody/frames.py:
+The operator stands upright looking forward while a button is held (~1 s; the button logic is the Quest input
+source's, fullbody/quest_source.py); the frames received meanwhile are passed to `calibrate`. Recorded, all in the floor frame F of fullbody/frames.py:
   h0     head height (m)
   psi0   head heading (rad)
   p0     head position projected on the floor, (x, y)
   L      hip-to-head length used by the posture estimate, L = k_L h0
   wrist  per hand, its neutral pose in the neutral head yaw frame N = yaw_frame(psi0, (p0, h0)), only for a hand
          tracked through the window (two free hands: PLAN D8 TRACKED)
-A calibration belongs to one headset session and recenter epoch (`matches`); the supervisor drops it when either
+A calibration belongs to one headset session and recenter epoch (`matches`); the Quest source drops it when either
 changes. Rejections raise CalibrationError with the reason, so the HUD can tell the operator what to fix.
 """
 from __future__ import annotations

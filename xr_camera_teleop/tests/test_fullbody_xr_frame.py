@@ -112,3 +112,14 @@ def test_untracked_source_keeps_its_last_sample():
     c = f.controllers["right"]
     assert not c.stamp.valid and c.T is not None                 # held for consumers, flagged invalid
     assert check(f) == []
+
+
+def test_shifted_moves_every_msi_time_and_keeps_ages():
+    import numpy as np
+    from xr_camera_teleop.fullbody.xr_frame import Head, Stamp, XRFrame, shifted
+    f = XRFrame(seq=3, t_pub=10.0, session=1, connected=True,
+                head=Head(Stamp(9.9, 9.95, 4, True), np.eye(4)))
+    g = shifted(f, 100.0)
+    assert g.t_pub == 110.0 and g.head.stamp.t == 109.9 and g.head.stamp.t_rx == 109.95
+    assert abs(g.head.stamp.age(110.0) - f.head.stamp.age(10.0)) < 1e-9
+    assert g.hands["left"].stamp == f.hands["left"].stamp          # never-seen sources keep t = 0

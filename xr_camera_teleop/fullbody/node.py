@@ -3,6 +3,7 @@
 
     data/xr-env/bin/python -m xr_camera_teleop.fullbody.node --source script --scenario square
     data/xr-env/bin/python -m xr_camera_teleop.fullbody.node --source quest
+    data/xr-env/bin/python -m xr_camera_teleop.fullbody.node --source quest --xr-replay data/fullbody-runs/<time>
 
 One tick (`NodeCore.step`, pure):
 
@@ -12,7 +13,9 @@ One tick (`NodeCore.step`, pure):
                                                                                                    ─► planner message
 
 Around it (`run`, the only I/O): SONIC's ZMQ ends (PUB bound on deploy.zmq_port, telemetry SUB on zmq_out_port),
-the xr_frame SUB (Quest source only), the run log, absolute 20 ms deadlines. A planner message goes out on every
+the xr_frame input (Quest source only: the Quest server's SUB, or with --xr-replay the xr_frame records of a
+recorded run played back in real time, times shifted to now; the node exits when the recording ends), the run log,
+absolute 20 ms deadlines. A planner message goes out on every
 tick in every state, so SONIC never sees its 1 s planner timeout while the node runs.
 
 Run log (fullbody/runlog.py, data/fullbody-runs/<time>/): per tick a `tick` record (inputs that are not the source's
@@ -210,6 +213,41 @@ class XRFrameInput:
         self.sub.close()
 
 
+class RecordedXRFrames:
+    """xr_frame records of a run directory, played back in real time from the first poll (same interface as
+    XRFrameInput). Frame times are shifted by (start - first record time), so sample ages are as recorded."""
+
+    def __init__(self, run_dir: Path):
+        from xr_camera_teleop.fullbody import xr_frame
+        from xr_camera_teleop.fullbody.runlog import read_records
+
+        self._xf = xr_frame
+        self.records = [(r["t"], r["frame"]) for r in read_records(run_dir) if r["k"] == "xr_frame"]
+        if not self.records:
+            raise ValueError(f"{run_dir}: no xr_frame records")
+        self.frame, self._k, self._offset = None, 0, None
+
+    @property
+    def finished(self) -> bool:
+        return self._k >= len(self.records)
+
+    def poll(self):
+        now = time.time()
+        if self._offset is None:
+            self._offset = now - self.records[0][0]
+        latest = None
+        while self._k < len(self.records) and self.records[self._k][0] + self._offset <= now:
+            latest = self.records[self._k][1]
+            self._k += 1
+        if latest is None:
+            return None, None
+        self.frame = self._xf.shifted(self._xf.from_dict(latest), self._offset)
+        return self.frame, None
+
+    def close(self):
+        pass
+
+
 def run_meta(source: InputSource, cfg: dict, config_path: Path) -> dict:
     from xr_camera_teleop.sonic import assets
 
@@ -224,13 +262,19 @@ def run_meta(source: InputSource, cfg: dict, config_path: Path) -> dict:
     return meta
 
 
-def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Path = CONFIG) -> int:
+def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Path = CONFIG,
+        xr_replay: Optional[Path] = None) -> int:
     fb = cfg["fullbody"]
     node_cfg = fb["node"]
     core = NodeCore(source, fb)
     link = SonicLink(cfg["sonic_deploy"])
-    xr = XRFrameInput(node_cfg["xr_frame_addr"]) if isinstance(source, QuestSource) else None
-    writer = RunWriter(run_dir, run_meta(source, cfg, config_path)) if run_dir else None
+    xr = None
+    if isinstance(source, QuestSource):
+        xr = RecordedXRFrames(xr_replay) if xr_replay else XRFrameInput(node_cfg["xr_frame_addr"])
+    meta = run_meta(source, cfg, config_path)
+    if xr_replay:
+        meta["xr_replay"] = str(xr_replay)
+    writer = RunWriter(run_dir, meta) if run_dir else None
     period = 1.0 / float(node_cfg["rate_hz"])
 
     signals = {"n": 0}
@@ -265,7 +309,8 @@ def run(source: InputSource, cfg: dict, run_dir: Optional[Path], config_path: Pa
                 writer.write("robot", robot[0], state=robot[1].to_dict())
 
             node_events: tuple = ()
-            if shutdown_at is None and (signals["n"] or source.result is not None):
+            replay_done = isinstance(xr, RecordedXRFrames) and xr.finished
+            if shutdown_at is None and (signals["n"] or source.result is not None or replay_done):
                 shutdown_at = now
                 if core.lifecycle.phase is not Phase.STOPPING and core.supervisor.state in (State.ACTIVE,
                                                                                            State.PAUSED):
@@ -326,18 +371,22 @@ def main(argv=None) -> int:
     ap.add_argument("--scenario", choices=[*SCENARIOS, "all"], help="script source: what to play")
     ap.add_argument("--keep-running", action="store_true",
                     help="script source: do not STOP SONIC at the end (leave the robot standing)")
+    ap.add_argument("--xr-replay", type=Path, metavar="RUN_DIR",
+                    help="quest source: play the xr_frame records of a recorded run instead of the Quest server")
     ap.add_argument("--config", type=Path, default=CONFIG)
     ap.add_argument("--run-dir", type=Path, help="run directory (default: a new data/fullbody-runs/<time>)")
     ap.add_argument("--no-log", action="store_true")
     a = ap.parse_args(argv)
     if a.source == "script" and not a.scenario:
         ap.error("--source script needs --scenario")
+    if a.xr_replay and a.source != "quest":
+        ap.error("--xr-replay belongs to --source quest")
     cfg = load_config(a.config)
     desc = {"kind": "script", "scenario": a.scenario, "stop_at_end": not a.keep_running} if a.source == "script" \
         else {"kind": "quest"}
     source = make_source(desc, cfg["fullbody"])
     run_dir = None if a.no_log else (a.run_dir or new_run_dir())
-    return run(source, cfg, run_dir, a.config)
+    return run(source, cfg, run_dir, a.config, a.xr_replay)
 
 
 if __name__ == "__main__":
