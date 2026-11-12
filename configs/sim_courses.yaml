@@ -1,0 +1,32 @@
+# MuJoCo scenes for the SONIC sim. xr_camera_teleop.sim.scene_builder loads the upstream G1 scene with MjSpec,
+# adds what is below and writes data/sim/scenes/<course>.xml. The upstream files are not touched.
+
+# Upstream sim2sim scene (robot g1_29dof_with_hand.xml + floor, light, skybox), relative to the SONIC source
+# (configs/sonic_assets.yaml). This is the scene upstream's run_sim_loop.py uses.
+base_scene: gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml
+
+render:
+  offscreen_size: [1920, 1080]   # offscreen framebuffer; must hold the largest offscreen image
+  shadow_size: 2048              # upstream default 4096 costs ~2x GPU time for no visible gain at 960x540
+  # Robot collision meshes duplicate the visual meshes (~620k faces each set). Drawing them only when this
+  # geom group is enabled halves the triangles of every view. Rendering only; physics is unchanged.
+  robot_collision_group: 3       # viewer key 3 shows them
+
+# ZED 2i stereo pair on the head mount (PLAN §7). Cameras are added to `body`, one per eye.
+robot_camera:
+  body: torso_link
+  # Optical centre (midpoint of the two lenses) in torso_link, metres. From the g1_zed_mount CAD v5
+  # (~/g1_zed_mount/exports/zed_mount_params.json, cam_T_default): (85, -60, 480) mm in the URDF torso frame,
+  # left lens on the robot's centre line. Upstream's MJCF puts the head mesh 10 mm lower in torso_link than
+  # that URDF does (-0.054 vs -0.044), and the mount sits on the head, so z is 0.470 here.
+  center: [0.085, -0.060, 0.470]
+  pitch_down_deg: 50.0           # mount default; the mount allows 35-60
+  baseline: 0.120
+  fovy_deg: 70.0                 # ZED 2i 2.1 mm lens, vertical (4 mm lens: 44)
+  resolution: [960, 540]         # per eye
+  names: [zed_left, zed_right]
+
+courses:
+  flat: {}                       # the upstream floor only
+  # A course lists static boxes on top of the base scene (ramps, steps, tables come in P5/P8):
+  #   - {type: box, name: ramp5, pos: [x, y, z], size: [hx, hy, hz], euler_deg: [r, p, y], friction: 1.0}
