@@ -98,3 +98,24 @@ def test_open_and_closed_share_thumb_0_so_closing_only_flexes():
     for P in (HandsParams(), HandsParams.from_config(load_config()["fullbody"]["quest"]["hands"])):
         for s in SIDES:
             assert P.rest_of(s)[0] == pytest.approx(P.closed_of(s)[0]) == pytest.approx(-1.10)
+
+
+def test_without_retarget_tracked_hands_rest_and_triggers_still_close():
+    """hands.retarget false (PC2, --no-finger-retarget): no retargeter is built, a tracked hand holds rest, a held
+    controller's trigger still closes its hand."""
+    from types import SimpleNamespace
+
+    from xr_camera_teleop.fullbody.arms import HandMode
+    from xr_camera_teleop.fullbody.settings import OperatorSettings
+    from xr_camera_teleop.fullbody.xr_frame import SIDES
+
+    p = HandsParams(max_rate_rad_s=1e3, retarget=False)
+    ft = FingerTargets(p)
+    assert ft.retargeter is None
+    hands = {s: SimpleNamespace(stamp=SimpleNamespace(seq=1), joints=None, T=None) for s in SIDES}
+    out = ft.step(0.0, hands, {s: HandMode.TRACKED for s in SIDES}, OperatorSettings())
+    out = ft.step(1.0, hands, {s: HandMode.TRACKED for s in SIDES}, OperatorSettings())
+    assert np.allclose(out.left, p.rest_of("left")) and np.allclose(out.right, p.rest_of("right"))
+    ctrl = {"right": SimpleNamespace(trigger=1.0)}
+    out = ft.step(2.0, hands, {"left": HandMode.TRACKED, "right": HandMode.CONTROLLER}, OperatorSettings(), ctrl)
+    assert np.allclose(out.right, p.closed_of("right")) and np.allclose(out.left, p.rest_of("left"))

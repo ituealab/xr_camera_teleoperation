@@ -509,6 +509,9 @@ def main(argv=None) -> int:
     ap.add_argument("--config", type=Path, default=CONFIG)
     ap.add_argument("--sonic-config", type=Path, metavar="YAML",
                     help="SONIC deploy config instead of fullbody.yaml's sonic_config (PC2: sonic_robot.yaml)")
+    ap.add_argument("--no-finger-retarget", action="store_true",
+                    help="tracked hands hold the open pose (no dex-retargeting); controller triggers still close the "
+                         "hands (PC2: the retarget takes 11-20 ms per hand there, more than the 50 Hz budget)")
     ap.add_argument("--run-dir", type=Path, help="run directory (default: a new data/fullbody-runs/<time>)")
     ap.add_argument("--no-log", action="store_true")
     a = ap.parse_args(argv)
@@ -517,6 +520,8 @@ def main(argv=None) -> int:
     if a.xr_replay and a.source != "quest":
         ap.error("--xr-replay belongs to --source quest")
     cfg = load_config(a.config, a.sonic_config)
+    if a.no_finger_retarget:
+        cfg["fullbody"]["quest"]["hands"]["retarget"] = False
     desc = {"kind": "script", "scenario": a.scenario, "stop_at_end": not a.keep_running} if a.source == "script" \
         else {"kind": "quest"}
     source = make_source(desc, cfg["fullbody"])

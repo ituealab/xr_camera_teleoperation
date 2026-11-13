@@ -13,7 +13,7 @@ Per side:
                      never sweeps it sideways into them (with the old rest thumb_0 = 0 it did); no self-collision
                      anywhere along the close in the sim.
   otherwise, by the arm's HandMode (arms.py):
-    TRACKED  the retarget of each new hand sample (settings.fingers off: rest)
+    TRACKED  the retarget of each new hand sample (settings.fingers off, or hands.retarget false: rest)
     HOLD     the last retarget (the hand is briefly lost: a grasp is not dropped)
     PARKED   rest (fingers neutral when the hand is gone)
 Every output moves toward its target at <= max_rate_rad_s per joint, so a mode switch never snaps the fingers.
@@ -44,6 +44,7 @@ class HandsParams:
                      (-1.10, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45))
     max_rate_rad_s: float = 8.0
     thumb_shaping: bool = True
+    retarget: bool = True          # False: tracked hands hold rest (no retargeter, no torch); triggers still close
 
     @classmethod
     def from_config(cls, cfg: dict) -> "HandsParams":
@@ -88,7 +89,8 @@ class Dex3Retargeter:
 class FingerTargets:
     def __init__(self, params: HandsParams = HandsParams(), retargeter=None):
         self.p = params
-        self.retargeter = retargeter if retargeter is not None else Dex3Retargeter(params.thumb_shaping)
+        self.retargeter = (retargeter if retargeter is not None
+                           else Dex3Retargeter(params.thumb_shaping) if params.retarget else None)
         self._target = {s: params.rest_of(s) for s in SIDES}
         self._out = {s: params.rest_of(s) for s in SIDES}
         self._seq = {s: None for s in SIDES}
@@ -104,7 +106,8 @@ class FingerTargets:
             if settings.fingers and c is not None:
                 rest, v = self.p.rest_of(s), min(1.0, max(0.0, float(c.trigger)))
                 self._target[s], self._seq[s] = rest + v * (self.p.closed_of(s) - rest), None
-            elif not settings.fingers or mode in (HandMode.PARKED, HandMode.CONTROLLER):
+            elif (not settings.fingers or self.retargeter is None
+                  or mode in (HandMode.PARKED, HandMode.CONTROLLER)):
                 self._target[s], self._seq[s] = self.p.rest_of(s), None
             elif mode is HandMode.TRACKED and h.stamp.seq != self._seq[s]:
                 self._seq[s] = h.stamp.seq

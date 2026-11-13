@@ -76,7 +76,7 @@ start() {
     fi
   fi
   if ! running node; then
-    launch node "$NODE_PY" -u -m xr_camera_teleop.fullbody.node --source quest --sonic-config "$SONIC_CONFIG"
+    launch node "$NODE_PY" -u -m xr_camera_teleop.fullbody.node --source quest --sonic-config "$SONIC_CONFIG" --no-finger-retarget
   fi
   sleep 2
   local failed=0
