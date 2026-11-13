@@ -24,6 +24,7 @@ DEXRT_REF=d7753d38c9ff11f80bafea6cd168351fd3db9b0e
 export MAMBA_ROOT_PREFIX="${MAMBA_ROOT_PREFIX:-$HOME/.local/share/mamba}"
 [[ -x "$MM" && -x "$UV" ]] || { echo "micromamba / uv missing in ~/.local/bin" >&2; exit 1; }
 mkdir -p "$REPO/data"
+command -v tmux >/dev/null || sudo apt-get install -y -q tmux     # the launcher's one session per process
 
 echo "== 1/6 $XR_ENV"
 if [[ ! -x "$XR_ENV/bin/python" ]]; then
