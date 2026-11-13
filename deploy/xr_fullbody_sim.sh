@@ -38,13 +38,24 @@ PREFIX=xr-fullbody
 NAMES=(sim sonic bridge quest node)
 
 running() { tmux has-session -t "=$PREFIX-$1" 2>/dev/null; }
+# The tmux server outlives this script. When this script is the one that starts it, it goes into a systemd user
+# scope of its own, out of the caller's cgroup: closing the caller's terminal or session (an SSH login, an agent's
+# shell) then cannot take the whole stack down with it.
+tmux_new_session() {
+  if ! tmux list-sessions >/dev/null 2>&1 && command -v systemd-run >/dev/null \
+      && systemctl --user show-environment >/dev/null 2>&1; then
+    systemd-run --user --scope --quiet --collect --unit="$PREFIX-tmux-$(date +%s)" tmux new-session "$@"
+  else
+    tmux new-session "$@"
+  fi
+}
 launch() {
   local name=$1; shift
   local cmd
   printf -v cmd '%q ' "$@"
   # tee keeps the process attached to the tmux terminal (stdin keys) while logging everything
   printf -v cmd '%s 2>&1 | tee -i %q' "$cmd" "$LOG_DIR/$name.log"
-  tmux new-session -d -s "$PREFIX-$name" -c "$REPO" -x 200 -y 50 "bash -c $(printf '%q' "set -o pipefail; $cmd")"
+  tmux_new_session -d -s "$PREFIX-$name" -c "$REPO" -x 200 -y 50 "bash -c $(printf '%q' "set -o pipefail; $cmd")"
 }
 stop_one() {
   local name=$1 pid
