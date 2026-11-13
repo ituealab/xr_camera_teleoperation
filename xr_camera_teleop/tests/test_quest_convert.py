@@ -257,3 +257,54 @@ def test_hand_decode():
     assert h.pinch == pytest.approx(0.05)
     assert decode_hand({"right": PLACEHOLDER, "rightState": {}}, "right") is None
     assert np.isnan(decode_hand({"left": flat, "leftState": {}}, "left").pinch)
+
+
+# ---------------------------------------------------------------- camera geometry from the stream (realsense_ir_stream)
+def test_camera_geometry_prefers_the_packet():
+    from xr_camera_teleop.operator.quest.convert import camera_geometry
+    assert camera_geometry({"vfov_deg": 63.224, "baseline_m": 0.0503}, 70.0, 0.12) == (63.224, 0.0503, "packet")
+
+
+@pytest.mark.parametrize("packet", [{}, {"vfov_deg": 63.2}, {"vfov_deg": None, "baseline_m": 0.05},
+                                    {"vfov_deg": "x", "baseline_m": 0.05}, {"vfov_deg": 0.0, "baseline_m": 0.05},
+                                    {"vfov_deg": 63.2, "baseline_m": -0.1}])
+def test_camera_geometry_falls_back_to_the_flags(packet):
+    from xr_camera_teleop.operator.quest.convert import camera_geometry
+    assert camera_geometry(packet, 70.0, 0.12) == (70.0, 0.12, "flags")
+
+
+def test_camera_feed_takes_grayscale_stereo_and_its_geometry():
+    """A grayscale JPEG pair as deploy/realsense_ir_stream.py sends it: size, geometry and health come through, and a
+    downscaled eye stays a 1-component JPEG."""
+    import time
+
+    import cv2
+    import msgpack
+    import zmq
+
+    from xr_camera_teleop.operator.quest.convert import jpeg_size
+    from xr_camera_teleop.operator.quest.server import CameraFeed
+    gray = (np.arange(800 * 1280) % 251).astype(np.uint8).reshape(800, 1280)
+    jpg = cv2.imencode(".jpg", gray, [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()
+    pub = zmq.Context.instance().socket(zmq.PUB)
+    port = pub.bind_to_random_port("tcp://127.0.0.1")
+    feed = CameraFeed(f"tcp://127.0.0.1:{port}", width=640, vfov_deg=70.0, baseline_m=0.12)
+    try:
+        packet = {"v": 1, "sequence": 1, "stamp_ns": time.time_ns(), "t_send_ns": time.time_ns(), "left": jpg,
+                  "right": jpg, "format": "jpeg", "width": 1280, "height": 800, "vfov_deg": 63.224,
+                  "baseline_m": 0.05029, "camera": "d435i-ir"}
+        deadline = time.monotonic() + 5.0
+        while feed.latest() is None and time.monotonic() < deadline:
+            pub.send(msgpack.packb(packet, use_bin_type=True))
+            time.sleep(0.05)
+        f = feed.latest()
+        assert f is not None
+        assert (f["vfov_deg"], f["baseline_m"], f["geometry"], f["camera"]) == (63.224, 0.05029, "packet", "d435i-ir")
+        assert f["size"] == (640, 400) == jpeg_size(f["right"])
+        img = cv2.imdecode(np.frombuffer(f["left"], np.uint8), cv2.IMREAD_UNCHANGED)
+        assert img.ndim == 2                                   # still grayscale after the shrink
+        h = feed.health()
+        assert h["geometry"] == "packet" and h["vfov_deg"] == 63.224 and h["stereo"]
+    finally:
+        feed.stop.set()
+        pub.close()

@@ -244,6 +244,18 @@ def view_plane(mode, aspect, vfov_deg=70.0, ego_height=0.45):
     return EGO_DISTANCE_M, float(ego_height)
 
 
+def camera_geometry(packet: dict, vfov_deg: float, baseline_m: float) -> tuple[float, float, str]:
+    """(vertical FOV deg, stereo baseline m, source) for a camera packet: the camera's own values when the packet
+    carries them (deploy/realsense_ir_stream.py, sim/camera_bridge.py), else the server's flags ("flags")."""
+    try:
+        v, b = float(packet["vfov_deg"]), float(packet["baseline_m"])
+    except (KeyError, TypeError, ValueError):
+        return float(vfov_deg), float(baseline_m), "flags"
+    if not (1.0 < v < 179.0 and 0.0 <= b < 1.0):
+        return float(vfov_deg), float(baseline_m), "flags"
+    return v, b, "packet"
+
+
 def stereo_shift_px(height_px: int, vfov_deg: float, baseline_m: float, converge_m: float) -> float:
     """Disparity (px) of a point converge_m in front of a parallel stereo pair: f b / Z with f = (H/2) / tan(vfov/2).
     Cropping that many columns off the left image's left edge and the right image's right edge puts that distance at

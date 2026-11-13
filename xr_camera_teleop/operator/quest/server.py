@@ -99,10 +99,12 @@ class RateWin:
 
 
 class CameraFeed:
-    """Latest robot stereo pair from deploy/zed_stereo_stream.py (ZMQ SUB, conflated), optionally downscaled."""
+    """Latest robot stereo pair (deploy/realsense_ir_stream.py on the robot, sim/camera_bridge.py in sim; ZMQ SUB,
+    conflated), optionally downscaled. The camera geometry comes from the packet, else from the server flags."""
 
-    def __init__(self, addr, width=0, quality=80):
+    def __init__(self, addr, width=0, quality=80, vfov_deg=70.0, baseline_m=0.12):
         self.addr, self.width, self.quality = addr, width, quality
+        self.vfov_deg, self.baseline_m = vfov_deg, baseline_m      # fallbacks for packets without geometry
         self.lock = threading.Lock()
         self.frame = None            # dict(seq, left, right, size, t_rx, age_ms)
         self.rate = RateWin()
@@ -113,7 +115,7 @@ class CameraFeed:
 
     def _shrink(self, jpg):
         import cv2
-        img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+        img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_UNCHANGED)    # a grayscale eye stays grayscale
         if img is None or img.shape[1] <= self.width:
             return jpg
         img = cv2.resize(img, (self.width, round(img.shape[0] * self.width / img.shape[1])), interpolation=cv2.INTER_AREA)
@@ -121,7 +123,7 @@ class CameraFeed:
         return buf.tobytes() if ok else jpg
 
     def _run(self):
-        from xr_camera_teleop.operator.quest.convert import jpeg_size
+        from xr_camera_teleop.operator.quest.convert import camera_geometry, jpeg_size
         sock = zmq.Context.instance().socket(zmq.SUB)
         sock.setsockopt(zmq.CONFLATE, 1)
         sock.setsockopt(zmq.LINGER, 0)
@@ -142,6 +144,7 @@ class CameraFeed:
                 size = jpeg_size(left)
                 if size is None:
                     continue
+                vfov, baseline, geo_src = camera_geometry(p, self.vfov_deg, self.baseline_m)
             except Exception as e:  # noqa: BLE001
                 print(f"[quest] bad camera packet: {e!r}", flush=True)
                 continue
@@ -150,7 +153,8 @@ class CameraFeed:
             with self.lock:
                 self.frame = {"seq": p.get("sequence"), "left": left, "right": right, "size": size, "t_rx": now,
                               "age_ms": age_ms, "stamp_ns": p.get("stamp_ns"), "sim_time": p.get("sim_time"),
-                              "t_rx_wall": time.time()}
+                              "t_rx_wall": time.time(), "vfov_deg": vfov, "baseline_m": baseline,
+                              "geometry": geo_src, "camera": p.get("camera")}
                 self.rate.tick(now)
                 self.ages.append(age_ms)
                 self.bytes.append(len(left) + len(right or b""))
@@ -167,6 +171,8 @@ class CameraFeed:
         if f is None:
             return {"addr": self.addr, "frames": False}
         return {"addr": self.addr, "fps": hz, "size": f["size"], "stereo": f["right"] is not None,
+                "camera": f["camera"], "vfov_deg": f["vfov_deg"], "baseline_m": f["baseline_m"],
+                "geometry": f["geometry"],
                 "since_last_ms": (now - f["t_rx"]) * 1e3,
                 "capture_age_ms": {"p50": float(np.median(ages)), "p99": float(np.percentile(ages, 99))},
                 "kB_per_frame": float(nb.mean() / 1e3), "Mbit_s": float(nb.mean() * 8 * hz / 1e6)}
@@ -238,7 +244,8 @@ class QuestServer:
         self.undecoded = {}                  # (side, type, len) -> count of payloads that are not a tracked hand
         self.jpeg, self.jpeg_seq, self.jpeg_cv = None, 0, threading.Condition()
         self.record = open(a.record, "w") if a.record else None
-        self.camera = CameraFeed(a.camera, a.view_width) if a.camera else None
+        self.camera = CameraFeed(a.camera, a.view_width, vfov_deg=a.view_vfov_deg, baseline_m=a.camera_baseline) \
+            if a.camera else None
         self.view_rate = RateWin()
         self.view = a.view            # live: GET /view?mode=none|ego|immersive (or the panel) switches it
         self.view_log = deque(maxlen=600)    # robot view frames sent to the headset (GET /frames)
@@ -527,11 +534,12 @@ class QuestServer:
         from xr_camera_teleop.operator.quest.convert import CONVERGE_M, stereo_shift_px, view_plane
         from xr_camera_teleop.operator.quest.vuer_app import image_plane
         w, h = f["size"]
-        dist, height = view_plane(self.view, w / h, self.a.view_vfov_deg, self.a.ego_height)
+        vfov, baseline = f.get("vfov_deg", self.a.view_vfov_deg), f.get("baseline_m", self.a.camera_baseline)
+        dist, height = view_plane(self.view, w / h, vfov, self.a.ego_height)
         right = f["right"] or f["left"]
         shift = 0.0
         if f["right"] is not None:                    # stereo: converge at CONVERGE_M (convert.py), cropping both eyes
-            shift = min(0.25 * w, stereo_shift_px(h, self.a.view_vfov_deg, self.a.camera_baseline,
+            shift = min(0.25 * w, stereo_shift_px(h, vfov, baseline,
                                                   CONVERGE_M.get(self.view, 0.0)))
         c = shift / w
         common = dict(aspect=(w - shift) / h, height=height, distanceToCamera=dist, interpolate=True, seq=f["seq"])
@@ -721,9 +729,9 @@ def main():
     ap.add_argument("--view", choices=("ego", "immersive", "none"), default="ego",
                     help="ego: window 1 m ahead with passthrough around it; immersive: fills the camera's FOV")
     ap.add_argument("--view-vfov-deg", type=float, default=70.0,
-                    help="camera vertical FOV (immersive size, stereo convergence)")
+                    help="camera vertical FOV (immersive size, stereo convergence), only for camera packets without vfov_deg")
     ap.add_argument("--camera-baseline", type=float, default=0.12,
-                    help="stereo baseline (m; ZED 2i and the sim: 0.12) for the convergence; 0 = none")
+                    help="stereo baseline (m) for the convergence, only for camera packets without baseline_m; 0 = none")
     ap.add_argument("--ego-height", type=float, default=0.45, help="window height (m) at 1 m for --view ego")
     ap.add_argument("--view-width", type=int, default=0,
                     help="downscale each eye to this width on MSI before sending over Wi-Fi (0 = as received)")

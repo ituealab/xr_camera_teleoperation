@@ -600,7 +600,7 @@ class Panel:
             mode = MODE_LABELS.get(st.operator.get("mode"), "—") if ok else "—"
             return [f"Mod: {mode}  ·  Giriş: {self._devices()}"]
         if label_id == "goruntu.note":
-            return ["Robot kamerası (ZED stereo).", "Ego: önde pencere, İmmersif: tüm görüş."]
+            return ["Robot kamerası (stereo).", "Ego: önde pencere, İmmersif: tüm görüş."]
         if label_id == "sistem.rates":
             r = self.rates
             lines = []
