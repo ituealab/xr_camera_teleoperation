@@ -7,9 +7,11 @@ returned in Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, 
 
 Per side:
   a controller held  its trigger closes the hand: rest + trigger (rest -> closed), the analog value, so held fully
-                     the hand is a fist, released it opens (whatever the arm does: CONTROLLER or PARKED). `closed`:
-                     fingers curled in, the thumb folded over them (the fist thumb taught on the real hands,
-                     robot/thumb_shaping.py), free of self-collision in the sim.
+                     the hand is a fist, released it opens (whatever the arm does: CONTROLLER or PARKED). `rest`
+                     and `closed` share thumb_0 (-1.10, real convention: the thumb's flexion plane along the
+                     fingers, sim/dex3.py), so closing only flexes the thumb forward between the curling fingers,
+                     never sweeps it sideways into them (with the old rest thumb_0 = 0 it did); no self-collision
+                     anywhere along the close in the sim.
   otherwise, by the arm's HandMode (arms.py):
     TRACKED  the retarget of each new hand sample (settings.fingers off: rest)
     HOLD     the last retarget (the hand is briefly lost: a grasp is not dropped)
@@ -36,9 +38,10 @@ from xr_camera_teleop.operator.hand_geometry import unitree_hand_points
 
 @dataclass(frozen=True)
 class HandsParams:
-    rest: tuple = ((0.0,) * N_HAND_JOINTS, (0.0,) * N_HAND_JOINTS)   # (left, right), = postures.hands_open
-    closed: tuple = ((-1.13, 0.69, 1.54, -1.25, -1.45, -1.25, -1.45),   # (left, right): a trigger held fully
-                     (-1.13, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45))
+    rest: tuple = ((-1.10, -0.70, 0.0, 0.0, 0.0, 0.0, 0.0),             # (left, right), = postures.hands_open
+                   (-1.10, 0.70, 0.0, 0.0, 0.0, 0.0, 0.0))
+    closed: tuple = ((-1.10, 0.69, 1.54, -1.25, -1.45, -1.25, -1.45),   # (left, right): a trigger held fully
+                     (-1.10, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45))
     max_rate_rad_s: float = 8.0
     thumb_shaping: bool = True
 

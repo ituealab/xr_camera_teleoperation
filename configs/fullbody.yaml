@@ -55,8 +55,11 @@ postures:
     left: {p: [0.1998, 0.1870, 0.1007], rpy_deg: [11.46, 0.0, 0.0]}           # forward, hands clear of the hips)
     right: {p: [0.1998, -0.1870, 0.1007], rpy_deg: [-11.46, 0.0, 0.0]}
   hands_open: &hands_open        # Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, index1), rad
-    left: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    right: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # Fingers straight, the thumb fully open with its flexion plane along the fingers: thumb_0 -1.10 in the real
+    # hands' convention (sim/dex3.py; 0 is outside its range and turned the thumb ~60 deg toward the index finger,
+    # where closing swept it into the fingers), thumb_1 at its open end (limit 0.724), thumb_2 straight.
+    left: [-1.10, -0.70, 0.0, 0.0, 0.0, 0.0, 0.0]
+    right: [-1.10, 0.70, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 # The headset operator mapping (fullbody/quest_source.py and its modules; docs/quest-sonic/P4_P6_P7_mapping.md).
 # Below `postures` so it can alias the torso neutral and the open hands (one definition each).
@@ -183,8 +186,8 @@ quest:
                                  # over a +-0.6 rad hip swing (tests/test_fullbody_park_pose.py)
   hands:                         # fullbody/hands.py
     rest: *hands_open
-    closed:                      # a controller's trigger held fully: fingers curled in, the thumb over them (fist)
-      left: [-1.13, 0.69, 1.54, -1.25, -1.45, -1.25, -1.45]
-      right: [-1.13, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45]
+    closed:                      # a controller's trigger held fully: fingers curled in, the thumb flexed between them
+      left: [-1.10, 0.69, 1.54, -1.25, -1.45, -1.25, -1.45]    # thumb_0 = the open pose's: closing only flexes
+      right: [-1.10, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45]
     max_rate_rad_s: 8.0
     thumb_shaping: true

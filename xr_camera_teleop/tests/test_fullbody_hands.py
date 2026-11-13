@@ -34,18 +34,19 @@ def hand(side, seq, grip=0.0, pinch=0.0, valid=True, T=None):
 
 def test_modes_and_rate_limit():
     fake = FakeRetarget()
-    ft = FingerTargets(HandsParams(max_rate_rad_s=5.0), fake)
+    P = HandsParams(max_rate_rad_s=5.0)
+    ft = FingerTargets(P, fake)
     modes = {"left": HandMode.TRACKED, "right": HandMode.PARKED}
     hs = {s: hand(s, 1) for s in SIDES}
     outs = [ft.step(i * DT, hs, modes, S) for i in range(400)]
     assert fake.calls == 1                                         # one retarget per new sample, not per tick
-    assert np.allclose(outs[-1].left, 25.0) and np.allclose(outs[-1].right, 0.0)
+    assert np.allclose(outs[-1].left, 25.0) and np.allclose(outs[-1].right, P.rest_of("right"))
     assert np.max(np.abs(np.diff([o.left for o in outs], axis=0))) <= 5.0 * DT + 1e-9
     held = ft.step(10.0, hs, {"left": HandMode.HOLD, "right": HandMode.PARKED}, S)
     assert np.allclose(held.left, 25.0)                            # HOLD keeps the last retarget
     off = OperatorSettings().with_value("fingers", False)
     outs = [ft.step(10.0 + i * DT, hs, modes, off) for i in range(400)]
-    assert np.allclose(outs[-1].left, 0.0)                         # fingers off -> rest
+    assert np.allclose(outs[-1].left, P.rest_of("left"))           # fingers off -> rest
 
 
 def test_rest_comes_from_config():
@@ -88,3 +89,12 @@ def test_retarget_input_is_wrist_local(side):
     a = hand(side, 1, grip=0.7)
     b = hand(side, 1, grip=0.7, T=pose(rot_z(-1.2) @ neutral_hand_rotation(side), [-0.3, 0.9, 0.7]))
     assert np.allclose(unitree_hand_points(a.joints, a.T), unitree_hand_points(b.joints, b.T))
+
+
+
+def test_open_and_closed_share_thumb_0_so_closing_only_flexes():
+    """The thumb opens straight (flexion plane along the fingers) and closes forward: thumb_0 never moves."""
+    from xr_camera_teleop.fullbody.node import load_config
+    for P in (HandsParams(), HandsParams.from_config(load_config()["fullbody"]["quest"]["hands"])):
+        for s in SIDES:
+            assert P.rest_of(s)[0] == pytest.approx(P.closed_of(s)[0]) == pytest.approx(-1.10)

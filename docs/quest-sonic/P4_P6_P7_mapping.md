@@ -288,8 +288,10 @@ Yeniden gönderme A/B (aynı senaryo, dönüş başına mutlak hata, en büyüğ
    aktarma (10–15 cm, düşüşsüz) adımdan ayrılamaz; yan bileşen ×0.5 sayılır, yan adım ≥ ~20 cm ise izlenir.
 6. **Kalibrasyon şartları:** dik dur, ileri bak (eğim ≤ 20°), 1 s kıpırdama (2 cm, 3°). Panelden kalibrede operatör
    panele bakıyorsa reddedilir; 4 s içinde ileri bakınca kabul edilir (`calibration_error` status'ta).
-7. **Parmak dinlenme pozu sıfırlar** (`postures.hands_open`): retarget'ın "açık el"inden farklı (başparmak −1.05 rad);
-   ELLER → park geçişinde başparmak hareket eder (hız sınırlı).
+7. **Parmak dinlenme pozu** (`postures.hands_open`, 2026-11-13): parmaklar düz, başparmak tam açık ve parmaklarla
+   aynı düzlemde (thumb_0 −1.10, gerçek el birimi; `sim/dex3.py`). Önceki 0 değeri eklem aralığının dışındaydı ve
+   başparmağı işaret parmağına doğru ~60° çeviriyordu; kapanırken parmaklara çarpıyordu. Yumruk pozu aynı thumb_0'ı
+   kullanır, kapanma sadece bükülmedir; simde yol boyunca çarpışma yok.
 8. **Dex3 retarget yükü:** node açılışında ~0.7 s + torch import; tick başına el örneği geldiğinde 1–3 ms/el.
 
 ## 9. Yerden alma, adımla yürüme, stick ile dönüş, kumandayla kol (2026-11-13)
