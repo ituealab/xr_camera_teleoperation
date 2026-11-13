@@ -31,6 +31,11 @@ def test_walk_velocity_is_rotated_by_the_facing_and_normalised():
     assert np.allclose(f["movement"], [-0.8, 0.6, 0.0]) and np.allclose(f["facing"], [0, 1, 0], atol=1e-12)
 
 
+def test_kneel_is_both_knees_without_a_height():
+    f = adapter.planner_fields(cmd(BaseCmd(Mode.KNEEL)))
+    assert f["mode"] == LocomotionMode.IDLE_KNEEL_TWO_LEGS and f["height"] == -1.0 and f["speed"] == -1.0
+
+
 def test_squat_height_is_explicit():
     f = adapter.planner_fields(cmd(BaseCmd(Mode.SQUAT, height=0.45)))
     assert f["mode"] == LocomotionMode.IDLE_SQUAT and f["height"] == 0.45 and f["speed"] == -1.0

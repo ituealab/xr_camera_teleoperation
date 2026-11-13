@@ -94,18 +94,19 @@ def morning(sonic_root, tmp_path_factory):
     return m, d
 
 
-def test_morning_keeps_the_robot_indices_and_adds_the_cube_last(sonic_root, morning):
+def test_morning_keeps_the_robot_indices_and_adds_the_cubes_last(sonic_root, morning):
     base = mujoco.MjModel.from_xml_path(str(sonic_root / CFG["base_scene"]))
     m, d = morning
     assert [m.joint(i).name for i in range(base.njnt)] == [base.joint(i).name for i in range(base.njnt)]
-    assert m.njnt == base.njnt + 1 and m.joint(m.njnt - 1).name == "cube_body_free"
-    assert m.nq == base.nq + 7 and m.nu == base.nu
+    assert [m.joint(i).name for i in range(base.njnt, m.njnt)] == ["cube_body_free", "floor_cube_body_free"]
+    assert m.nq == base.nq + 14 and m.nu == base.nu
     assert np.allclose(m.body_mass[:base.nbody], base.body_mass)
     cube = m.body("cube_body")
     assert np.isclose(m.body_mass[cube.id], 0.1)
     g = m.geom(m.body_geomadr[cube.id])
     assert g.condim == 4 and np.isclose(g.friction[0], 2.0) and g.group == 0     # visible to the robot cameras
     assert np.allclose(d.body("cube_body").xpos, [1.5, -0.67, 0.85])             # on table_a, 12 cm from its edge
+    assert np.allclose(d.body("floor_cube_body").xpos, [0.3, 0.8, 0.03])         # on the floor, left of the start
 
 
 def test_morning_surfaces_by_ray(morning):

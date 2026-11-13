@@ -14,8 +14,11 @@ is robot-level (`fullbody/types.py`):
     intent   the mapping modules, each filling its part (all read the live OperatorSettings):
                operator_mode.py  WALK (a controller is held) / HANDS (no controller)  (D8)
                heading.py        heading; psi_body and the waist-yaw share for posture
-               locomotion.py     base from the stick of whichever fresh controller is deflected most (WALK only)
-               posture.py        torso; SQUAT + height (overrides locomotion), IDLE while rising; the operator
+               locomotion.py     base from the left stick, turn rate from the right stick's x (WALK only;
+                                 with one controller its stick walks)
+               stepping.py       the stance (where the operator stands; the lean reference) follows the operator's
+                                 own steps; in HANDS mode with step_walk the robot walks the same steps
+               posture.py        torso; SQUAT + height or KNEEL (override locomotion), IDLE while rising; the operator
                                  shoulder frame and the torso frame the wrists are placed in
                arms.py           left_wrist, right_wrist (TRACKED / HOLD / PARKED per side)
                hands.py          Dex3 fingers by each arm's mode
@@ -39,18 +42,20 @@ from xr_camera_teleop.fullbody.frames import yaw_of
 from xr_camera_teleop.fullbody.gestures import Gesture, GestureParams, Gestures
 from xr_camera_teleop.fullbody.hands import FingerTargets, HandsParams
 from xr_camera_teleop.fullbody.heading import Heading, HeadingParams
-from xr_camera_teleop.fullbody.locomotion import Locomotion, LocomotionParams
+from xr_camera_teleop.fullbody.locomotion import Locomotion, LocomotionParams, turn_rate
 from xr_camera_teleop.fullbody.operator_mode import ModeParams, ModeSelector, OperatorMode
 from xr_camera_teleop.fullbody.posture import Crouch, Posture, PostureParams
 from xr_camera_teleop.fullbody.settings import OperatorSettings, UiKind
-from xr_camera_teleop.fullbody.types import (BaseCmd, Event, Intent, Mode, OperatorData, OperatorInput,
+from xr_camera_teleop.fullbody.stepping import Stepping, SteppingParams
+from xr_camera_teleop.fullbody.types import (Event, Intent, OperatorData, OperatorInput,
                                              SourceResult, State)
 from xr_camera_teleop.fullbody.xr_frame import SIDES, XRFrame
 
 _PANEL_EVENTS = {UiKind.START: Event.START, UiKind.STOP: Event.STOP, UiKind.PAUSE: Event.PAUSE,
                  UiKind.RESUME: Event.RESUME}
 _SECTIONS = {"calibration": CalibrationParams, "gestures": GestureParams, "mode": ModeParams,
-             "heading": HeadingParams, "locomotion": LocomotionParams, "posture": PostureParams,
+             "heading": HeadingParams, "locomotion": LocomotionParams, "stepping": SteppingParams,
+             "posture": PostureParams,
              "arms": ArmsParams, "hands": HandsParams}
 
 
@@ -67,6 +72,7 @@ class QuestParams:
     mode: ModeParams = field(default_factory=ModeParams)
     heading: HeadingParams = field(default_factory=HeadingParams)
     locomotion: LocomotionParams = field(default_factory=LocomotionParams)
+    stepping: SteppingParams = field(default_factory=SteppingParams)
     posture: PostureParams = field(default_factory=PostureParams)
     arms: ArmsParams = field(default_factory=ArmsParams)
     hands: HandsParams = field(default_factory=HandsParams)
@@ -90,6 +96,7 @@ class QuestSource:
         self.heading = Heading(p.heading)
         self.locomotion = Locomotion(p.locomotion)
         self.posture = Posture(p.posture)
+        self.stepping = Stepping(p.stepping)
         self.arms = Arms(p.arms, p.hand_timeout_s)
         self.fingers = fingers or FingerTargets(p.hands)
         self.cal: Optional[Calibration] = None
@@ -153,6 +160,7 @@ class QuestSource:
         self.cal, self._cal_deadline, self._cal_error = cal, None, None
         self.heading.reset(cal.psi0)
         self.posture.reset(cal)
+        self.stepping.reset(self.posture.n0, self.posture.Ln, cal.h0)
         self.locomotion.reset()
         self._engage_until = now + self.p.engage_timeout_s
         self._start_sent = False
@@ -215,25 +223,39 @@ class QuestSource:
                              status=self.status(now))
 
     @staticmethod
-    def _stick(ctrls: dict) -> Optional[np.ndarray]:
-        sticks = [c.stick for c in ctrls.values() if c.stick is not None]
-        return max(sticks, key=lambda v: float(np.hypot(v[0], v[1]))) if sticks else None
+    def _sticks(ctrls: dict) -> tuple[Optional[np.ndarray], Optional[float]]:
+        """(walking stick, turning stick x): with both controllers the left walks and the right turns; with one, it
+        walks (no turn)."""
+        sticks = {k: c.stick for k, c in ctrls.items() if c.stick is not None}
+        if len(sticks) == 2:
+            return sticks["left"], float(sticks["right"][0])
+        return (next(iter(sticks.values())), None) if sticks else (None, None)
 
     def _intent(self, now: float, f: XRFrame, s: OperatorSettings, mode: OperatorMode, ctrls: dict) -> Intent:
         locked = self.locked or self.posture.crouch is not Crouch.STAND
-        loco = self.locomotion.step(self._stick(ctrls) if mode is OperatorMode.WALK else None, s)
-        h = self.heading.step(now, yaw_of(f.head.T), locked, walking=loco.deflected)
-        post = self.posture.step(now, f.head.T, h.psi_body, h.waist_yaw, loco.deflected, s)
-        if post.height is not None:
-            base = BaseCmd(Mode.SQUAT, height=post.height)
-        elif post.walk_blocked:
-            base = BaseCmd()
+        walk_stick, turn_x = self._sticks(ctrls) if mode is OperatorMode.WALK else (None, None)
+        loco = self.locomotion.step(walk_stick, s)
+        turn = turn_rate(turn_x if self.posture.crouch is Crouch.STAND else None, s,
+                         self.p.locomotion.turn_rate_deg_s)
+        h = self.heading.step(now, yaw_of(f.head.T), locked, walking=loco.deflected or self.stepping.walking,
+                              turn_rate=turn)
+        follow = (mode is OperatorMode.HANDS and s.step_walk and self.posture.crouch is Crouch.STAND
+                  and not loco.deflected)
+        steps = self.stepping.step(now, self.posture.neck(f.head.T), h.psi_body, follow)
+        post = self.posture.step(now, f.head.T, h.psi_body, h.waist_yaw, loco.deflected or steps.walking, s,
+                                 stance=steps.stance)
+        if post.legs is not None:
+            base = post.legs
+        elif steps.base is not None:
+            base = steps.base
         else:
             base = loco.base
-        arms = self.arms.step(now, f.hands, mode, post.shoulders, post.torso_lean, s)
+        arms = self.arms.step(now, f.hands, mode, post.shoulders, post.torso_lean, s,
+                              low=post.crouch is Crouch.KNEEL, controllers=ctrls)
         hands = self.fingers.step(now, f.hands, arms.modes, s)
         self._out = {"hand_left": arms.modes["left"].value, "hand_right": arms.modes["right"].value,
                      "crouch": post.crouch.value, "body_turning": h.turning,
+                     "stepping": steps.walking, "steps": self.stepping.steps,
                      "lean_pitch_deg": round(float(np.degrees(post.pitch)), 1),
                      "lean_roll_deg": round(float(np.degrees(post.roll)), 1)}
         return Intent(base=base, heading=h.heading, torso=post.torso, left_wrist=arms.left, right_wrist=arms.right,

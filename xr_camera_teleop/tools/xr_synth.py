@@ -185,7 +185,8 @@ class Script:
     def stick(self, d: float, x: float, y: float, name: str = "") -> "Script":
         def fn(t, s):
             on = t < d
-            return replace(s, pads={k: replace(v, stick=(x, y) if on and k == "right" else (0.0, 0.0))
+            walker = "left" if "left" in s.pads else "right"         # quest_source: the left stick walks
+            return replace(s, pads={k: replace(v, stick=(x, y) if on and k == walker else (0.0, 0.0))
                                     for k, v in s.pads.items()})
         return self.add(name or f"stick ({x:+.1f}, {y:+.1f})", d, fn)
 
@@ -214,7 +215,7 @@ def p4_figure8(sc: Script) -> Script:
     for name, sign in (("loop left", 1.0), ("loop right", -1.0)):
         def fn(t, s, sign=sign):
             yaw = s.body_yaw + sign * w * min(t, d)
-            return replace(s, body_yaw=yaw, pads={k: replace(v, stick=(0.0, 1.0) if k == "right" else (0.0, 0.0))
+            return replace(s, body_yaw=yaw, pads={k: replace(v, stick=(0.0, 1.0) if k == "left" else (0.0, 0.0))
                                                    for k, v in s.pads.items()})
         sc.add(name, d, fn)
     sc.stick(4.0, 0.0, 1.0, "straight to the mark")
@@ -366,7 +367,7 @@ def normal10min(sc: Script, seconds: float = 600.0, seed: int = 7) -> Script:
         elif kind == "walk" and sc.end.pads:
             sc.add("walk with bob", d, lambda u, s: replace(
                 s, drop=0.015 * (1 - math.cos(2 * math.pi * 1.8 * u)),
-                pads={k: replace(v, stick=(0.0, 1.0) if k == "right" else (0.0, 0.0)) for k, v in s.pads.items()}))
+                pads={k: replace(v, stick=(0.0, 1.0) if k == "left" else (0.0, 0.0)) for k, v in s.pads.items()}))
             sc.add("stop", 1.0, lambda u, s: replace(s, drop=0.0, pads=controller_pads()))
         elif kind == "work":
             if sc.end.pads:

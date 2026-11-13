@@ -146,3 +146,36 @@ def test_from_config_takes_a_posture_entry_for_the_torso():
     assert p.torso_neutral == (0.0, 0.0, 0.05)
     with pytest.raises(KeyError):
         PostureParams.from_config({"gainz": 1.0})
+
+
+def test_going_down_to_the_floor_kneels_and_coming_up_rises():
+    post = calibrated()
+    out = run(post, crouch_poses(0.0, 1.0) + crouch_poses(0.40, 1.0) + crouch_poses(0.70, 1.2))
+    assert out[100].crouch is Crouch.SQUAT
+    k = next(i for i, o in enumerate(out) if o.crouch is Crouch.KNEEL)
+    t_deep = next(i for i, o in enumerate(out) if o.drop > P.kneel_enter_m)
+    assert (k - t_deep) * DT == pytest.approx(P.kneel_hold_s, abs=0.05)
+    end = out[-1]
+    assert end.legs.mode.name == "KNEEL" and end.height is None and end.walk_blocked
+    still = run(post, crouch_poses(0.45, 1.0), t0=10.0)                    # between exit 0.40 and enter 0.55
+    assert all(o.crouch is Crouch.KNEEL for o in still)
+    up = run(post, crouch_poses(0.0, 3.0), t0=20.0)
+    assert up[0].crouch is Crouch.RISING and up[0].legs.mode.name == "IDLE"
+    k = next(i for i, o in enumerate(up) if o.crouch is Crouch.STAND)
+    assert k * DT == pytest.approx(P.kneel_rise_s, abs=0.03)
+
+
+def test_a_squat_alone_never_kneels():
+    post = calibrated()
+    out = run(post, crouch_poses(0.0, 1.0) + crouch_poses(0.50, 5.0))
+    assert out[-1].crouch is Crouch.SQUAT and out[-1].legs.height == P.h_min
+
+
+def test_stance_is_the_lean_reference():
+    post = calibrated()
+    head = frames_of(EXACT, Pose(x=0.3))["head"]                         # stepped 30 cm forward, upright
+    o = post.step(0.0, head, 0.0, 0.0, False, S)
+    assert o.pitch > D(20)                                               # measured from the calibration: a lean
+    n0 = post.n0.copy()
+    o = post.step(0.02, head, 0.0, 0.0, False, S, stance=n0 + [0.3, 0.0, 0.0])
+    assert o.pitch == pytest.approx(0.0, abs=1e-6) and o.drop == pytest.approx(0.0, abs=1e-6)

@@ -124,3 +124,11 @@ def test_from_config_rejects_unknown_keys():
     assert HeadingParams.from_config({"turn_deg": 30.0}).turn_deg == 30.0
     with pytest.raises(KeyError):
         HeadingParams.from_config({"turn": 30.0})
+
+
+def test_stick_turn_adds_to_the_heading_even_locked_never_to_psi_body():
+    h = Heading(HeadingParams(reissue_s=()))
+    h.reset(0.0)
+    outs = [h.step(i * DT, 0.0, locked=True, turn_rate=D(60)) for i in range(51)]
+    assert outs[-1].heading == pytest.approx(D(60), abs=D(3))
+    assert outs[-1].psi_body == 0.0

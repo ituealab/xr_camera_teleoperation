@@ -1,4 +1,9 @@
-"""Thumbstick -> walking command (PLAN §5 Yürüme, D5). Pure.
+"""Thumbsticks -> walking command and turn rate (PLAN §5 Yürüme, D5). Pure.
+
+The left stick walks, the right stick's x turns (the usual VR layout; with one controller held its stick walks and
+nothing turns: quest_source.py picks the sticks). The turn: the deflection of x beyond the dead zone, rescaled to (0, 1], times turn_rate_deg_s,
++ = left (x right-positive, so a right push turns right). It is added to the robot heading (heading.py), so the robot
+turns in place or curves while walking; the operator's own body frame is not touched.
 
 stick = [x, y] in [-1, 1]^2, x right, y forward (xr_frame), or None (no fresh controller: IDLE).
   - Radial dead zone `settings.stick_deadzone`; the deflection beyond it is rescaled to m in (0, 1].
@@ -40,6 +45,7 @@ class LocomotionParams:
     speed_step: float = 0.05             # m/s
     direction_step_deg: float = 10.0
     band: float = 0.6                    # quantiser hysteresis, in steps
+    turn_rate_deg_s: float = 60.0        # right stick full right/left: the robot heading turns this fast
 
     @classmethod
     def from_config(cls, cfg: dict) -> "LocomotionParams":
@@ -62,6 +68,14 @@ def deflection(stick, deadzone: float) -> float:
     """Radial deflection beyond the dead zone, rescaled to [0, 1]."""
     r = float(np.hypot(stick[0], stick[1]))
     return 0.0 if r <= deadzone else min(1.0, (r - deadzone) / (1.0 - deadzone))
+
+
+def turn_rate(stick_x: Optional[float], settings: OperatorSettings, max_deg_s: float) -> float:
+    """Right stick x -> heading rate (rad/s, + = left): beyond the dead zone, rescaled, x right-positive."""
+    if stick_x is None:
+        return 0.0
+    m = deflection((float(stick_x), 0.0), settings.stick_deadzone)
+    return -math.copysign(m * math.radians(max_deg_s), float(stick_x)) if m > 0.0 else 0.0
 
 
 class Locomotion:

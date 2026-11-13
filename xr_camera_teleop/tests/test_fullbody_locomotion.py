@@ -86,3 +86,14 @@ def test_config_validation():
         LocomotionParams.from_config({"v_min": 0.6})
     with pytest.raises(KeyError):
         LocomotionParams.from_config({"vmax": 1.0})
+
+
+def test_turn_rate_dead_zone_scale_and_sign():
+    from xr_camera_teleop.fullbody.locomotion import turn_rate
+    from xr_camera_teleop.fullbody.settings import OperatorSettings
+    s = OperatorSettings()
+    assert turn_rate(None, s, 60.0) == 0.0
+    assert turn_rate(0.5 * s.stick_deadzone, s, 60.0) == 0.0
+    assert turn_rate(1.0, s, 60.0) == pytest.approx(-math.radians(60.0))     # right push: turn right (- yaw)
+    assert turn_rate(-1.0, s, 60.0) == pytest.approx(math.radians(60.0))
+    assert 0.0 < turn_rate(-0.6, s, 60.0) < math.radians(60.0)

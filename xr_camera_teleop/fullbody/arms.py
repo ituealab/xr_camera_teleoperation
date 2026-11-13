@@ -20,11 +20,24 @@ estimate behind, and the hands, measured in that frame, swung behind the robot.)
 projected onto the boundary. Afterwards velocity limits (max_lin, max_ang) bound every output; ramps and limits
 integrate at most operator/filters.MAX_STEP_DT per step, so a stalled loop never turns into a jump.
 
+Kneeling (posture KNEEL, `low`): the operator is down at the floor and SONIC bends forward over its knees, so the
+reach, the height floor and the scale widen to kneel_reach_m, kneel_z_min_m and kneel_scale: the wrist targets SONIC
+needs to bring the hands to the floor lie ~0.6 m from the shoulders and ~0.25 m below the pelvis (sim, x ~0.45 m),
+beyond a human arm at the standing scale. The wrist origin and the hand point are boxed in the pelvis frame
+(x <= kneel_x_max_m, resp. + hand_point_m; z >= kneel_z_min_m; |y| <= kneel_y_max_m): SONIC answers lower or farther
+targets by pitching the pelvis further, and past ~0.47 m / -0.28 m (or a hand far out to the side) it dives onto its
+face (sim). Leaving the kneel, the normal limits pull the hands back up (rate limited).
+
 Per side (HandMode):
-  TRACKED  HANDS mode, arm tracking on, the hand fresh: the mapped target. Entered with a half-cosine ramp from the
-           current output over track_s.
-  HOLD     the hand stopped being fresh: the last target is held (in the torso frame), for at most hold_s.
-  PARKED   WALK (any controller held), NONE, arm tracking off, or the hand lost longer than hold_s: the park pose,
+  TRACKED     HANDS mode, arm tracking on, the hand fresh: the mapped target. Entered with a half-cosine ramp from the
+              current output over track_s.
+  CONTROLLER  WALK mode with settings.controller_arms on, the controller fresh: the same mapping, with the wrist pose
+              the controller's target ray implies (controller_wrist: the hand around the grip, palm toward the
+              midline, controller_wrist_m back along the ray). The fingers keep what they had (hands.py), and the
+              stick still walks: the operator can carry something while walking.
+  HOLD        the hand (controller) stopped being fresh: the last target is held (in the torso frame), for at most
+              hold_s.
+  PARKED      WALK without controller_arms, NONE, arm tracking off, or the hand lost longer than hold_s: the park pose,
            arms hanging at the sides (D8), reached over park_s (ramps: _Ramp). It keeps the Dex3 hands clear of the hips (P1: in
            SONIC's own idle pose the right index finger catches on the hip).
 """
@@ -42,11 +55,12 @@ from xr_camera_teleop.fullbody.settings import OperatorSettings
 from xr_camera_teleop.fullbody.supervisor import half_cosine
 from xr_camera_teleop.fullbody.xr_frame import SIDES
 from xr_camera_teleop.operator.filters import MAX_STEP_DT, PoseOneEuro, PoseRateLimiter, step_dt
-from xr_camera_teleop.operator.hand_geometry import ego_wrist_offset
+from xr_camera_teleop.operator.hand_geometry import ego_wrist_offset, neutral_hand_rotation
 
 
 class HandMode(str, Enum):
     TRACKED = "tracked"
+    CONTROLLER = "controller"
     HOLD = "hold"
     PARKED = "parked"
 
@@ -69,7 +83,13 @@ class ArmsParams:
     hand_point_m: float = 0.10                  # hand point along the wrist link's x (toward the fingers)
     hand_radius_m: float = 0.12                 # and the hand point this far
     z_min_m: float = -0.15                      # wrist height floor in the pelvis frame (clear of hips and thighs)
+    kneel_scale: float = 1.0                    # kneeling (posture KNEEL): operator -> robot scale,
+    kneel_reach_m: float = 0.70                 # reach from the shoulder,
+    kneel_z_min_m: float = -0.27                # and height floor (pelvis frame; the floor: ~-0.26 at x 0.45 m)
+    kneel_x_max_m: float = 0.47                 # and forward limit (pelvis frame): beyond, SONIC dives forward
+    kneel_y_max_m: float = 0.35                 # and sideways limit (pelvis frame)
     wrist_gap_m: float = 0.15                   # the two wrists stay this far apart (Dex3 thumbs reach ~6 cm in)
+    controller_wrist_m: tuple = (-0.10, 0.0, -0.03)   # the wrist in a controller's target-ray frame (x along the ray)
     hold_s: float = 1.0                         # a lost hand holds its target this long, then parks (PLAN §5)
     park_s: float = 1.0
     track_s: float = 0.7
@@ -112,6 +132,14 @@ class ArmsOut:
 
 # ---------------------------------------------------------------------------------------------------- geometry
 
+def controller_wrist(T_ray, side: str, offset) -> np.ndarray:
+    """A controller's target-ray pose (F; x along the ray, z up when level) -> the wrist pose of the hand holding it:
+    fingers along the ray, palm toward the midline (hand_geometry.neutral_hand_rotation in the ray frame), `offset`
+    in the ray frame."""
+    T = np.asarray(T_ray, dtype=float)
+    return pose(T[:3, :3] @ neutral_hand_rotation(side), T[:3, 3] + T[:3, :3] @ np.asarray(offset, dtype=float))
+
+
 def map_wrist(T_wrist_F, shoulders_F, side: str, scale: float, robot_shoulders) -> np.ndarray:
     """Operator wrist pose (floor frame F) -> robot wrist_yaw_link pose in the torso_link frame."""
     rel = inv_pose(shoulders_F) @ np.asarray(T_wrist_F, dtype=float)
@@ -131,7 +159,7 @@ def _forward_out_of_capsule(p, a, b, r) -> float:
     return max(0.0, c[0] + float(np.sqrt(max(r * r - d[1] ** 2 - d[2] ** 2, 0.0))) - p[0])
 
 
-def torso_safety(T_local, side: str, p: ArmsParams) -> np.ndarray:
+def torso_safety(T_local, side: str, p: ArmsParams, reach: Optional[float] = None) -> np.ndarray:
     """Reach sphere, then the front / midline limits, then the torso capsule (left forward), in the torso_link
     frame. The last steps only move forward, so they keep the side limit; reach may then be exceeded slightly (the
     policy falls short, nothing collides)."""
@@ -140,13 +168,29 @@ def torso_safety(T_local, side: str, p: ArmsParams) -> np.ndarray:
                                                        -p.robot_shoulder_y, 0.0]
     d = T[:3, 3] - sh
     n = float(np.linalg.norm(d))
-    if n > p.reach_m:
-        T[:3, 3] = sh + d * (p.reach_m / n)
+    reach = p.reach_m if reach is None else reach
+    if n > reach:
+        T[:3, 3] = sh + d * (reach / n)
     T[0, 3] = max(T[0, 3], p.front_min_m)
     T[1, 3] = max(T[1, 3], -p.cross_m) if side == "left" else min(T[1, 3], p.cross_m)
     a, b = p.torso_axis
     T[0, 3] += _forward_out_of_capsule(T[:3, 3], a, b, p.torso_radius_m)
     T[0, 3] += _forward_out_of_capsule(T[:3, 3] + p.hand_point_m * T[:3, 0], a, b, p.hand_radius_m)
+    return T
+
+
+def kneel_box(T, p: ArmsParams) -> np.ndarray:
+    """Kneeling: the wrist origin and its hand point moved (together) into the box SONIC stays upright in (pelvis
+    frame: x <= kneel_x_max_m, and + hand_point_m for the hand point; z >= kneel_z_min_m; |y| <= kneel_y_max_m)."""
+    T = np.array(T, dtype=float)
+    hand = T[:3, 3] + p.hand_point_m * T[:3, 0]
+    shift = np.zeros(3)
+    shift[0] = min(0.0, p.kneel_x_max_m - T[0, 3], p.kneel_x_max_m + p.hand_point_m - hand[0])
+    shift[2] = max(0.0, p.kneel_z_min_m - T[2, 3], p.kneel_z_min_m - hand[2])
+    for y in (T[1, 3], hand[1]):
+        if abs(y + shift[1]) > p.kneel_y_max_m:
+            shift[1] = np.sign(y) * p.kneel_y_max_m - y
+    T[:3, 3] += shift
     return T
 
 
@@ -200,6 +244,7 @@ class _Side:
         self.mode = HandMode.PARKED
         self.out = self.park.copy()
         self.local: Optional[np.ndarray] = None         # last tracking target, torso_link frame
+        self.source: Optional[HandMode] = None          # what that target came from (TRACKED or CONTROLLER)
         self.last_seen = -np.inf
         self.seq = None
         self.filtered: Optional[np.ndarray] = None
@@ -220,37 +265,55 @@ class Arms:
         self.hand_timeout_s = hand_timeout_s
         self.sides = {s: _Side(s, params) for s in SIDES}
 
+    def _source(self, now: float, side: str, hands: dict, controllers: dict, mode: OperatorMode,
+                settings: OperatorSettings):
+        """(the tracking mode wanted or None, its fresh sample (stamp, wrist pose in F) or None)."""
+        if mode is OperatorMode.HANDS and settings.arm_tracking:
+            h = hands[side]
+            return HandMode.TRACKED, ((h.stamp, h.T) if h.stamp.fresh(now, self.hand_timeout_s) else None)
+        if mode is OperatorMode.WALK and settings.controller_arms:
+            c = controllers.get(side)
+            fresh = c is not None and c.T is not None
+            return HandMode.CONTROLLER, ((c.stamp, controller_wrist(c.T, side, self.p.controller_wrist_m))
+                                         if fresh else None)
+        return None, None
+
     def step(self, now: float, hands: dict, mode: OperatorMode, shoulders_F, torso_lean,
-             settings: OperatorSettings) -> ArmsOut:
+             settings: OperatorSettings, low: bool = False, controllers: Optional[dict] = None) -> ArmsOut:
         """`hands`: the frame's Hand per side; `shoulders_F`: operator shoulder frame (posture.py); `torso_lean`:
-        torso_link pose in the pelvis frame the wrists are placed in."""
+        torso_link pose in the pelvis frame the wrists are placed in; `low`: kneeling (the widened limits);
+        `controllers`: the fresh controllers by side (CONTROLLER mode)."""
         p = self.p
-        track = mode is OperatorMode.HANDS and settings.arm_tracking
+        scale, reach, z_min = (p.kneel_scale, p.kneel_reach_m, p.kneel_z_min_m) if low else (p.scale, p.reach_m,
+                                                                                               p.z_min_m)
         goals = {}
         for s, st in self.sides.items():
-            h = hands[s]
-            if track and h.stamp.fresh(now, self.hand_timeout_s):
-                if st.mode is HandMode.PARKED:                 # (re)acquired: start the filter afresh
-                    st.filter.reset()
-                    st.seq = None
-                if h.stamp.seq != st.seq:
-                    st.seq = h.stamp.seq
-                    pf, Rf = st.filter(h.T[:3, 3], h.T[:3, :3], h.stamp.t)
+            want, sample = self._source(now, s, hands, controllers or {}, mode, settings)
+            if sample is not None:
+                stamp, T = sample
+                if st.mode is not want and st.mode is not HandMode.HOLD or st.source is not want:
+                    st.filter.reset()                          # (re)acquired, or a new source: filter afresh
+                    st.seq, st.source = None, want
+                if stamp.seq != st.seq:
+                    st.seq = stamp.seq
+                    pf, Rf = st.filter(T[:3, 3], T[:3, :3], stamp.t)
                     st.filtered = pose(Rf, pf)
-                st.local = torso_safety(map_wrist(st.filtered, shoulders_F, s, p.scale, p.robot_shoulders), s, p)
+                st.local = torso_safety(map_wrist(st.filtered, shoulders_F, s, scale, p.robot_shoulders), s, p, reach)
                 st.last_seen = now
-                st.enter(HandMode.TRACKED, now, p.track_s)
-            elif track and st.local is not None and st.mode is not HandMode.PARKED \
+                st.enter(want, now, p.track_s)
+            elif want is not None and want is st.source and st.local is not None and st.mode is not HandMode.PARKED \
                     and now - st.last_seen < p.hold_s:
                 st.mode = HandMode.HOLD                       # no ramp: the target is the one already followed
             else:
                 st.enter(HandMode.PARKED, now, p.park_s)
-                st.local = None
+                st.local, st.source = None, None
             if st.mode is HandMode.PARKED:
                 goals[s] = st.park
             else:
                 g = np.asarray(torso_lean, dtype=float) @ st.local
-                g[2, 3] = max(g[2, 3], p.z_min_m)
+                g[2, 3] = max(g[2, 3], z_min)
+                if low:
+                    g = kneel_box(g, p)
                 goals[s] = g
         if all(self.sides[s].mode is not HandMode.PARKED for s in SIDES):
             goals["left"], goals["right"] = separate(goals["left"], goals["right"], p.wrist_gap_m)

@@ -32,6 +32,8 @@ class OperatorSettings:
     lean_gain: float = 1.0        # head-position lean → torso pitch/roll gain (0 = torso stays upright)
     arm_tracking: bool = True     # HANDS mode mirrors tracked hands; False keeps both arms parked
     fingers: bool = True          # Dex3 finger retarget; False holds fingers open
+    step_walk: bool = True        # HANDS mode: the robot steps after the operator's own steps (stepping.py)
+    controller_arms: bool = False  # WALK mode: the arms follow the controllers, the fingers stay as they are (arms.py)
 
     def with_value(self, key: str, value) -> "OperatorSettings":
         """A copy with one setting changed, validated and clamped to its knob range. Unknown keys raise KeyError."""
@@ -66,6 +68,8 @@ KNOBS: dict[str, Knob] = {
     "lean_gain": Knob("Eğilme kazancı", "hareket", 0.0, 1.5, 0.1),
     "arm_tracking": Knob("Kol takibi", "eller"),
     "fingers": Knob("Parmaklar", "eller"),
+    "step_walk": Knob("Adımla yürüme", "eller"),
+    "controller_arms": Knob("Kumandayla kol", "eller"),
 }
 assert set(KNOBS) == {f.name for f in fields(OperatorSettings)}
 

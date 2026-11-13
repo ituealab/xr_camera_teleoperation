@@ -1,7 +1,8 @@
 """FullBodyCommand -> SONIC zmq_manager `planner` fields (PLAN §4, D1, D2, D4). Pure.
 
 The one place that knows SONIC's encoding of a robot command:
-  mode      fullbody Mode -> planner LocomotionMode (IDLE 0, SLOW_WALK 1, WALK 2, IDLE_SQUAT 4)
+  mode      fullbody Mode -> planner LocomotionMode (IDLE 0, SLOW_WALK 1, WALK 2, IDLE_SQUAT 4,
+            IDLE_KNEEL_TWO_LEGS 5; KNEEL ignores the height, -1 is sent)
   movement  the walking velocity, given in the commanded-facing frame, rotated into the planner world and normalised
             (SONIC normalises it anyway); zero when not walking
   speed     |velocity| when walking; -1 otherwise (the binary forces -1 in static modes)
@@ -26,7 +27,8 @@ from xr_camera_teleop.sonic import protocol
 from xr_camera_teleop.sonic.protocol import LocomotionMode
 
 PLANNER_MODE = {Mode.IDLE: LocomotionMode.IDLE, Mode.SLOW_WALK: LocomotionMode.SLOW_WALK,
-                Mode.WALK: LocomotionMode.WALK, Mode.SQUAT: LocomotionMode.IDLE_SQUAT}
+                Mode.WALK: LocomotionMode.WALK, Mode.SQUAT: LocomotionMode.IDLE_SQUAT,
+                Mode.KNEEL: LocomotionMode.IDLE_KNEEL_TWO_LEGS}
 
 # Link frame -> VR point, in the link's own frame (m).
 VR_POINT_OFFSETS = {"left": np.array([0.18, -0.025, 0.0]),     # left_wrist_yaw_link

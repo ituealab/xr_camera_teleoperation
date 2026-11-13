@@ -35,6 +35,7 @@ class Mode(IntEnum):
     SLOW_WALK = 1
     WALK = 2
     SQUAT = 3
+    KNEEL = 4          # both knees down, stationary; SONIC bends forward over them to reach the floor (D7)
 
 
 WALKING = (Mode.SLOW_WALK, Mode.WALK)

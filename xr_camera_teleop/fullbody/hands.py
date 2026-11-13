@@ -8,6 +8,7 @@ returned in Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, 
 Per side, by the arm's HandMode (arms.py):
   TRACKED  the retarget of each new hand sample (settings.fingers off: rest)
   HOLD     the last retarget (the hand is briefly lost: a grasp is not dropped)
+  CONTROLLER  unchanged: the arm follows a controller and the fingers keep what they had (settings.controller_arms)
   PARKED   rest (D8: fingers neutral while walking or when the hand is gone)
 Every output moves toward its target at <= max_rate_rad_s per joint, so a mode switch never snaps the fingers.
 `rest` is the supervisor's hands_open (configs/fullbody.yaml aliases one into the other).

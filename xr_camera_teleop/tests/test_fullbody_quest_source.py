@@ -156,3 +156,62 @@ def test_same_input_same_output():
         assert x.planner.keys() == y.planner.keys()
         assert all(np.array_equal(np.asarray(x.planner[k]), np.asarray(y.planner[k])) for k in x.planner)
         assert x.input.status == y.input.status
+
+
+def test_hands_mode_steps_walk_the_robot_and_leans_do_not():
+    hands = {s: rest_hand(s) for s in SIDES}
+    sc = intro(Script()).to_hands(hands).hold(2.0, "still")
+    sc.ramp(1.0, "lean", lean_pitch=math.radians(25)).hold(2.5, "leaning").ramp(1.0, "back", lean_pitch=0.0)
+    sc.hold(1.5, "upright")
+    t_lean = (sc.segments[-5].t0, sc.segments[-1].t1)
+    sc.ramp(0.8, "step", x=0.3).hold(3.0, "stepped")
+    core, ticks = run(sc)
+    lean = ticks[int(t_lean[0] / DT):int(t_lean[1] / DT)]
+    assert all(tk.sup.cmd.base.mode is Mode.IDLE for tk in lean)
+    assert all(tk.input.status["steps"] == 0 for tk in lean)
+    walk = [tk for tk in ticks[int(t_lean[1] / DT):] if tk.sup.cmd.base.mode in WALKING]
+    assert walk and all(tk.sup.cmd.base.velocity[0] > 0.3 and abs(tk.sup.cmd.base.velocity[1]) < 0.05 for tk in walk)
+    assert ticks[-1].input.status["steps"] == 1 and ticks[-1].sup.cmd.base.mode is Mode.IDLE
+    assert ticks[-1].input.status["lean_pitch_deg"] == pytest.approx(0.0, abs=1.0)    # the step is not a lean
+
+
+def test_step_walk_off_keeps_the_robot_still():
+    hands = {s: rest_hand(s) for s in SIDES}
+    sc = intro(Script()).to_hands(hands).hold(2.0, "still").ramp(0.8, "step", x=0.3).hold(3.0, "stepped")
+    off = UiAction(UiKind.SET, "step_walk", False, t=0.0, seq=99)
+    _, ticks = run(sc, ui={0.5: [off]})
+    assert not any(tk.sup.cmd.base.mode in WALKING for tk in ticks[int(sc.segments[-2].t0 / DT):])
+    assert ticks[-1].input.status["steps"] == 1                              # the stance still follows
+
+
+def test_right_stick_turns_left_stick_walks_one_controller_walks():
+    sc = intro(Script()).hold(1.0, "still")
+    sc.hold(2.0, "turn right", pads={"left": Pad(), "right": Pad(stick=(1.0, 0.0))})
+    sc.hold(1.0, "stop", pads=controller_pads())
+    sc.hold(2.0, "walk left stick", pads={"left": Pad(stick=(0.0, 1.0)), "right": Pad()})
+    sc.hold(1.0, "stop 2", pads=controller_pads())
+    sc.hold(2.0, "one controller", pads={"right": Pad(stick=(0.0, 1.0))})
+    _, ticks = run(sc)
+    seg = {s.name: s for s in sc.segments}
+    at = lambda t: ticks[int(t / DT)]
+    turned = math.degrees(at(seg["stop"].t1).sup.cmd.facing - at(seg["turn right"].t0).sup.cmd.facing)
+    assert -125.0 < turned < -100.0                                     # 60 deg/s for 2 s, to the right
+    assert all(at(t).sup.cmd.base.mode is Mode.IDLE for t in np.arange(seg["turn right"].t0, seg["stop"].t1, 0.1))
+    for name in ("walk left stick", "one controller"):
+        tk = at(seg[name].t0 + 1.5)
+        assert tk.sup.cmd.base.mode in WALKING and tk.sup.cmd.base.velocity[0] > 0.35
+    assert at(seg["walk left stick"].t1).sup.cmd.facing == at(seg["walk left stick"].t0).sup.cmd.facing
+
+
+def test_controller_arms_follow_the_controllers_and_leave_the_fingers():
+    on = UiAction(UiKind.SET, "controller_arms", True, t=0.0, seq=98)
+    sc = intro(Script()).hold(3.0, "controllers held")
+    sc.add("raise", 2.0, lambda t, s: replace(s, x=s.x))                 # (frames keep coming)
+    _, ticks = run(sc, ui={0.5: [on]})
+    end = ticks[-1]
+    assert end.input.status["mode"] == "walk"
+    assert end.input.status["hand_left"] == "controller" == end.input.status["hand_right"]
+    _, off = run(sc)
+    assert off[-1].input.status["hand_left"] == "parked"
+    assert not np.allclose(end.sup.cmd.upper.left, off[-1].sup.cmd.upper.left, atol=0.02)   # not the park pose
+    assert np.allclose(end.sup.cmd.hands.left, off[-1].sup.cmd.hands.left)               # fingers untouched

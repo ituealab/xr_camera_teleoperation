@@ -192,3 +192,28 @@ def test_a_stalled_loop_never_becomes_a_jump():
     a = arms.step(0.10, both()(0.10, 5), OperatorMode.HANDS, SH, UPRIGHT, S)    # tracking starts, ramp 0.7 s
     b = arms.step(1.00, both()(1.00, 6), OperatorMode.HANDS, SH, UPRIGHT, S)    # next tick 0.9 s later
     assert np.linalg.norm(b.left[:3, 3] - a.left[:3, 3]) <= P.max_lin * MAX_STEP_DT + 1e-9
+
+
+def test_kneeling_widens_reach_and_floor_but_boxes_the_hands():
+    low = lambda s: neutral_rel(s, fwd=0.55, down=0.75, out=0.10)          # noqa: E731  reaching to the floor
+    standing = drive(Arms(), 120, both(low))[-1]
+    arms = Arms()
+    kneel = [arms.step(i * DT, both(low)(i * DT, i), OperatorMode.HANDS, SH, UPRIGHT, S, low=True)
+             for i in range(120)][-1]
+    assert standing.right[2, 3] >= P.z_min_m - 1e-9
+    assert kneel.right[2, 3] < standing.right[2, 3] - 0.08                 # lower than the standing floor allows
+    for T in (kneel.left, kneel.right):
+        hand = T[:3, 3] + P.hand_point_m * T[:3, 0]
+        assert T[2, 3] >= P.kneel_z_min_m - 1e-9 and hand[2] >= P.kneel_z_min_m - 1e-9
+        assert T[0, 3] <= P.kneel_x_max_m + 1e-9 and hand[0] <= P.kneel_x_max_m + P.hand_point_m + 1e-9
+        assert abs(T[1, 3]) <= P.kneel_y_max_m + 1e-9
+
+
+def test_kneel_box_moves_a_far_target_inside():
+    from xr_camera_teleop.fullbody.arms import kneel_box
+    T = pose(rot_y(math.radians(80)), [0.7, -0.6, -0.5])                  # far, wide, pointing down
+    B = kneel_box(T, P)
+    hand = B[:3, 3] + P.hand_point_m * B[:3, 0]
+    assert np.allclose(B[:3, :3], T[:3, :3])
+    assert B[0, 3] <= P.kneel_x_max_m + 1e-9 and min(B[2, 3], hand[2]) >= P.kneel_z_min_m - 1e-9
+    assert abs(B[1, 3]) <= P.kneel_y_max_m + 1e-9

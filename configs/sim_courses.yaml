@@ -54,7 +54,8 @@ courses:
   flat: []                       # the upstream floor only
   # The morning test (PLAN §0): a corridor straight ahead with a yellow mark at 1.5, 4.1, 6.7 and 9.3 m; at each
   # mark the courses branch off 0.7 m to the left (ramp 5 deg, ramp 10 deg, ramp 15 deg, cross slope) and to the
-  # right (the tables with the cube, steps 3 cm, steps 6 cm, rough ground). Turn on a mark and walk onto it.
+  # right (the tables with the cube, steps 3 cm, steps 6 cm, rough ground). Turn on a mark and walk onto it. A second
+  # cube lies on the floor 0.8 m to the left of the start.
   morning:
     - {feature: mark, name: start, pos: [0.0, 0.0]}
     - {feature: mark, name: mark1, pos: [1.5, 0.0]}
@@ -67,6 +68,8 @@ courses:
     - {feature: cross5, pos: [9.3, 0.7], yaw_deg: 90}
     - {feature: table, name: table_a, pos: [1.5, -0.55], yaw_deg: -90}
     - {feature: cube, atop: table_a, pos: [0.12, 0.0]}
+    # a cube on the floor near the start, left of the corridor (the floor pick: kneel, PLAN D7)
+    - {feature: cube, name: floor_cube, pos: [0.3, 0.8]}
     - {feature: table, name: table_b, pos: [2.6, -0.55], yaw_deg: -90}
     - {feature: steps3, pos: [4.1, -0.7], yaw_deg: -90}
     - {feature: steps6, pos: [6.7, -0.7], yaw_deg: -90}

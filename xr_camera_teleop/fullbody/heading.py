@@ -25,6 +25,9 @@ after each: none 10.5 deg max, 1e-3 rad nudges at 1 / 2 s 5.7, at 1..6 s 4.7, a 
 3.6 (the default). While walking the heading is sent exactly (no pulse bends the path). Open loop: the robot's measured
 yaw is never read.
 
+The right stick turns the heading directly (`turn_rate`, locomotion.turn_rate): added to it even while locked, never to
+psi_body, so the operator's own frame (lean, wrists) is untouched.
+
 psi_body also orients the operator torso frame the wrists are measured in (posture.py, arms.py), so it keeps tracking
 the operator while the heading is locked.
 """
@@ -104,8 +107,10 @@ class Heading:
             return level                        # all re-issues done (always so right after calibration)
         return level + (self._dir * self.p.reissue_rad if n % 2 else 0.0)
 
-    def step(self, now: float, psi_head: float, locked: bool, walking: bool = False) -> HeadingOut:
-        """`walking`: the legs are commanded to walk this tick (no re-issue pulse)."""
+    def step(self, now: float, psi_head: float, locked: bool, walking: bool = False,
+             turn_rate: float = 0.0) -> HeadingOut:
+        """`walking`: the legs are commanded to walk this tick (no re-issue pulse); `turn_rate`: the stick's turn
+        (rad/s, + = left), added to the heading even while locked (an explicit command), not to psi_body."""
         if self.psi_body is None:
             self.reset(psi_head)
         p = self.p
@@ -128,6 +133,7 @@ class Heading:
                 self._turning, self._over_since = False, None
         if not locked:
             self._heading += moved
+        self._heading += turn_rate * dt
         w = math.radians(p.waist_yaw_max_deg)
         waist = min(w, max(-w, float(wrap_angle(psi_head - self.psi_body))))
         return HeadingOut(heading=self._reissued(now, self._quant(self._heading), walking), psi_body=self.psi_body,

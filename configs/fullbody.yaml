@@ -26,6 +26,8 @@ operator_settings:
   lean_gain: 1.0
   arm_tracking: true
   fingers: true
+  step_walk: true                # HANDS mode: the robot steps after the operator's own steps
+  controller_arms: false         # WALK mode: the arms follow the controllers, the fingers stay as they are
 
 lifecycle:                       # sonic/lifecycle.py
   start_resend_s: 0.2
@@ -95,12 +97,13 @@ quest:
     speed_step: 0.05
     direction_step_deg: 10.0
     band: 0.6
+    turn_rate_deg_s: 60.0        # the right stick's x turns the robot this fast at full deflection
   posture:                       # fullbody/posture.py
     neck_in_head: [-0.08, 0.0, -0.10]   # neck pivot behind and below the eyes (nods do not lean the torso)
     shoulders_below_neck: 0.09
     torso_neutral: *torso_neutral
     gain: 1.0                    # x settings.lean_gain
-    pitch_fwd_max_deg: 25.0      # waist limits of the torso command
+    pitch_fwd_max_deg: 30.0      # waist limits of the torso command (= the G1 waist pitch joint, +-0.52 rad)
     pitch_back_max_deg: 10.0
     roll_max_deg: 15.0
     rate_rad_s: 0.5
@@ -115,6 +118,24 @@ quest:
     h_max: 0.75
     height_step: 0.03
     height_band: 0.6
+    kneel_enter_m: 0.55          # squatting and the drop beyond this for kneel_hold_s: KNEEL (both knees down; SONIC
+    kneel_hold_s: 0.5            # bends over them and brings the hands to the floor, its squat cannot: P4_P6_P7 §9)
+    kneel_exit_m: 0.40
+    kneel_rise_s: 2.0
+  stepping:                      # fullbody/stepping.py (the operator's own steps; HANDS mode: the robot follows)
+    min_step_m: 0.15             # neck offset from the stance at least this (sideways counted x lateral_weight)
+    lean_margin_m: 0.08          # and this much of it not explained by a lean's drop
+    lateral_weight: 0.6          # weight shifts move the head sideways 10-15 cm without a drop
+    seated_below_m: 1.35         # calibrated head height below this: seated, no steps
+    settle_speed: 0.10           # m/s: a step is over when the neck is this slow
+    settle_s: 0.35               # for this long
+    max_step_m: 1.0              # larger jumps only move the stance (tracking glitch)
+    speed: 0.4                   # m/s, the followed walk (SONIC barely moves below ~0.3)
+    speed_gain: 0.83             # pulse model D(T) = gain * speed * (T - lag), sim (PLAN D15)
+    speed_gain_back: 1.15        # backward pulses go further
+    lag_fwd_s: 0.0
+    lag_lat_s: 0.6               # SONIC starts sideways walks ~1 s late
+    min_walk_s: 0.6
   arms:                          # fullbody/arms.py
     scale: 0.7                   # robot arm / human arm (0.37 / ~0.53 m)
     robot_shoulders: [0.004, 0.0, 0.235]   # shoulder midpoint in the torso_link frame (G1 FK)
@@ -127,7 +148,13 @@ quest:
     hand_point_m: 0.10
     hand_radius_m: 0.12
     z_min_m: -0.15
+    kneel_scale: 1.0             # kneeling: the hands go to the floor (SONIC bends over its knees; P4_P6_P7 §9)
+    kneel_reach_m: 0.70
+    kneel_z_min_m: -0.27         # the wrists boxed in the pelvis frame (beyond, SONIC dives onto its face: sim)
+    kneel_x_max_m: 0.47          # (the hand point 0.10 further)
+    kneel_y_max_m: 0.35
     wrist_gap_m: 0.15             # Dex3 thumbs reach ~6 cm toward the midline
+    controller_wrist_m: [-0.10, 0.0, -0.03]   # settings.controller_arms: the wrist in the controller's ray frame
     hold_s: 1.0                  # a lost hand holds its target this long, then parks
     park_s: 1.0                  # half-cosine ramps (PLAN §5)
     track_s: 0.7

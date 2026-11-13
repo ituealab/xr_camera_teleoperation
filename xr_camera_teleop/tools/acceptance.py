@@ -4,6 +4,8 @@
     data/xr-env/bin/python -m xr_camera_teleop.tools.acceptance --runs 3            # the dry run (morning course)
     data/xr-env/bin/python -m xr_camera_teleop.tools.acceptance --runs 5 --only cube   # cube pick/place rate
                                                                                        # (table course: walk up, hands)
+    data/xr-env/bin/python -m xr_camera_teleop.tools.acceptance --runs 5 --only floor  # floor pick (kneel), morning
+    data/xr-env/bin/python -m xr_camera_teleop.tools.acceptance --runs 3 --only stepping  # stepping, HANDS mode
 
 The stack is brought up with `deploy/xr_fullbody_sim.sh morning --no-viewer` (sim on the morning course, SONIC,
 camera bridge, Quest server, node --source quest) and stopped at the end (--keep leaves it running). The operator is
@@ -19,6 +21,10 @@ its hand. Steps (D8: walking with a controller, hands without):
   walk        stick forward, back, left, right; then forward to mark1 and stop on it (<= 0.3 m)
   turn        a 90 deg body turn to the right: the robot follows within 5 deg; +-15 deg glances turn nothing
   lean        lean forward (torso pitches), crouch (squat), stand up
+  floor       (--only floor) turn to the floor cube, walk up, hands; go down to the floor (squat, then kneel), right
+              hand palm down over the cube, fist, lift (up to 3 tries), put it down, open, stand up
+  stepping    (--only stepping) HANDS mode: the operator steps forward, back, left, right (the robot follows, D15), then
+              leans and reaches at length and shifts the weight (the robot must not step)
   hands       walk to table_a; controllers down: HANDS; a hand raised lifts the robot's wrist
   cube        right hand palm down over the cube, fist, lift (up to 3 tries), carry 6 cm along the table, put down, open
   walk_again  controllers back: WALK; back to the corridor, a 180 deg turn to the left
@@ -42,6 +48,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from xr_camera_teleop.fullbody.frames import C_F_XR, rot_x, rot_z
 from xr_camera_teleop.operator.hand_geometry import neutral_hand_rotation
@@ -62,8 +69,13 @@ GRASP_OFF = np.array([0.095, 0.050, 0.010])
 # Where the pelvis stops relative to the cube (robot frame facing the table): behind, left. The grasp works with the cube
 # 0.28-0.34 m ahead; short approaches overshoot by up to ~0.1 m (SONIC walks >= 0.4 m/s), so aim at 0.36.
 TABLE_SPOT = (-0.36, 0.17)
+# Where the pelvis stands relative to the floor cube before kneeling (robot frame facing it): behind, a little left
+# (the right hand takes it). Kneeling, SONIC's hands reach the floor ~0.45-0.55 m ahead of the pelvis (P4_P6_P7 §9).
+FLOOR_SPOT = (-0.40, 0.12)
+TORSO_L = 0.70                               # the emulated operator's hip-to-neck length (leans pivot at the hips)
 STEPS = ("page", "start", "calib_a", "calib_panel", "walk", "turn", "lean", "hands", "cube", "walk_again", "ramp",
-         "disconnect", "durdur")
+         "disconnect", "durdur", "floor", "stepping")
+ONLY_STEPS = ("floor", "stepping")             # separate scenarios (--only), not part of the §0 dry run
 
 
 class StepFailed(Exception):
@@ -165,7 +177,8 @@ class Operator:
         self.robot = robot
         self.yaw = 0.0                      # body yaw in the room (XR, about +Y; + = left)
         self.base = np.array([0.0, 0.0])    # head x, z on the floor (XR)
-        self.fwd = 0.0                      # lean: head forward of the base, m
+        self.fwd = 0.0                      # lean: head forward of the base, m (about the hips: the head drops too)
+        self.side = 0.0                     # sideways head offset without a drop (a weight shift), m (+ = left)
         self.drop = 0.0                     # crouch: head lowered, m
         self.hands_on = False               # hands (True) or controllers (False) in the emulator
         # hands held in front, above a table's height for the robot (lower, the robot's hand swept the cube away)
@@ -176,14 +189,20 @@ class Operator:
         self.q.close()
 
     # -------------------------------------------------------------- body
+    def head_pos(self) -> np.ndarray:
+        """Eyes in the room: a lean pivots the torso about the hips (the head drops by L (1 - cos)), a weight shift
+        carries it sideways at the same height."""
+        lean_drop = TORSO_L - math.sqrt(max(TORSO_L ** 2 - self.fwd ** 2, 0.0))
+        return np.array([self.base[0], EYE_H - self.drop - lean_drop, self.base[1]]) + \
+            ry(self.yaw) @ [-self.side, 0.0, -self.fwd]
+
     def head(self, glance: float = 0.0):
-        R = ry(self.yaw)
-        p = np.array([self.base[0], EYE_H - self.drop, self.base[1]]) + R @ [0.0, 0.0, -self.fwd]
+        p = self.head_pos()
         self.q.set({"head": {"pos": [float(v) for v in p], "quat": yaw_quat(self.yaw + glance)}})
 
     def ease(self, seconds: float, **targets):
-        """Body fields (yaw, fwd, drop) eased to targets; head and hands follow."""
-        start = {k: getattr(self, k) for k in targets}
+        """Body fields (yaw, fwd, side, drop, base) eased to targets; head and hands follow."""
+        start = {k: np.copy(getattr(self, k)) for k in targets}
         n = max(1, int(seconds / 0.03))
         for i in range(1, n + 1):
             a = 0.5 - 0.5 * math.cos(math.pi * i / n)
@@ -199,7 +218,7 @@ class Operator:
 
     # -------------------------------------------------------------- controllers
     def stick(self, x: float, y: float):
-        self.q.set({"controllers": {"right": {"stick": [float(x), float(y)]}}})
+        self.q.set({"controllers": {"left": {"stick": [float(x), float(y)]}}})
 
     def button(self, name: str, seconds: float):
         self.q.set({"controllers": {"right": {name: True}}})
@@ -241,7 +260,7 @@ class Operator:
 
     def place_hands(self):
         R = ry(self.yaw)
-        head = np.array([self.base[0], EYE_H - self.drop, self.base[1]]) + R @ [0.0, 0.0, -self.fwd]
+        head = self.head_pos()
         self.q.set({"hands": {s: {"pos": [float(v) for v in head + R @ self.hands_local[s]], "quat": self.hand_quat[s]}
                               for s in ("left", "right")}})
 
@@ -292,7 +311,37 @@ class Operator:
             self.place_hands()
         raise StepFailed(f"could not turn the {side} hand ({ang:.1f} deg off)")
 
-    def servo_wrist(self, side: str, want, tol: float = 0.005, iters: int = 14, gain: float = 0.8) -> float:
+    def orient_robot_wrist(self, side: str, R_world_want, tol_deg: float = 8.0, iters: int = 8) -> float:
+        """Turn the operator's hand until the robot's wrist link has the wanted world rotation (closed loop on the
+        sim, like a person watching the robot's hand: kneeling, SONIC pitches the pelvis, so the torso-frame rotation
+        a hand pose maps to is not known in advance)."""
+        best, ang, worse = (180.0, self.hand_quat[side]), 180.0, 0
+        for _ in range(iters):
+            R_err = np.asarray(R_world_want) @ self.robot.sim.rot(f"{side}_wrist_yaw_link").T
+            ang = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(R_err) - 1) / 2))))
+            if ang < best[0]:
+                best, worse = (ang, self.hand_quat[side]), 0
+            else:
+                worse += 1
+            if ang < tol_deg or worse >= 2:           # done, or the wrist does not follow (a joint limit)
+                break
+            Y = rot_z(self.yaw - self.robot.yaw())              # robot world -> operator room (F) about the vertical
+            R_err_F = Y @ R_err @ Y.T
+            # a partial step, at most 15 deg (the mapping is not exactly a rotation once SONIC re-balances)
+            w = Rotation.from_matrix(R_err_F).as_rotvec() * 0.5
+            w *= min(1.0, math.radians(15.0) / max(float(np.linalg.norm(w)), 1e-9))
+            R_xr = C_F_XR.T @ Rotation.from_rotvec(w).as_matrix() @ C_F_XR @ matrix_from_quat(self.hand_quat[side])
+            self.hand_quat[side] = quat_from_matrix(R_xr)
+            self.place_hands()
+            time.sleep(0.8)
+        if ang > best[0] + 2.0:                       # back to the best rotation seen
+            self.hand_quat[side] = best[1]
+            self.place_hands()
+            time.sleep(0.8)
+        return min(ang, best[0])
+
+    def servo_wrist(self, side: str, want, tol: float = 0.005, iters: int = 14, gain: float = 0.8,
+                    scale: float = SCALE) -> float:
         """Move the operator's hand until the robot's wrist link is at want() (world; re-evaluated every iteration, so
         it may depend on the robot's actual wrist rotation) in closed loop on the sim. If the error ends larger than
         its best (the hand blocked, or a safety limit holding the target), the hand goes back to where it was
@@ -307,7 +356,7 @@ class Operator:
                 best = (err, self.hands_local[side].copy())
             if err < tol:
                 break
-            e_op = rot_z(self.robot.yaw()).T @ e_w / SCALE          # robot torso frame ~ operator shoulder frame
+            e_op = rot_z(self.robot.yaw()).T @ e_w / scale          # robot torso frame ~ operator shoulder frame
             self.move_hand(side, C_F_XR.T @ rot_z(self.yaw) @ (gain * e_op), seconds=0.35)
             time.sleep(0.6)                                          # SONIC's arm tracking lags ~0.1-0.2 s
         err = float(np.linalg.norm(want() - self.robot.body(f"{side}_wrist_yaw_link")))
@@ -611,11 +660,149 @@ class Run:
         return {"stop_to_released_s": round(t_rel, 2)}
 
 
+    # ------------------------------------------------------------------ floor pick (kneel) and stepping
+    def floor(self, attempts: int = 3):
+        """Turn to the floor cube, walk up, hands; down to the floor (squat, kneel); palm down over the cube, fist,
+        lift; put it down, open; stand up; controllers back, turn back."""
+        op, robot = self.op, self.robot
+        cube0 = robot.body("floor_cube_body")
+        y0 = robot.yaw()
+        want_yaw = math.atan2(cube0[1] - robot.pelvis()[1], cube0[0] - robot.pelvis()[0])
+        op.ease(2.0, yaw=op.yaw + wrap(want_yaw - y0))
+        time.sleep(6.0)
+        spot = cube0[:2] + rot_z(robot.yaw())[:2, :2] @ np.array(FLOOR_SPOT)
+        p = op.walk_to(spot, magnitude=0.6)
+        ahead = rot_z(-robot.yaw())[:2, :2] @ (robot.body("floor_cube_body")[:2] - p)
+        self.note["cube_ahead_left_m"] = ahead.round(3).tolist()
+        op.hand_mode()
+        op.wait_node(lambda n: n["operator"].get("mode") == "hands" and n["state"] == "active", 12,
+                     "HANDS mode, ACTIVE again after the switch")
+        time.sleep(1.0)
+        op.ease(2.5, drop=0.40)                                       # squat ...
+        op.ease(1.5, drop=0.70, fwd=0.12)                             # ... down to the floor: kneel
+        n = op.wait_node(lambda n: n["operator"].get("crouch") == "kneel", 6, "KNEEL")
+        time.sleep(4.0)
+        z_kneel = float(robot.pelvis()[2])
+        self.note["kneel_pelvis_z"] = round(z_kneel, 3)
+        Rk, pk = rot_z(-robot.yaw())[:2, :2], robot.pelvis()[:2]
+        self.note["kneeling_m"] = {k: (Rk @ (robot.body(b)[:2] - pk)).round(3).tolist() for k, b in
+                                   (("cube", "floor_cube_body"), ("left_knee", "left_knee_link"),
+                                    ("right_knee", "right_knee_link"), ("right_wrist", "right_wrist_yaw_link"))}
+        self.note["cube_moved_m"] = round(float(np.linalg.norm(robot.body("floor_cube_body")[:2] - cube0[:2])), 3)
+        check(z_kneel < 0.5, f"pelvis {z_kneel:.2f} m: not kneeling")
+        R_grasp = rot_z(robot.yaw()) @ rot_x(-math.pi / 2)          # palm down, fingers forward, in the world
+
+        def wrist_for(dz=0.0):
+            return lambda: robot.body("floor_cube_body") - R_grasp @ GRASP_OFF + [0.0, 0.0, dz]
+        tries, lift = [], 0.0
+        for _ in range(attempts):
+            z_start = float(robot.body("floor_cube_body")[2])
+            c_before = robot.body("floor_cube_body").copy()
+            op.move_hand("right", [0.0, 0.15, 0.0], 1.0)             # hand up first: never sweep along the floor
+            time.sleep(0.8)
+            e_rot = op.orient_robot_wrist("right", R_grasp)
+            e_pre = op.servo_wrist("right", wrist_for(0.15), scale=1.0)   # above the cube
+            e_rot2 = op.orient_robot_wrist("right", R_grasp)
+            op.servo_wrist("right", wrist_for(0.06), scale=1.0, iters=6)
+            e_grasp = op.servo_wrist("right", wrist_for(0.0), scale=1.0)
+            pushed = float(np.linalg.norm(robot.body("floor_cube_body")[:2] - c_before[:2]))
+            self.note.setdefault("world", []).append({k: robot.body(b).round(3).tolist() for k, b in
+                                                      (("pelvis", "pelvis"), ("cube", "floor_cube_body"),
+                                                       ("wrist", "right_wrist_yaw_link"))})
+            self.note["servo_trace"] = op.servo_trace
+            rel = robot.sim.rot("right_wrist_yaw_link").T @ (robot.body("floor_cube_body") -
+                                                             robot.body("right_wrist_yaw_link"))
+            op.q.set({"hands": {"right": {"pose": "grip"}}})
+            time.sleep(2.5)
+            op.move_hand("right", [0.0, 0.12, 0.0], 2.5)
+            time.sleep(1.5)
+            lift = float(robot.body("floor_cube_body")[2] - z_start)
+            tries.append({"rot_err_deg": [round(e_rot, 1), round(e_rot2, 1)], "servo_err_pre_cm": round(100 * e_pre, 1),
+                          "servo_err_grasp_cm": round(100 * e_grasp, 1), "cube_in_wrist_cm": (100 * rel).round(1).tolist(),
+                          "lift_cm": round(100 * lift, 1), "pushed_cm": round(100 * pushed, 1),
+                          "pelvis_z": round(float(robot.pelvis()[2]), 3),
+                          "up_z": round(robot.up_z(), 3)})
+            self.note["attempts"] = tries
+            if lift > 0.04:
+                break
+            op.q.set({"hands": {"right": {"pose": "default"}}})
+            time.sleep(1.0)
+        check(lift > 0.04, f"floor cube not lifted in {attempts} attempts (last {100 * lift:.1f} cm)")
+        op.move_hand("right", [0.0, -0.10, 0.0], 1.5)                # put it down, open, hand up
+        time.sleep(1.0)
+        op.q.set({"hands": {"right": {"pose": "default"}}})
+        time.sleep(1.2)
+        op.move_hand("right", [0.0, 0.10, 0.0], 1.0)
+        c1 = robot.body("floor_cube_body")
+        op.ease(2.0, drop=0.0, fwd=0.0)                               # stand up
+        op.wait_node(lambda n: n["operator"].get("crouch") == "stand", 8, "standing again")
+        time.sleep(3.0)
+        check(robot.standing(), "robot not standing after the floor pick")
+        op.controller_mode()
+        op.wait_node(lambda n: n["operator"].get("mode") == "walk" and n["state"] == "active", 12, "WALK again")
+        time.sleep(1.5)
+        op.ease(2.0, yaw=op.yaw - wrap(want_yaw - y0))
+        time.sleep(6.0)
+        return {"attempts": tries, "cube_ahead_left_m": ahead.round(3).tolist(),
+                "kneel_pelvis_z": round(z_kneel, 3), "cube_z_after": round(float(c1[2]), 3)}
+
+    def stepping(self):
+        """HANDS mode, the operator steps: the robot follows (D15). Then leans, long reaches and weight shifts: the
+        robot must not step."""
+        op, robot = self.op, self.robot
+        op.hand_mode()
+        op.wait_node(lambda n: n["operator"].get("mode") == "hands" and n["state"] == "active", 12,
+                     "HANDS mode, ACTIVE again after the switch")
+        time.sleep(2.0)
+        R_op = ry(op.yaw)
+        out, errs = {"followed": [], "false": []}, []
+
+        def robot_local():
+            return rot_z(-self.yaw0)[:2, :2] @ robot.pelvis()[:2]
+
+        def n_steps():
+            return op.q.state()["node"]["operator"].get("steps", 0)
+        for name, d_local in (("fwd 0.30", (0.30, 0.0)), ("back 0.30", (-0.30, 0.0)), ("left 0.35", (0.0, 0.35)),
+                              ("right 0.35", (0.0, -0.35)), ("fwd 0.20", (0.20, 0.0)), ("back 0.20", (-0.20, 0.0))):
+            a, k0, yaw_a = robot.pelvis()[:2], n_steps(), robot.yaw()
+            d_room = R_op @ np.array([-d_local[1], 0.0, -d_local[0]])
+            op.ease(0.8, base=op.base + d_room[[0, 2]])
+            time.sleep(4.5)
+            moved = rot_z(-yaw_a)[:2, :2] @ (robot.pelvis()[:2] - a)          # in the robot's frame at the start
+            err = float(np.linalg.norm(moved - np.array(d_local)))
+            errs.append(err)
+            out["followed"].append({"step": name, "robot_m": moved.round(3).tolist(), "err_m": round(err, 3),
+                                    "yaw_change_deg": round(math.degrees(wrap(robot.yaw() - yaw_a)), 1),
+                                    "detected": n_steps() - k0})
+            self.note.update(out)
+        for name, kw in (("lean fwd 0.25", {"fwd": 0.25}), ("lean fwd 0.35", {"fwd": 0.35}),
+                         ("weight shift left 0.12", {"side": 0.12}), ("weight shift right 0.12", {"side": -0.12})):
+            a, k0 = robot_local(), n_steps()
+            op.ease(1.0, **kw)
+            op.move_hand("right", [0.0, -0.05, -0.15], 1.0)          # a reach while leaning
+            time.sleep(3.0)
+            op.move_hand("right", [0.0, 0.05, 0.15], 1.0)
+            op.ease(1.0, **{k: 0.0 for k in kw})
+            time.sleep(2.5)
+            moved = float(np.linalg.norm(robot_local() - a))
+            out["false"].append({"motion": name, "robot_moved_m": round(moved, 3), "detected": n_steps() - k0})
+            self.note.update(out)
+        false_steps = sum(f["detected"] for f in out["false"])
+        out["mean_err_m"] = round(float(np.mean(errs)), 3)
+        out["false_steps"] = false_steps
+        check(false_steps == 0, f"{false_steps} steps detected while leaning / shifting the weight")
+        check(all(f["detected"] >= 1 for f in out["followed"]), "a step was not detected")
+        return out
+
+
 def run_once(k: int, out: Path, robot: Robot, only: list, kill_server: bool) -> dict:
     r = Run(k, out, robot, kill_server)
-    order = [s for s in STEPS if not only or s in only or s in ("page", "start", "calib_a", "durdur")]
+    order = [s for s in STEPS if (s in only if only else s not in ONLY_STEPS) or s in ("page", "start", "calib_a",
+                                                                                         "durdur")]
     if only == ["cube"]:
         order = ["page", "start", "calib_a", "hands", "cube", "durdur"]
+    elif only in (["floor"], ["stepping"]):
+        order = ["page", "start", "calib_a", only[0], "durdur"]
     try:
         for name in order:
             if not r.step(name, getattr(r, name)) and name in ("page", "start", "calib_a"):
