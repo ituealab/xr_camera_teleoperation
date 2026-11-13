@@ -12,7 +12,7 @@ Branch: `quest_emin` (`quest-xr`'dan, 3144d6d). Tarih: 2026-11-12.
 | P3 | Tamam. Gerçek kayıt §6 kurallarıyla doğrulandı; takip edilen elin işaretçisi artık kontrolcü akışına girmiyor. |
 | P4, P6, P7 | Tamam (`P4_P6_P7_mapping.md`); P6'nın "yürürken taşıma" çıkışı D8 ile imkânsız (§0 madde 7). |
 | P5 | Tamam (`P5_ui.md`). |
-| P8 | Kısmen (`P8_results.md`). Parkurlar ve sabah yerleşimi, gantry (20 başlatma, 0 düşme), tek komutla açılış (`deploy/xr_fullbody_sim.sh morning`, viewer masaüstünde), 5° rampa 5/5, §7a tam sahnede geçiyor. §0 kuru koşusu (emülatör, 3 koşu): küp ve bir el aynalama kontrolü dışında her adım 3/3, düşme 0; **küp al-bırak insansız geçmedi** (park eden eller masaya giriyor; `P8_results.md` §6, §10). Sabah kılavuzu `SABAH.md`. |
+| P8 | Kısmen (`P8_results.md`). Parkurlar ve sabah yerleşimi, gantry (20 başlatma, 0 düşme), tek komutla açılış (`deploy/xr_fullbody_sim.sh morning`, viewer masaüstünde), 5° rampa 5/5, §7a tam sahnede geçiyor. Park pozu düzeltildi (kollar yanlarda; eller artık masaya takılmıyor). §0 kuru koşusu (emülatör, 2×3 koşu): bir koşu her adımı geçti, düşme 0; **üç üst üste geçmedi**: küp 6'da 1 (robotun masadaki duruşu), 90° dönüş 6'da 4 (±5°). Sabah kılavuzu `SABAH.md`. |
 
 Faz belgelerinin PLAN'dan sapmaları her belgenin kendi "PLAN'dan sapmalar" bölümündedir (P1 §7, P2 §5, P4_P6_P7 §7, P5 §7, P8 `P8_results.md` §9).
 

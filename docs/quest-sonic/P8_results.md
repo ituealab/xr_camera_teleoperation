@@ -119,61 +119,95 @@ P1'e göre heightfield'lar ve küp adım süresini ölçülebilir değiştirmedi
 
 ## 6. Küp al-bırak (ELLER modu, gerçek hat)
 
-**Sonuç: küp al-bırak insansız doğrulanamadı.** Tutuşun kendisi simde çalışıyor, ama emüle edilmiş operatörle tam hat
-üzerinden güvenilir değil. Nedenleri aşağıda; en büyüğü D8 park pozu ile masanın çakışması (§10 risk 1).
+**Park pozu düzeltildi (`P4_P6_P7_mapping.md` §4 Kollar).** Eski park pozu bilekleri pelvisin 0.16 m önüne, pelvis
+yüksekliğine koyuyordu; eller 0.36 m öne, 0.64–0.87 m'ye uzanıyordu. Bu kullanıcının D8 tanımına ("kontrolcü eldeyken
+kollar yanda dursun") aykırıydı ve küp sorununun ana nedeniydi: robot masaya küpe uzanacak kadar yaklaşınca park eden
+eller masa üstünün altına giriyor, ELLER'e geçince kalkamıyordu (o koşularda el 10 cm kalkınca robot bileği 0.1–3.4 cm
+kalktı; kuru koşu 2'deki el aynalama hatası da buydu: sol el de masa A'nın altındaydı). Yeni poz: omuz pitch 0, roll
+±0.40, dirsek 1.40 (FK): bilekler 0.74 m'de uyluğun yanında, eller pelvisin en fazla 0.11 m önünde, yürürken
+uyluğa ≥ 3.8 cm. Simde ramp5 4/4 düşmesiz; AKTİF YÜRÜME'de el-bacak mesafesi hiç 1 cm'nin altına inmedi (1 cm altı
+yalnız SONIC kapalıyken, bantta asılı: SONIC'in kendi duruşu).
 
-| Deneme | Nasıl | Sonuç |
+**Bileğin kalkamaması, kök neden ve test:** (1) park pozu masanın içindeydi (yukarıda); (2) yan park pozundan bile düz
+bir park→takip karışımı parmakları yeterince yükselmeden masa kenarının altına süpürüyordu. `arms.py` rampaları artık
+hedef yüksekse önce yüksekliği, alçaksa önce yatayı karıştırıyor. Testler: `test_fullbody_park_pose.py` (FK ile:
+el masa ayak izinin dışında, uyluğa mesafe; eski pozla kalır) ve `test_the_hand_never_travels_forward_while_low` (eski
+düz karışımla kalır, denendi). Sonuç: el aynalama park düzeltmesinden sonraki 35 masa koşusunun hepsinde geçti (robot bileği 5.8–8.4 cm kalktı).
+
+**Kalan sorun: tutuşun kendisi.** Park düzeltmesinden sonra emüle edilmiş operatörle tam hat (`acceptance --only cube`,
+5'er koşu, her koşuda en çok 3 deneme):
+
+| Değişiklik (operatör tarafı, birikimli) | Koşu başarısı | Not |
 |---|---|---|
-| Grasp lab, masa 0.82 m, 6 cm küp, avuç aşağı, yumruk | SONIC VR bileği doğrudan (node yok), sim'den kapalı çevrim | **3 / 3 kaldırdı** (9.3 / 8.2 / 5.1 cm), masaya geri koydu |
-| aynı, pinch | | 0 / 2 (başparmak yeterince dönmüyor) |
-| aynı, avuç dik | | 0 / 1 (küpü masadan düşürdü) |
-| 5 cm küp (0.78 ve 0.82 m masa, avuç dik ve aşağı) | | 0 / 19 (Dex3 parmakları küpün iki yanından geçiyor ya da masaya değiyor) |
-| masa 0.92 m (park eden eller altından geçsin diye) | | 0 / 4: bilek avuç-aşağı poza gelmiyor; geri alındı |
-| **Tam hat**: emülatör (sayfa, Quest sunucusu, xr_frame) → node → SONIC → MuJoCo, operatör sim'e bakarak elini kapalı çevrimle götürür, yumruk (`grip`), en çok 3 deneme | `tools/acceptance.py --only cube` ve kuru koşunun küp adımı, son araç | **0 / 7 koşu** (21 deneme; en iyisi 3.2 cm kaldırıp düşürdü) |
-| aynı, aracın önceki sürümleri (gece boyunca) | | 3 başarılı al-bırak (8.1 / 6.7 / 6.2 cm kaldırıp 10–13 cm taşıdı) |
+| park pozu + rampa | 0 / 5 | Operatörün dinlenme elleri robotun elini küp hizasına koyuyordu: ELLER'e geçince el küpü 19 cm öteye itti |
+| dinlenme elleri 10 cm yukarıda (masanın üstünde) | 2 / 5 | Kalan üçünde robot 0.20–0.24 m'ye kadar yaklaşmıştı |
+| yumruk 2.5 s, yavaş kaldırma | 2 / 5 | |
+| durma noktası 0.36 m | 2 / 5 | Kısa yaklaşmada robot 0.03–0.15 m fazla gidiyor (SONIC ≥ 0.4 m/s) |
+| çok yakınsa kısa geri adım | 0 / 5 | 0.3 s'lik geri darbe robotu yeterince geri almıyor |
+| küp el çerçevesinde 1.0 cm işaret parmağı tarafına, 0.5 s geri darbe, en az 0.30 m | 1 / 5 | Başarılı koşu ilk denemede tuttu (küp 0.8 cm'de); 0.5 s'lik geri darbe robotu 0.46–0.52 m'ye, menzil dışına attı |
+| son ayar: 1.0 cm, geri adım yok, durma 0.36 m (iki kuru koşu, §7) | 1 / 6 | Biri ilk denemede; kalanlarda küp robotun solunda ya da menzil dışında kaldı |
 
-Neden tutmuyor (kayıtlardan):
-1. **Park eden eller masaya giriyor.** YÜRÜME'de eller robotun 0.36 m önüne ve 0.64–0.87 m yüksekliğe park ediyor;
-   küpü almak için robot masa kenarına ~0.2 m yaklaşmalı, masa üstü 0.78–0.82 m. Eller masa üstünün hizasında/altında
-   kalıyor; ELLER'e geçince bilekler kalkamıyor: bu koşularda sol el 10 cm kalkınca robot bileği 0.1–3.4 cm kalktı,
-   sağ bilek hedefin 35–48 cm uzağında kaldı (son 7 koşunun 4'ünde). Masa yüksekte (0.92 m) eller altından geçiyor ama
-   tutuş pozu olmuyor; alçakta erişim yetmiyor. Sahne tarafında temiz bir çözüm bulamadım; park pozu robotun
-   davranışı (P4_P6_P7 §4), değiştirmedim. Karar kullanıcıda.
-2. **Bilek oraya gelince bile tolerans dar:** küp el çerçevesinde ~1 cm doğrulukta olmalı; SONIC'in bilek yönü
-   hatası (5–20°) küpü avuca göre kaydırıyor. Başarılı denemelerde küp el çerçevesinde (9–11, 5–6, 1–2) cm'deydi.
-3. **Emüle edilen yumruk** IWER'in kendi pozlarından kuruldu (`point` parmakları, işaret parmağı da orta parmak
-   şeklinde, `pinch` başparmağı): retarget gerçek yumruğa yakın (`[-1.13, -0.69, -1.54, 0.79, 1.61, 0.60, 1.37]`
-   / kanonik `[-1.13, -0.69, -1.54, 0.51, 1.26, 0.61, 1.25]`), ama aynı değil.
+Kayıtlardan çıkan koşullar: küp robotun **≥ 0.29 m önünde** değilse avuç-aşağı bilek küpün üstüne gelemiyor (servo
+4–10 cm'de takılıyor); geldiğinde (servo ≤ 0.5 cm) tutuş küp el çerçevesinde işaret parmağı tarafına 1.0–1.6 cm
+kaymışsa tuttu (5.0–6.5 cm kaldırıp 10–13 cm taşıdı), 2.2–2.6 cm'de tutmadı. Başarılı tutuşların hepsi 2. ya da 3.
+denemede geldi. Grasp lab'da (SONIC VR bileği doğrudan) 3 / 3; avuç dik, pinch ve 5 cm küp hiç tutmadı; masa 0.92 m'de
+de tutmadı (0 / 4).
 
-İnsan operatör için anlamı: tutuş mümkün (lab), ama küp robotun sağ önünde ~30 cm'deyken avuç aşağı, küpün üstüne
-oturtup yumruk gerekiyor; park eden eller masaya takılırsa geri çekilip tekrar yaklaşmak gerekiyor (`SABAH.md`).
+İnsan operatör için: küp robotun ~30–35 cm önünde olacak şekilde dur; elleri önce masanın üstüne kaldır; avuç aşağı,
+küpün üstüne otur; yumruk, ~2 s tut, yavaş kaldır; tutmazsa tekrar (`SABAH.md`).
 
 ## 7. §0 kabul kuru koşusu (`tools/acceptance.py`)
 
 `tools/acceptance.py --runs 3`, sabah parkuru, taze yığın, üç koşu art arda (her koşu Başlat'tan Durdur'a; arada
 SONIC yeniden açılır, gantry robotu ve küpü sıfırlar). Koşu 2'de bağlantı kesme sayfa + Quest sunucusu durdurularak
-yapıldı, sunucu `morning` ile geri geldi. Sonuç: `data/p8/acceptance-20261113-034310/`.
+yapıldı, sunucu `morning` ile geri geldi. Yeni park pozu ve son operatör ayarlarıyla iki kez koşuldu.
+
+**Son koşu** (`data/p8/acceptance-20261113-060353/`):
 
 | Adım | Koşu 1 | Koşu 2 | Koşu 3 |
 |---|---|---|---|
-| Sayfa + robot görüntüsü + panel (2 s'de çözülen resim, görüntü Hz) | 133, 30.1 | 124, 30.0 | 122, 30.0 |
-| Başlat → HAZIR | 0.3 s | 0.3 s | 0.3 s |
+| Sayfa + robot görüntüsü (2 s'de çözülen resim, görüntü Hz) | 133, 30.0 | 120, 29.5 | 124, 30.0 |
+| Başlat → HAZIR | 0.31 s | 0.3 s | 0.31 s |
 | A basılı tutarak kalibrasyon → AKTİF | geçti | geçti | geçti |
 | Panelden kalibrasyon → AKTİF | geçti | geçti | geçti |
-| Stick ileri/geri/sol/sağ; işarette durma (≤ 0.3 m) | 0.12 m | 0.23 m | 0.03 m |
-| 90° vücut dönüşü (±5°); ±15° bakış | −87.5°; 0.45° | −88.7°; 0.86° | −89.1°; 0.11° |
-| Eğilme / squat / kalkış | 11.4°, 0.596, 0.785 m | 11.6°, 0.596, 0.784 m | 11.5°, 0.594, 0.785 m |
-| Masaya yürü, ELLER, el aynalanıyor | geçti (8.7 cm) | **kaldı** (3.3 cm) | geçti (8.9 cm) |
-| Küp al-bırak | **kaldı** | **kaldı** | **kaldı** (3.2 cm kalktı, düştü) |
-| Kontrolcüler geri → YÜRÜME, koridor, 180° | geçti | geçti | geçti |
-| 5° rampa çık-in (pelvis maks, eğim maks) | 0.933 m, 9.5° | 0.931 m, 10.2° | 0.934 m, 9.0° |
-| Bağlantı kesme: robot ayakta, kayma | 0.007 m | 0.008 m (sunucu da) | 0.008 m |
+| Stick ileri/geri/sol/sağ; işarette durma (≤ 0.3 m) | 0.21 m | 0.20 m | 0.08 m |
+| 90° vücut dönüşü (±5°); ±15° bakış | -89.9°; 0.57° | **kaldı** (robot turned -83.1 deg for a -90 deg body turn) | **kaldı** (robot turned -84.5 deg for a -90 deg body turn) |
+| Eğilme / squat pelvis / kalkış pelvis | 12.1°, 0.597, 0.782 m | 11.7°, 0.596, 0.783 m | 11.4°, 0.597, 0.783 m |
+| Masaya yürü (küp önde), ELLER, el aynalanıyor | 0.31 m; 6.5 cm | 0.32 m; 5.9 cm | 0.39 m; 6.6 cm |
+| Küp al-bırak (deneme, kalkış) | **kaldı** (cube not lifted in 3 attempts (last 1.9 cm)) | **kaldı** (cube not lifted in 3 attempts (last 0.4 cm)) | **kaldı** (cube not lifted in 3 attempts (last 1.1 cm)) |
+| Kontrolcüler geri → YÜRÜME, koridor, 180° | 176.7° | 178.3° | 177.1° |
+| 5° rampa çık-in (pelvis maks, eğim maks) | 0.930 m, 9.8° | 0.931 m, 9.2° | 0.925 m, 10.5° |
+| Bağlantı kesme: robot ayakta, kayma | 0.021 m | 0.021 m (sunucu da) | 0.023 m |
 | Durdur → SONIC bıraktı, gantry yakaladı | 0.0 s | 0.0 s | 0.1 s |
 | **Düşme** | **0** | **0** | **0** |
 
-**Kapı:** §0 "üç kez üst üste" geçmedi: küp adımı üç koşuda, masadaki el aynalama koşu 2'de kaldı; ikisinin nedeni
-aynı (§6). Diğer her adım üç koşuda da geçti, hiç düşme yok. Önceki bir 3 koşuluk kuru koşu (emüle elin yönü
-düzeltilmeden önce) aynı tabloyu verdi: küp 0/3, el aynalama 2/3, gerisi 3/3, düşme 0.
+**Bir önceki** (`data/p8/acceptance-20261113-055143/`; koşu 3'teki rampa ve bağlantı hataları ölçüm aracının
+hatasıydı: canlı durum okuyucusu vazgeçti, adım stick basılıyken koptu; düzeltildi, sonraki koşu bunu göstermiyor):
+
+| Adım | Koşu 1 | Koşu 2 | Koşu 3 |
+|---|---|---|---|
+| Sayfa + robot görüntüsü (2 s'de çözülen resim, görüntü Hz) | 135, 30.0 | 124, 30.0 | 120, 29.5 |
+| Başlat → HAZIR | 0.31 s | 0.3 s | 0.3 s |
+| A basılı tutarak kalibrasyon → AKTİF | geçti | geçti | geçti |
+| Panelden kalibrasyon → AKTİF | geçti | geçti | geçti |
+| Stick ileri/geri/sol/sağ; işarette durma (≤ 0.3 m) | 0.17 m | 0.16 m | 0.20 m |
+| 90° vücut dönüşü (±5°); ±15° bakış | -86.6°; 1.63° | -87.1°; 1.39° | -88.2°; 1.17° |
+| Eğilme / squat pelvis / kalkış pelvis | 11.3°, 0.596, 0.784 m | 11.4°, 0.594, 0.783 m | 12.2°, 0.596, 0.782 m |
+| Masaya yürü (küp önde), ELLER, el aynalanıyor | 0.27 m; 6.0 cm | 0.35 m; 6.8 cm | 0.29 m; 6.0 cm |
+| Küp al-bırak (deneme, kalkış) | 1. denemede, 6.2 cm | **kaldı** (cube not lifted in 3 attempts (last 0.7 cm)) | **kaldı** (cube not lifted in 3 attempts (last 2.4 cm)) |
+| Kontrolcüler geri → YÜRÜME, koridor, 180° | 176.0° | 177.6° | 174.0° |
+| 5° rampa çık-in (pelvis maks, eğim maks) | 0.931 m, 9.2° | 0.928 m, 11.1° | **kaldı** (the sim's state snapshot has no complete record) |
+| Bağlantı kesme: robot ayakta, kayma | 0.020 m | 0.022 m (sunucu da) | **kaldı** (robot moved 0.20 m after the disconnect) |
+| Durdur → SONIC bıraktı, gantry yakaladı | 0.0 s | 0.11 s | 0.0 s |
+| **Düşme** | **0** | **0** | **0** |
+
+**Kapı:** §0 "üç kez üst üste" geçmedi. Bir koşu (05:51 koşu 1) baştan sona her adımı geçti, küp ilk denemede
+6.2 cm kalktı. Hiçbir koşuda düşme yok. Kalanlar:
+- **Küp** (6 koşuda 1): tutuş için robot küpün ≥ 0.29 m arkasında ve küp sağ elinin önünde olmalı. Robot 90° dönüşü
+  birkaç derece eksik bitirince (−83…−88°) masaya yürüyüşü küpü sol tarafına (+0.05…+0.10 m) ya da menzil dışına
+  (0.385 m) getiriyor; emüle edilmiş operatör bunu masada düzeltmiyor (yan adım SONIC'te ≥ 0.4 m/s, ince ayar yok).
+- **90° dönüş ±5°** (6 koşuda 4): −83.1° ve −84.5° (P4'ün açık çevrim yeniden-gönderme çaresi, risk 5).
+- El aynalama artık 6/6 (park düzeltmesinden önce 2/3).
 
 Emülatörün kafa hızı 60 Hz (gerçek Quest'te 36 Hz, P0); A tuşu yolu ve panel yolu ikisi de test edildi.
 
@@ -201,21 +235,23 @@ Orkestratör yığını `emin` olarak, ekransız bir kabuktan başlatır. Launch
 2. **Küp 6 cm** (PLAN §7: 5 cm) ve **masa 0.82 m**: Dex3 tutuşu için sahne ayarı (§3).
 3. **Parkurlar 2 m geniş**, karakterizasyon tek geçiş (§3).
 4. **Gantry** indirip yavaşça bırakıyor (P2 §1: "bandı indirir/kaldırır" anahtarla anında bırakıyordu).
-5. **Yeni modüller:** `sim/courses.py` (parkur geometrisi), `sim/live.py` (çalışan sim'in gerçek değerleri,
+5. **Park pozu değişti** (P4_P6_P7 §4 Kollar): kollar yanlarda sarkık (D8 tanımı); eski poz elleri öne uzatıyordu.
+   **Kol rampaları yükseklik önce** (park ↔ takip): `arms.py` `_Ramp`.
+6. **Yeni modüller:** `sim/courses.py` (parkur geometrisi), `sim/live.py` (çalışan sim'in gerçek değerleri,
    araçlar için; kontrol yolunda değil), `tools/course_test.py`, `tools/acceptance.py`; `sonic_drive starts`;
    emülatörde `grip` el pozu ve kalibrasyon için hareketsiz kafa penceresi; launcher'da `morning`, `stop NAME`,
    masaüstü ekranı bulma.
-6. **Emülatör (P5 §5'teki not):** betik modunda A artık 1.5 s, kafa 9–12 s arası durgun: kalibrasyon yolu uçtan uca
+7. **Emülatör (P5 §5'teki not):** betik modunda A artık 1.5 s, kafa 9–12 s arası durgun: kalibrasyon yolu uçtan uca
    test ediliyor (`test_quest_e2e.py::test_node_follows_the_emulated_quest`).
 
 ## 10. Açık riskler
 
 Yarınki denemeyi bozma olasılığına göre sıralı:
 
-1. **Küp al-bırak (§0 madde 6) büyük olasılıkla zorlayacak.** Park eden eller masa kenarına/altına giriyor; ELLER'e
-   geçince kollar kalkamayabilir; tutuş toleransı ~1 cm (§6). Kullanıcıya söylenecek: avuç aşağı, küpün üstüne otur,
-   yumruk; takılırsa kontrolcüyü al, geri çekil, tekrar. Kalıcı çözüm kullanıcı kararı: park pozunu alçaltmak/
-   yanlara açmak, ya da masa/görev tasarımı.
+1. **Küp al-bırak (§0 madde 6) zor olacak.** Park sorunu çözüldü (kollar yanlarda, eller masaya takılmıyor), ama tutuş
+   dar: küp robotun ≥ 0.29 m önünde olmalı, avuç küpün üstüne oturmalı, küp avucun işaret parmağı tarafında; emüle
+   edilmiş operatörle tutuş çoğu zaman 2.–3. denemede geldi, en iyi ayarda 5 koşuda 2. İnsan görüntüye bakarak düzeltir;
+   `SABAH.md` adımları söylüyor. Robot ≥ 0.4 m/s yürüdüğü için masaya kısa yaklaşmada 0.03–0.15 m fazla gidiyor.
 2. **§0 madde 7 D8 ile imkânsız** (yürürken taşıma): kullanıcı kararı; PLAN'da işaretlendi.
 3. **Gerçek headset emülatörden farklı:** kafa 36 Hz (60 değil), Quest'in JPEG çözmesi, Wi-Fi, A basılıyken
    kontrolcülerin akıştan düşmesi (tek gözleme dayanan kural, P4 §8). Kalibrasyon 1 s hareketsizlik ister; olmazsa
@@ -223,8 +259,10 @@ Yarınki denemeyi bozma olasılığına göre sıralı:
 4. **Rampadan yana kayma:** açık çevrimde 6 m'de 0.4–0.6 m; rampa 2 m geniş, kenar 15 cm. Kullanıcı çapraz stick ile
    düzeltmeli; 10°/15° rampa, 6 cm basamak (3'te 2 düşme) ve yan eğim (yokuş aşağı kayma) yalnız bilgi için.
 5. **Yerinde dönüş açık çevrim:** 90°'de −84…−89° görüldü (bir kez ±5° dışında); 180°'de 170–178°.
-6. **Viewer:** masaüstü kilitliyse pencere kilidin arkasında; kullanıcı oturumu kapatıp açarsa Xwayland çerezi
+6. **Yeni park pozunun gerçek headset'le denenmemesi:** simde yürüme ve rampa düşmesiz, el-bacak teması yok; YÜRÜME ↔
+   ELLER geçişleri artık "önce yüksel" rampası ile, sarsıntı ölçümü (P6 tablosu) eski pozla yapılmıştı.
+7. **Viewer:** masaüstü kilitliyse pencere kilidin arkasında; kullanıcı oturumu kapatıp açarsa Xwayland çerezi
    değişir: `stop` + `morning` yeniden bulur. Viewer kapanırsa fizik sürer.
-7. **Quest kablosuz ADB'si** USB'yi bir kez takmayı gerektirir (orkestratör); sayfa açma ADB'siz de olur.
-8. **Robot düşerse:** upstream ~20 s sonra robotu diker; ya da DURDUR (bant yakalar, küp de sıfırlanır) ve ~30 s
+8. **Quest kablosuz ADB'si** USB'yi bir kez takmayı gerektirir (orkestratör); sayfa açma ADB'siz de olur.
+9. **Robot düşerse:** upstream ~20 s sonra robotu diker; ya da DURDUR (bant yakalar, küp de sıfırlanır) ve ~30 s
    sonra Başlat.

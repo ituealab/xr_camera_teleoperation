@@ -29,7 +29,7 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 ## 3. Kontroller
 
 **İki mod (D8):**
-- **YÜRÜME:** en az bir kontrolcü elinde. Stick yürütür. Robotun iki kolu yanda park eder, parmaklar açık.
+- **YÜRÜME:** en az bir kontrolcü elinde. Stick yürütür. Robotun iki kolu yanlarda sarkar, parmaklar açık.
 - **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Bacaklar durur.
 - Geçişte Quest girdiyi 0.6–1.5 s keser; robot kısa bir an DURAKLADI'ya geçer, sonra kendiliğinden devam eder.
 
@@ -60,13 +60,12 @@ eğim, sağda 3 ve 6 cm basamaklar ile pürüzlü zemin.
 3. Stick ile ileri, geri, yana yürü. Sonra ilk sarı işarete yürü ve üstünde dur.
 4. Vücudunla **90° sağa** dön: robot döner, masa A önünde. Sonra ±15° etrafa bak: robot dönmez.
 5. Öne eğil, geri gel; çömel, kalk. Robot kalkınca tekrar yürür.
-6. Masaya yaklaş: küp robotun sağ önünde, gövdesinden ~30 cm ileride olsun. **İki kontrolcüyü bırak** → ELLER.
-   Küpü **sağ elinle, avuç aşağı** al: avucun küpün üstüne otursun, başparmak arkasında, parmaklar önünde;
-   **yumruk yap**, kaldır, biraz yana taşı, indir, elini aç. Tutmazsa elini aç, kaldır, tekrar dene.
-   **Dikkat (bilinen sorun):** YÜRÜME'de park etmiş eller robotun 36 cm önüne ve 64–87 cm yüksekliğe uzanıyor; masa
-   üstü 78–82 cm. Masaya bu kadar yaklaşınca park etmiş eller masanın kenarına/altına girebilir ve ELLER'e geçince
-   kollar kalkamaz (görüntüde eller masanın altında kalır). O zaman kontrolcüleri geri al, stick ile biraz geri çekil,
-   tekrar yaklaş ve dene.
+6. Masaya yaklaş: küp robotun **sağ elinin önünde**, gövdesinden ~30–35 cm ileride olsun (çok yaklaşma: daha yakında
+   avuç küpün üstüne gelemiyor). Robot dönüşü birkaç derece eksik bitirebilir: masaya yürümeden önce görüntüde küpün
+   sağ önde olduğuna bak, değilse stick'i hafif çapraz tutarak hizala. **İki kontrolcüyü bırak** → ELLER. Ellerini önce **masanın üstüne kaldır**, sonra uzan
+   (alçakta uzanırsan robotun eli küpü iter). Küpü **sağ elinle, avuç aşağı** al: avucun küpün üstüne otursun,
+   başparmak arkasında, parmaklar önünde; **yumruk yap, ~2 s tut, yavaşça kaldır**, biraz yana taşı, indir, elini aç.
+   Tutmazsa elini aç, kaldır, tekrar dene (simde çoğu zaman 2.–3. denemede tuttu).
 7. (§0 madde 7, "kontrolcüyü alıp küpü taşıyarak yürü", D8 ile mümkün değil: kontrolcü alınınca iki kol park eder,
    parmaklar açılır, küp düşer. Bu adımı atla; karar senin.)
 8. **Kontrolcüleri geri al** → YÜRÜME. Geri geri koridora dön, vücudunla **180° sola** dön: 5°'lik rampa önünde.
