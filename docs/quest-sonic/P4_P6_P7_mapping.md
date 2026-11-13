@@ -66,10 +66,11 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 
 ## 3. Operatörün kontrolleri (D8)
 
-- **YÜRÜME** (en az bir kontrolcü takipte): hangi kontrolcünün stick'i daha çok itilmişse o yürütür. İki kol park
-  pozuna 1 s'de gider, parmaklar dinlenme pozunda. Gövde eğilmesi ve çömelme bu modda da çalışır.
-- **ELLER** (hiç kontrolcü yok): takip edilen her el aynalanır, takip edilmeyen taraf 1 s tutulur sonra park eder,
-  bacaklar IDLE. Buton yok; panel kullanılır.
+- **YÜRÜME** (en az bir kontrolcü takipte): sol stick yürütür, sağ stick'in x'i döndürür (tek kontrolcüde onun
+  stick'i yürütür). İki kol park pozuna 1 s'de gider, parmaklar dinlenme pozunda; `controller_arms` açıksa kollar
+  kontrolcüleri izler (CONTROLLER), parmaklar olduğu gibi kalır (§9). Gövde eğilmesi ve çömelme bu modda da çalışır.
+- **ELLER** (hiç kontrolcü yok): takip edilen her el aynalanır, takip edilmeyen taraf 1 s tutulur sonra park eder.
+  Bacaklar IDLE; `step_walk` açıksa operatörün adımlarını yürür (§9). Buton yok; panel kullanılır.
 - Geçişler: kontrolcü → el geçişinde Quest girdiyi ~0.6 s, el → kontrolcüde ~1.5 s durdurur. Kafa bayatlarsa
   PAUSED, kafa 0.5 s taze kalınca kendiliğinden ACTIVE (supervisor). Sim'de: 1.1–2.1 s sonra yeniden ACTIVE.
 
@@ -83,8 +84,9 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 
 `OperatorInput.status` (panel ve log için, düz değerler): `mode` (walk/hands; ilk girdiden önce yok),
 `heading_lock`, `calibrating` (A/X basılıyken 0→1; panel isteği denenirken 1), `calibrated`, `calibration_error`
-(son red nedeni), `engage_pending`, `hand_left`/`hand_right` (tracked/hold/parked), `crouch` (stand/squat/rising),
-`body_turning`, `lean_pitch_deg`/`lean_roll_deg`.
+(son red nedeni), `engage_pending`, `hand_left`/`hand_right` (tracked/controller/hold/parked), `crouch`
+(stand/squat/kneel/rising), `body_turning`, `stepping` (adım yürüyüşü sürüyor), `steps` (algılanan adım sayısı),
+`lean_pitch_deg`/`lean_roll_deg`.
 
 ## 4. Tasarım ayrıntıları
 
@@ -178,13 +180,15 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 | gestures | hold_s 1.0, short_s 0.5, stop_s 0.5, dropout_s 3.0 |
 | mode | confirm_s 0.1 |
 | heading | hold_deg 20, turn_deg 25, turn_delay_s 0.3, rate_deg_s 60, settle_deg 1, step_deg 3, step_band 0.6, waist_yaw_max_deg 0, reissue_s [3.0, 4.5], reissue_rad 0.0698 |
-| locomotion | v_fwd_max 0.5, v_back_max 0.55, v_lat_max 0.45, v_min 0.4, walk_above 0.75, walk_band 0.1, speed_step 0.05, direction_step_deg 10, band 0.6 |
-| posture | neck_in_head [−0.08, 0, −0.10], shoulders_below_neck 0.09, torso_neutral (*alias*), gain 1, pitch_fwd_max_deg 25, pitch_back_max_deg 10, roll_max_deg 15, rate_rad_s 0.5, stick_idle_s 0.5, enter_m 0.12, enter_hold_s 0.25, exit_m 0.07, rise_s 1.5, h_stand 0.8, k_h 1.0, h_min 0.3, h_max 0.75, height_step 0.03 |
-| arms | scale 0.7, robot_shoulders, reach_m 0.36, front_min_m 0.08, cross_m 0.05, torso_axis/radius, hand_point/radius, z_min_m −0.15, wrist_gap_m 0.15, hold_s 1, park_s 1, track_s 0.7, max_lin 1.2, max_ang 4, One-Euro, park |
+| locomotion | v_fwd_max 0.5, v_back_max 0.55, v_lat_max 0.45, v_min 0.4, walk_above 0.75, walk_band 0.1, speed_step 0.05, direction_step_deg 10, band 0.6, turn_rate_deg_s 60 |
+| stepping | min_step_m 0.15, lean_margin_m 0.08, lateral_weight 0.6, seated_below_m 1.35, settle_speed 0.10, settle_s 0.35, max_step_m 1.0, speed 0.4, speed_gain 0.83, speed_gain_back 1.15, lag_fwd_s 0, lag_lat_s 0.6, min_walk_s 0.6 |
+| posture | neck_in_head [−0.08, 0, −0.10], shoulders_below_neck 0.09, torso_neutral (*alias*), gain 1, pitch_fwd_max_deg 30, pitch_back_max_deg 10, roll_max_deg 15, rate_rad_s 0.5, stick_idle_s 0.5, enter_m 0.12, enter_hold_s 0.25, exit_m 0.07, rise_s 1.5, h_stand 0.8, k_h 1.0, h_min 0.3, h_max 0.75, height_step 0.03, kneel_enter_m 0.55, kneel_hold_s 0.5, kneel_exit_m 0.40, kneel_rise_s 2.0 |
+| arms | scale 0.7, robot_shoulders, reach_m 0.36, front_min_m 0.08, cross_m 0.05, torso_axis/radius, hand_point/radius, z_min_m −0.15, kneel_scale 1.0, kneel_reach_m 0.70, kneel_z_min_m −0.27, kneel_x_max_m 0.47, kneel_y_max_m 0.35, wrist_gap_m 0.15, controller_wrist_m [−0.10, 0, −0.03], hold_s 1, park_s 1, track_s 0.7, max_lin 1.2, max_ang 4, One-Euro, park |
 | hands | rest (*alias* postures.hands_open), max_rate_rad_s 8, thumb_shaping |
 
 Panel ayarları (`operator_settings`): speed_scale tepe hızı ölçekler (v_min altına inmez), stick_deadzone, heading_lock,
-crouch_enabled, lean_gain (0 = gövde dik), arm_tracking (kapalı: iki kol park), fingers (kapalı: dinlenme).
+crouch_enabled, lean_gain (0 = gövde dik), arm_tracking (kapalı: iki kol park), fingers (kapalı: dinlenme), step_walk
+(ELLER'de adımla yürüme, açık), controller_arms (YÜRÜME'de kollar kontrolcüleri izler, kapalı).
 
 ## 6. Ölçümler (çıkış kriterleri)
 
@@ -264,9 +268,9 @@ Yeniden gönderme A/B (aynı senaryo, dönüş başına mutlak hata, en büyüğ
 
 ## 8. Açık riskler
 
-1. **Yürürken taşıma D8 ile mümkün değil** (P6 çıkışı "yürürken taşıma 3/3", §0 madde 7): kontrolcü alınınca iki
-   kol park eder, parmaklar dinlenmeye döner; eldeki küp düşer. Çözüm kullanıcı kararı gerektirir (ör. YÜRÜME'de
-   parmakları tutmak, kolu park yerine son hedefte dondurmak ya da tetikle kavrama).
+1. **Yürürken taşıma** (§0 madde 7): `controller_arms` ile kollar kontrolcüleri izler ve parmaklar olduğu gibi kalır
+   (§9). El → kontrolcü geçişi 1 s'den uzun sürerse (Quest ~1.5 s durduruyor) kol HOLD'dan PARKED'a düşer ve
+   parmaklar dinlenmeye döner; eldeki küp yine düşebilir. Kontrolcü → bilek ofseti tahmin (ölçülmedi).
 2. **A/X bas-tut gerçek headset'te tek gözleme dayanıyor:** X basılıyken kontrolcülerin akıştan düşmesi bir kez
    görüldü; kural buna dayanıklı, ama başka bir davranış (ör. sistem menüsü) olursa kalibrasyon panelden yapılır.
 3. **Yerinde dönüş yeniden gönderme ile ±5° içinde** (2.9° ve 3.5°, iki koşu); SONIC planner'ının davranışına
@@ -274,10 +278,43 @@ Yeniden gönderme A/B (aynı senaryo, dönüş başına mutlak hata, en büyüğ
 4. **Gövde dönüşünde kollar:** ELLER modunda operatör yerinde dönerse ψ_body histerezis yüzünden geride kalır,
    eller o frame'de döner görünür; ön çalışma alanı ve orta hat sınırı hedefleri robotun önünde tutar ama dönüş
    sürerken eller doğru yerde değildir. Dönüş bitince (ψ_body yetişince) düzelir.
-5. **Eğilme tahmini adım atmaya duyarlı:** operatör fiziksel olarak adım atarsa (yerinde durmazsa) kafa kayması
-   eğilme sayılır (20 cm ≈ 16°). Komut limitleri (25° / 15°) ve hız sınırı sınırlar; kalibrasyon yenilenince düzelir.
+5. **Eğilme ile adım ayrımı modele dayanır** (`stepping.py`): eğilme kalça etrafında döner ve boynu düşürür, adım
+   düşürmez. Yana ağırlık aktarma (10–15 cm, düşüşsüz) adımdan ayrılamaz; bu yüzden yan bileşen ×0.6 sayılır. Adım
+   atan operatörün duruş referansı adımla taşındığından adım artık eğilme sayılmaz (YÜRÜME'de de).
 6. **Kalibrasyon şartları:** dik dur, ileri bak (eğim ≤ 20°), 1 s kıpırdama (2 cm, 3°). Panelden kalibrede operatör
    panele bakıyorsa reddedilir; 4 s içinde ileri bakınca kabul edilir (`calibration_error` status'ta).
 7. **Parmak dinlenme pozu sıfırlar** (`postures.hands_open`): retarget'ın "açık el"inden farklı (başparmak −1.05 rad);
    ELLER → park geçişinde başparmak hareket eder (hız sınırlı).
 8. **Dex3 retarget yükü:** node açılışında ~0.7 s + torch import; tick başına el örneği geldiğinde 1–3 ms/el.
+
+## 9. Yerden alma, adımla yürüme, stick ile dönüş, kumandayla kol (2026-11-13)
+
+Kullanıcının ilk headset denemesinden sonraki istekleri.
+
+**Yerden alma (KNEEL, `posture.py`, `arms.py`).** SONIC'in squat'ı yere ulaşamıyor: en alçak squat'ta (height 0.3)
+eller yerden ≥ 0.34 m yüksekte kalıyor, daha alçak bilek hedeflerinde robot geriye yaslanıp düşüyor (sim). İki dizli
+kneel modu (planner 5) ise dizlerin üstünden öne eğilip elleri yere getiriyor. Kural: SQUAT'tayken düşüş > 0.55 m
+0.5 s sürerse KNEEL; düşüş < 0.40 m, stick ya da ayar kapanınca RISING (2 s IDLE). Diz çökerken kollar: ölçek 1.0,
+erişim 0.70 m, pelvis frame'inde bilek z ≥ −0.27 m, x ≤ 0.47 m (el noktası +0.10), |y| ≤ 0.35 m. Daha ileri ya da
+alçak hedeflerde SONIC pelvisi daha çok eğip yüzüstü düşüyordu (sim). İleri eğilme sınırı 25°'den 30°'ye (bel pitch
+eklemi ±0.52 rad) çıktı. Sim kabul ölçümü (`acceptance --only floor`, 3 koşu, 2026-11-13): robot her seferinde düşmeden diz
+çöktü (pelvis 0.41–0.42 m, gövde dik `up_z` 0.997) ve kalktı; **küp 0/3 alındı**. Emüle operatörün eli yere
+inerken sağ el takibi aralıklarla düştü (replay: sağ el sol elden ~47 s fazla PARKED), robot bileği küpün ≥ 0.29 m
+üstünde kaldı; bir koşuda robot diz üstündeyken 0.9 m geri kaydı. Yerden alma gerçek operatörle denenmeli;
+emülatörde çözülmedi (kullanıcı kararı: olduğu kadar kalsın).
+
+**Adımla yürüme (`stepping.py`, D15).** Ölçüm (`acceptance --only stepping`, 2 koşu, Quest emülatörü + sim):
+6 adımın 6'sı algılandı, eğilme (25 ve 35 cm), uzanma ve yana ağırlık aktarma (±12 cm) 0 yanlış adım verdi. İleri
+0.20–0.30 m adımlar 2–5 cm hatayla; geri adımlar %35 fazla gidiyordu (`speed_gain_back` 1.15 ile düzeltildi);
+yana adımlar yana doğru ama SONIC kısa yan yürüyüşe başlarken 0.2–0.3 m geri kayıyor (2 s'lik stick yan yürüyüşünde
+kaymıyor). Açık çevrim: node robotun konumunu görmez.
+
+**Stick ile dönüş (`locomotion.turn_rate`, `heading.py`).** Sol stick yürür, sağ stick x'i ölü bölge dışında
+ölçeklenip × 60°/s heading'e eklenir; kilitliyken de çalışır, squat/kneel'de çalışmaz, ψ_body'ye eklenmez (operatör
+frame'i, eğilme ve bilekler etkilenmez). Tek kontrolcüde onun stick'i yürütür. `xr_synth`: 2 s tam sağ → facing
+−100…−125°, yürüme yok.
+
+**Kumandayla kol (`arms.py` CONTROLLER, ayar `controller_arms`, varsayılan kapalı).** YÜRÜME'de kontrolcünün
+target-ray pozundan bilek pozu: parmaklar ışın boyunca, avuç orta hatta (`neutral_hand_rotation` ışın frame'inde),
+bilek ışın frame'inde (−0.10, 0, −0.03) m. Sonrası ELLER ile aynı eşleme, filtre ve güvenlik. Parmaklar olduğu gibi
+kalır (`hands.py`: CONTROLLER hedefi değiştirmez). Stick yürütmeye devam eder.

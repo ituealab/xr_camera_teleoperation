@@ -29,8 +29,13 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 ## 3. Kontroller
 
 **İki mod (D8):**
-- **YÜRÜME:** en az bir kontrolcü elinde. Stick yürütür. Robotun iki kolu yanlarda sarkar, parmaklar açık.
-- **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Bacaklar durur.
+- **YÜRÜME:** en az bir kontrolcü elinde. **Sol stick yürütür, sağ stick (sağa/sola) robotu döndürür.** Tek
+  kontrolcü tutuyorsan onun stick'i yürütür. Robotun iki kolu yanlarda sarkar, parmaklar açık. Panelde Eller →
+  **Kumandayla kol** açıksa kollar kontrolcüleri izler, parmaklar olduğu gibi kalır (yürürken bir şey taşımak için).
+- **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Joystick'siz
+  ufak yer değiştirme: **kendin bir adım at** (ileri, geri, yana; ~15 cm'den büyük), adım bitince robot da aynı adımı
+  atar. Öne eğilmek, uzanmak, ağırlığını bir bacağa vermek adım sayılmaz. Panelde Eller → **Adımla yürüme** ile
+  kapatılır.
 - Geçişte Quest girdiyi 0.6–1.5 s keser; robot kısa bir an DURAKLADI'ya geçer, sonra kendiliğinden devam eder.
 
 | Ne | Nasıl |
@@ -40,14 +45,16 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 | Kalibre et ve devral | Dik dur, ileri bak, kıpırdama. **A veya X'i 1 s basılı tut**, ya da panelde **Kalibre et ve devral** |
 | Duraklat / devam | A veya X kısa bas |
 | Yön kilidi | B veya Y |
-| Yürü | Stick (ileri, geri, yan). En fazla 0.5 m/s; bırakınca ~0.1–0.25 m'de durur |
-| Dön | Vücudunla dön (kafa 25°'den fazla ve 0.3 s). Etrafa bakmak (±20°) robotu döndürmez |
-| Eğil, çömel | Öne/yana eğil: robotun gövdesi eğilir. Çömel (stick boşta): robot squat yapar; kalkınca kalkar |
+| Yürü | Sol stick (ileri, geri, yan). En fazla 0.5 m/s; bırakınca ~0.1–0.25 m'de durur |
+| Dön | Sağ stick sağa/sola (tam itince 60°/s; yön kilidi açıkken de çalışır), ya da vücudunla dön (kafa 25°'den fazla ve 0.3 s). Etrafa bakmak (±20°) robotu döndürmez |
+| Eğil, çömel | Öne/yana eğil: robotun gövdesi eğilir (öne en fazla 30°). Çömel (stick boşta): robot squat yapar; kalkınca kalkar |
+| Yerden al | Çömel, sonra **yere kadar in** (kalibrasyondaki boyundan ~55 cm aşağı, 0.5 s): robot iki dizinin üstüne çöker (KNEEL) ve öne eğilerek elleri yere ulaşır. Kalkınca (40 cm'nin üstüne) robot ~2 s'de ayağa kalkar |
+| Adımla yer değiştir | ELLER modunda kendin adım at: robot aynı adımı atar |
 | Acil durdur | Panelde kırmızı **DURDUR**, ya da iki grip + tetik 0.5 s |
 
 Panel açıkken robot donar (DURAKLADI); panel kapanınca devam eder. Panel sayfaları: Robot (Başlat, Kalibre et ve
 devral, Duraklat/Devam), Hareket (hız, stick ölü bölge, yön kilidi, çömelme, eğilme kazancı), Eller (kol takibi,
-parmaklar), Görüntü (Ego / İmmersif / Kapalı), Sistem (yeniden kalibre, bölüm işareti, hızlar).
+parmaklar, adımla yürüme, kumandayla kol), Görüntü (Ego / İmmersif / Kapalı), Sistem (yeniden kalibre, bölüm işareti, hızlar).
 
 ## 4. Sırayla dene (PLAN §0)
 
@@ -66,8 +73,11 @@ eğim, sağda 3 ve 6 cm basamaklar ile pürüzlü zemin.
    (alçakta uzanırsan robotun eli küpü iter). Küpü **sağ elinle, avuç aşağı** al: avucun küpün üstüne otursun,
    başparmak arkasında, parmaklar önünde; **yumruk yap, ~2 s tut, yavaşça kaldır**, biraz yana taşı, indir, elini aç.
    Tutmazsa elini aç, kaldır, tekrar dene (simde çoğu zaman 2.–3. denemede tuttu).
-7. (§0 madde 7, "kontrolcüyü alıp küpü taşıyarak yürü", D8 ile mümkün değil: kontrolcü alınınca iki kol park eder,
-   parmaklar açılır, küp düşer. Bu adımı atla; karar senin.)
+7. (İsteğe bağlı, §0 madde 7) Panelde Eller → **Kumandayla kol**'u aç, kontrolcüleri al: kollar kontrolcüleri izler,
+   parmaklar olduğu gibi kalır. Not: kontrolcüye geçiş 1 s'den uzun sürerse parmaklar o arada açılır.
+7b. **Yerden al:** başlangıçta robotun 0.8 m solunda yerde ikinci bir küp var. Ona dön, ~40 cm gerisine yürü,
+   kontrolcüleri bırak. Çömel ve yere kadar in: robot diz çöker. Sağ elinle avuç aşağı küpü almayı dene, kalk.
+   (Simde diz çökme kararlı ama emüle operatörle küp alınamadı; deneysel.)
 8. **Kontrolcüleri geri al** → YÜRÜME. Geri geri koridora dön, vücudunla **180° sola** dön: 5°'lik rampa önünde.
    Rampayı çık, düzlükte yürü, öbür taraftan in. (İstersen 10°/15° rampaları ve basamakları dene; bunlar kabul kapısı
    değil, `P8_results.md`'de ölçümleri var.)
