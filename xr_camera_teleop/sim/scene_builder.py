@@ -4,7 +4,7 @@
 Upstream `scene_43dof.xml` (G1 29 DoF + Dex3, floor, light) is loaded with MjSpec; this module adds the ZED 2i
 stereo cameras, the render settings and the course of `configs/sim_courses.yaml` (its geometry: `sim/courses.py`),
 and writes `data/sim/scenes/<course>.xml` with absolute mesh paths into the SONIC checkout. Physics of the robot is
-not changed.
+not changed; its Dex3 thumb_0 hinges are re-zeroed to the real hands' joint convention (sim/dex3.py).
 
     data/sonic-sim-venv/bin/python -m xr_camera_teleop.sim.scene_builder --course flat
 
@@ -20,7 +20,7 @@ import numpy as np
 import yaml
 
 from xr_camera_teleop.paths import CONFIGS, DATA
-from xr_camera_teleop.sim import courses
+from xr_camera_teleop.sim import courses, dex3
 
 COURSES = CONFIGS / "sim_courses.yaml"
 SCENES_DIR = DATA / "sim" / "scenes"
@@ -117,7 +117,8 @@ def _add_part(spec, part: courses.Part) -> None:
 
 
 def build_spec(cfg: dict, course: str, sonic_root: Path):
-    """MjSpec of the upstream base scene + render settings + stereo cameras + the course (sim/courses.py)."""
+    """MjSpec of the upstream base scene (Dex3 thumb_0 re-zeroed, sim/dex3.py) + render settings + stereo cameras +
+    the course (sim/courses.py)."""
     import mujoco
 
     parts = courses.course_parts(cfg, course)          # validates the course before the heavy load
@@ -125,6 +126,7 @@ def build_spec(cfg: dict, course: str, sonic_root: Path):
     spec = mujoco.MjSpec.from_file(str(base))
     if not Path(spec.meshdir).is_absolute():          # the generated XML lives elsewhere
         spec.meshdir = str((base.parent / spec.meshdir).resolve())
+    dex3.apply_hardware_zero(spec)                    # Dex3 commands and state in the real hands' thumb_0 angles
 
     r = cfg["render"]
     spec.visual.global_.offwidth, spec.visual.global_.offheight = map(int, r["offscreen_size"])

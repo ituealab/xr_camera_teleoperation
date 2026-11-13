@@ -167,6 +167,13 @@ ayağa kalktı/yürüdü. Sim domain'i manifestten okur; binary değişmedi.
   elleri kalçadan uzak tutmalı.
 - Planner mesajında el alanı yoksa SONIC elleri **yumruk** yapar (`input_interface.hpp` varsayılanı). D4 gereği her
   mesajda `left/right_hand_joints` gönderilmeli.
+- **thumb_0 sıfırı** (`sim/dex3.py`): gerçek ellerimizin thumb_0 açısı = URDF/MJCF açısı − 1.10 rad (iki el de).
+  Gerçek elde öğretilen pozlar (`robot/thumb_shaping.py`: açık −1.15/−1.08, işaret kıstırma −1.77…−1.99, orta
+  kıstırma −0.37, yumruk −1.13) URDF'in ±1.047'sinin çoğunlukla dışında; upstream MJCF bunları −1.047'de kırpıp
+  başparmağı ~60° işaret parmağı tarafına çeviriyordu, büküm başparmağı yana savuruyordu. Sahne üretici thumb_0'a
+  `ref = −1.10` verip aralığını kaydırır: qpos, PD ve `rt/dex3/*/state` gerçek elin biriminde; gönderilen komut ve
+  upstream değişmez. Not: SONIC deploy (`dex3_hands.hpp` `clipToMaxOpen`) thumb_0'ı [−1.05, 1.05]'e kırpar, yani
+  SONIC yolunda işaret kıstırmanın −1.99'u gerçek robotta da −1.05 (başparmak ortada) olur.
 
 ### 10 dk dayanıklılık (çıkış kriteri)
 
