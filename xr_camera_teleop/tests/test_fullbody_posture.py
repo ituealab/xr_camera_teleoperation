@@ -192,3 +192,12 @@ def test_stance_is_the_lean_reference():
     n0 = post.n0.copy()
     o = post.step(0.02, head, 0.0, 0.0, False, S, stance=n0 + [0.3, 0.0, 0.0])
     assert o.pitch == pytest.approx(0.0, abs=1e-6) and o.drop == pytest.approx(0.0, abs=1e-6)
+
+
+def test_no_sideways_torso_lean():
+    """Only forward/back leans bend the torso (user choice): a sideways lean is read but never commanded, and the frame
+    the wrists are measured in stays upright too."""
+    o = run(calibrated(), [Pose(lean_roll=D(12))] * 75)[-1]
+    assert o.roll == pytest.approx(D(12), abs=1e-3)
+    assert np.allclose(o.torso[:3, :3], np.eye(3)) and np.allclose(o.torso_lean[:3, :3], np.eye(3))
+    assert rotation_angle(o.shoulders[:3, :3], np.eye(3)) < 1e-9

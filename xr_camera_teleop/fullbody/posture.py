@@ -63,7 +63,7 @@ class PostureParams:
     gain: float = 1.0                           # lean -> torso angle (times settings.lean_gain)
     pitch_fwd_max_deg: float = 30.0             # waist limits of the command (G1 waist pitch/roll joints: +-30 deg)
     pitch_back_max_deg: float = 10.0
-    roll_max_deg: float = 15.0
+    roll_max_deg: float = 0.0               # no sideways torso lean (user choice): pitch only
     rate_rad_s: float = 0.5                     # PLAN §5: <= 0.5 rad/s
     stick_idle_s: float = 0.5
     enter_m: float = 0.12

@@ -105,7 +105,7 @@ quest:
     gain: 1.0                    # x settings.lean_gain
     pitch_fwd_max_deg: 30.0      # waist limits of the torso command (= the G1 waist pitch joint, +-0.52 rad)
     pitch_back_max_deg: 10.0
-    roll_max_deg: 15.0
+    roll_max_deg: 0.0            # no sideways torso lean (user choice 2026-11-13): forward/back only
     rate_rad_s: 0.5
     stick_idle_s: 0.5            # crouch: the stick idle this long
     enter_m: 0.12                # and the lean-corrected head drop above this

@@ -48,7 +48,7 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 | Yön kilidi | B veya Y |
 | Yürü | Sol stick (ileri, geri, yan). En fazla 0.5 m/s; bırakınca ~0.1–0.25 m'de durur |
 | Dön | Sağ stick sağa/sola (tam itince 60°/s; yön kilidi açıkken de çalışır), ya da vücudunla dön (kafa 25°'den fazla ve 0.3 s). Etrafa bakmak (±20°) robotu döndürmez |
-| Eğil, çömel | Öne/yana eğil: robotun gövdesi eğilir (öne en fazla 30°). Çömel (stick boşta): robot squat yapar; kalkınca kalkar |
+| Eğil, çömel | Öne eğil: robotun gövdesi eğilir (öne en fazla 30°; yana eğilmez). Çömel (stick boşta): robot squat yapar; kalkınca kalkar |
 | Yerden al | Çömel, sonra **yere kadar in** (kalibrasyondaki boyundan ~55 cm aşağı, 0.5 s): robot iki dizinin üstüne çöker (KNEEL) ve öne eğilerek elleri yere ulaşır. Kalkınca (40 cm'nin üstüne) robot ~2 s'de ayağa kalkar |
 | Yürüyerek yer değiştir | ELLER modunda kendin yürü: robot seninle yürür |
 | Acil durdur | Panelde kırmızı **DURDUR**, ya da iki grip + tetik 0.5 s |
