@@ -78,7 +78,7 @@ echo "== 5/6 aliases (~/.zshrc)"
 BEGIN="# >>> xr fullbody teleop (deploy/setup_robot_fullbody.sh) >>>"
 END="# <<< xr fullbody teleop <<<"
 touch "$HOME/.zshrc"
-sed -i "/^$BEGIN\$/,/^$END\$/d" "$HOME/.zshrc"
+sed -i "\\|^$BEGIN\$|,\\|^$END\$|d" "$HOME/.zshrc"
 cat >> "$HOME/.zshrc" <<EOF
 $BEGIN
 alias sonic-quest="$REPO/deploy/xr_fullbody_robot.sh sonic"
