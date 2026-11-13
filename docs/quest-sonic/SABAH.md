@@ -24,14 +24,16 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 1. Quest'i aç.
 2. USB kablosunu bir kez tak, orkestratöre söyle: kablosuz ADB'yi geri açar. Sonra kabloyu çıkarabilirsin.
 3. Quest Browser'da `https://192.168.1.105` aç, **Enter VR**.
-4. Robotun kafa kamerasından stereo görüntüyü görürsün (önünde 2 m'de bir pencere). Sol üstte sim saati yazar.
+4. Robotun kafa kamerasından stereo görüntüyü görürsün (önünde 1 m'de bir pencere). Sol üstte sim saati yazar.
 
 ## 3. Kontroller
 
 **İki mod (D8):**
 - **YÜRÜME:** en az bir kontrolcü elinde. **Sol stick yürütür, sağ stick (sağa/sola) robotu döndürür.** Tek
-  kontrolcü tutuyorsan onun stick'i yürütür. Robotun iki kolu yanlarda sarkar, parmaklar açık. Panelde Eller →
-  **Kumandayla kol** açıksa kollar kontrolcüleri izler, parmaklar olduğu gibi kalır (yürürken bir şey taşımak için).
+  kontrolcü tutuyorsan onun stick'i yürütür. Kontrolcüyü alınca robotun kolları yanlarda sarkar. **Tetiğe bir kez
+  bas:** kollar kontrolcüleri izler, parmaklar olduğu gibi kalır (yürürken bir şey taşımak için). Tekrar bas: kollar
+  iner. Kontrolcüleri bırakıp ellerin görününce kendiliğinden ELLER'e geçer; tekrar alınca kollar yine inik başlar.
+  (Panel açıkken tetik sadece seçim yapar. Panelde Eller → **Kumandayla kol** kapatılırsa tetik bunu yapmaz.)
 - **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Joystick'siz
   yer değiştirme: **kendin yürü** (ileri, geri, yana): robot seninle birlikte yürür (başın ~13 cm ilerleyince
   başlar, yana ~20 cm; durunca o da kalan yolu bitirip durur). Yürümek ellerin yerini değiştirmez. Öne eğilmek,
@@ -74,8 +76,8 @@ eğim, sağda 3 ve 6 cm basamaklar ile pürüzlü zemin.
    (alçakta uzanırsan robotun eli küpü iter). Küpü **sağ elinle, avuç aşağı** al: avucun küpün üstüne otursun,
    başparmak arkasında, parmaklar önünde; **yumruk yap, ~2 s tut, yavaşça kaldır**, biraz yana taşı, indir, elini aç.
    Tutmazsa elini aç, kaldır, tekrar dene (simde çoğu zaman 2.–3. denemede tuttu).
-7. (İsteğe bağlı, §0 madde 7) Panelde Eller → **Kumandayla kol**'u aç, kontrolcüleri al: kollar kontrolcüleri izler,
-   parmaklar olduğu gibi kalır. Not: kontrolcüye geçiş 1 s'den uzun sürerse parmaklar o arada açılır.
+7. (İsteğe bağlı, §0 madde 7) Kontrolcüleri al, **tetiğe bir kez bas**: kollar kontrolcüleri izler, parmaklar olduğu
+   gibi kalır. Not: kontrolcüye geçiş 1 s'den uzun sürerse parmaklar o arada açılır.
 7b. **Yerden al:** başlangıçta robotun 0.8 m solunda yerde ikinci bir küp var. Ona dön, ~40 cm gerisine yürü,
    kontrolcüleri bırak. Çömel ve yere kadar in: robot diz çöker. Sağ elinle avuç aşağı küpü almayı dene, kalk.
    (Simde diz çökme kararlı ama emüle operatörle küp alınamadı; deneysel.)

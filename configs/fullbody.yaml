@@ -27,7 +27,7 @@ operator_settings:
   arm_tracking: true
   fingers: true
   step_walk: true                # HANDS mode: the robot walks with the operator's own walking
-  controller_arms: false         # WALK mode: the arms follow the controllers, the fingers stay as they are
+  controller_arms: true          # WALK mode: a trigger press makes the arms follow the controllers (again: park)
 
 lifecycle:                       # sonic/lifecycle.py
   start_resend_s: 0.2
@@ -62,6 +62,7 @@ postures:
 # Below `postures` so it can alias the torso neutral and the open hands (one definition each).
 quest:
   head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED (PLAN §6)
+  arms_settle_s: 0.5             # a trigger toggles the controller arms only this long after ACTIVE (panel close)
   controller_timeout_s: 0.15     # controller older than this: not held (no walking, no buttons)
   hand_timeout_s: 0.25           # hand older than this: not tracked (the arm holds, then parks)
   calibrate_window_s: 1.0        # calibrate on the frames of the last second

@@ -67,8 +67,10 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 ## 3. Operatörün kontrolleri (D8)
 
 - **YÜRÜME** (en az bir kontrolcü takipte): sol stick yürütür, sağ stick'in x'i döndürür (tek kontrolcüde onun
-  stick'i yürütür). İki kol park pozuna 1 s'de gider, parmaklar dinlenme pozunda; `controller_arms` açıksa kollar
-  kontrolcüleri izler (CONTROLLER), parmaklar olduğu gibi kalır (§9). Gövde eğilmesi ve çömelme bu modda da çalışır.
+  stick'i yürütür). İki kol park pozuna 1 s'de gider, parmaklar dinlenme pozunda. Bir tetik basışı kolları
+  kontrolcülere bağlar (CONTROLLER, parmaklar olduğu gibi kalır, §9), tekrar basış park eder. Kontrolcüler bırakılınca
+  (ELLER) sıfırlanır. Sadece ACTIVE'de ve ACTIVE'in ilk 0.5 s'sinden sonra (panel kapatan tetik basışı saymasın), tetiğin
+  kendi grip'i basılı değilken (STOP hareketi); `controller_arms` ayarı kapalıysa hiç. Gövde eğilmesi ve çömelme bu modda da çalışır.
 - **ELLER** (hiç kontrolcü yok): takip edilen her el aynalanır, takip edilmeyen taraf 1 s tutulur sonra park eder.
   Bacaklar IDLE; `step_walk` açıksa operatörün adımlarını yürür (§9). Buton yok; panel kullanılır.
 - Geçişler: kontrolcü → el geçişinde Quest girdiyi ~0.6 s, el → kontrolcüde ~1.5 s durdurur. Kafa bayatlarsa
@@ -192,7 +194,7 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 
 Panel ayarları (`operator_settings`): speed_scale tepe hızı ölçekler (v_min altına inmez), stick_deadzone, heading_lock,
 crouch_enabled, lean_gain (0 = gövde dik), arm_tracking (kapalı: iki kol park), fingers (kapalı: dinlenme), step_walk
-(ELLER'de adımla yürüme, açık), controller_arms (YÜRÜME'de kollar kontrolcüleri izler, kapalı).
+(ELLER'de adımla yürüme, açık), controller_arms (YÜRÜME'de tetik kolları kontrolcülere bağlar, açık).
 
 ## 6. Ölçümler (çıkış kriterleri)
 
@@ -272,7 +274,7 @@ Yeniden gönderme A/B (aynı senaryo, dönüş başına mutlak hata, en büyüğ
 
 ## 8. Açık riskler
 
-1. **Yürürken taşıma** (§0 madde 7): `controller_arms` ile kollar kontrolcüleri izler ve parmaklar olduğu gibi kalır
+1. **Yürürken taşıma** (§0 madde 7): tetikle kollar kontrolcüleri izler ve parmaklar olduğu gibi kalır
    (§9). El → kontrolcü geçişi 1 s'den uzun sürerse (Quest ~1.5 s durduruyor) kol HOLD'dan PARKED'a düşer ve
    parmaklar dinlenmeye döner; eldeki küp yine düşebilir. Kontrolcü → bilek ofseti tahmin (ölçülmedi).
 2. **A/X bas-tut gerçek headset'te tek gözleme dayanıyor:** X basılıyken kontrolcülerin akıştan düşmesi bir kez
@@ -345,7 +347,8 @@ SONIC'in ileri dışındaki kısa yürüyüşleri tekrarlanabilir değil. Açık
 frame'i, eğilme ve bilekler etkilenmez). Tek kontrolcüde onun stick'i yürütür. `xr_synth`: 2 s tam sağ → facing
 −100…−125°, yürüme yok.
 
-**Kumandayla kol (`arms.py` CONTROLLER, ayar `controller_arms`, varsayılan kapalı).** YÜRÜME'de kontrolcünün
+**Kumandayla kol (`arms.py` CONTROLLER; tetikle açılıp kapanır, ayar `controller_arms` varsayılan açık: kullanıcı
+isteği, panelden açmak el ile kontrolcü arasında geçişi zahmetli yapıyordu).** YÜRÜME'de kontrolcünün
 target-ray pozundan bilek pozu: parmaklar ışın boyunca, avuç orta hatta (`neutral_hand_rotation` ışın frame'inde),
 bilek ışın frame'inde (−0.10, 0, −0.03) m. Sonrası ELLER ile aynı eşleme, filtre ve güvenlik. Parmaklar olduğu gibi
 kalır (`hands.py`: CONTROLLER hedefi değiştirmez). Stick yürütmeye devam eder.

@@ -204,15 +204,44 @@ def test_right_stick_turns_left_stick_walks_one_controller_walks():
     assert at(seg["walk left stick"].t1).sup.cmd.facing == at(seg["walk left stick"].t0).sup.cmd.facing
 
 
-def test_controller_arms_follow_the_controllers_and_leave_the_fingers():
-    on = UiAction(UiKind.SET, "controller_arms", True, t=0.0, seq=98)
-    sc = intro(Script()).hold(3.0, "controllers held")
-    sc.add("raise", 2.0, lambda t, s: replace(s, x=s.x))                 # (frames keep coming)
-    _, ticks = run(sc, ui={0.5: [on]})
-    end = ticks[-1]
-    assert end.input.status["mode"] == "walk"
-    assert end.input.status["hand_left"] == "controller" == end.input.status["hand_right"]
-    _, off = run(sc)
-    assert off[-1].input.status["hand_left"] == "parked"
-    assert not np.allclose(end.sup.cmd.upper.left, off[-1].sup.cmd.upper.left, atol=0.02)   # not the park pose
-    assert np.allclose(end.sup.cmd.hands.left, off[-1].sup.cmd.hands.left)               # fingers untouched
+def test_a_trigger_engages_the_arms_to_the_controllers_and_leaves_the_fingers():
+    """Picking up the controllers walks with the arms parked; a trigger press makes the arms follow the controllers
+    (fingers untouched), a second one parks them; putting the controllers down mirrors the hands, and the next
+    pick-up starts parked again."""
+    hands = {s: rest_hand(s) for s in SIDES}
+    sc = intro(Script()).hold(2.0, "controllers held")
+    sc.press(0.3, "trigger", trigger=True).hold(2.0, "engaged")
+    sc.press(0.3, "trigger again", trigger=True).hold(2.0, "parked again")
+    sc.press(0.3, "trigger 3", trigger=True).hold(1.0, "engaged 2")
+    sc.to_hands(hands).hold(2.0, "hands")
+    sc.to_controllers().hold(2.0, "picked up")
+    _, ticks = run(sc)
+    seg = {x.name: x for x in sc.segments}
+    at = lambda name: ticks[int(seg[name].t1 / DT) - 1].input.status
+    assert at("controllers held")["hand_left"] == "parked" and not at("controllers held")["controller_arms"]
+    assert at("engaged")["hand_left"] == "controller" == at("engaged")["hand_right"]
+    assert at("engaged")["controller_arms"] and at("engaged")["mode"] == "walk"
+    assert at("parked again")["hand_left"] == "parked"
+    assert at("hands")["mode"] == "hands" and at("hands")["hand_left"] == "tracked"
+    assert at("picked up")["hand_left"] == "parked" and not at("picked up")["controller_arms"]
+    held = ticks[int(seg["controllers held"].t1 / DT) - 1].sup.cmd
+    engaged = ticks[int(seg["engaged"].t1 / DT) - 1].sup.cmd
+    assert not np.allclose(engaged.upper.left, held.upper.left, atol=0.02)                # not the park pose
+    assert np.allclose(engaged.hands.left, held.hands.left)                              # fingers untouched
+
+
+def test_the_trigger_does_not_engage_the_arms_paused_with_a_grip_or_with_the_knob_off():
+    sc = intro(Script()).hold(2.0, "held")
+    sc.press(0.3, "pause (A short)", a=True).hold(0.5, "paused")
+    sc.press(0.3, "trigger while paused", trigger=True).hold(1.0, "after")
+    sc.press(0.3, "resume (A short)", a=True)
+    sc.press(0.3, "trigger right after resuming (closing the panel)", trigger=True).hold(1.0, "resumed")
+    sc.press(0.3, "grip + trigger", trigger=True, squeeze=True).hold(1.0, "after grip")
+    _, ticks = run(sc)
+    seg = {x.name: x for x in sc.segments}
+    assert ticks[int(seg["trigger while paused"].t0 / DT)].sup.state.value == "paused"
+    assert not any(tk.input.status.get("controller_arms") for tk in ticks)
+    knob_off = UiAction(UiKind.SET, "controller_arms", False, t=0.0, seq=98)
+    sc2 = intro(Script()).hold(1.0, "held").press(0.3, "trigger", trigger=True).hold(1.0, "after")
+    _, ticks2 = run(sc2, ui={0.5: [knob_off]})
+    assert not any(tk.input.status.get("controller_arms") for tk in ticks2)

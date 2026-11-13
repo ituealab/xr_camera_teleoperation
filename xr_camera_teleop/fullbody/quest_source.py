@@ -10,7 +10,9 @@ is robot-level (`fullbody/types.py`):
                on the last second (retried on new frames until the pose qualifies or calibrate_timeout_s passes),
                then engage: START first if SONIC is off, ENGAGE once it stands (STANDBY / PAUSED), or PAUSE + ENGAGE
                when already ACTIVE so the supervisor re-anchors the heading. A/X short: PAUSE / RESUME. B/Y: heading
-               lock. Both grips + a trigger 0.5 s: STOP. SET is the node's (it hands the result in as settings).
+               lock. Both grips + a trigger 0.5 s: STOP. A trigger (WALK, ACTIVE, settings.controller_arms): the arms
+               follow the controllers, again: they park (not within arms_settle_s of ACTIVE: closing the panel); putting the controllers down (HANDS) clears it, so every
+               pick-up starts parked. SET is the node's (it hands the result in as settings).
     intent   the mapping modules, each filling its part (all read the live OperatorSettings):
                operator_mode.py  WALK (a controller is held) / HANDS (no controller)  (D8)
                heading.py        heading; psi_body and the waist-yaw share for posture
@@ -62,6 +64,8 @@ _SECTIONS = {"calibration": CalibrationParams, "gestures": GestureParams, "mode"
 @dataclass(frozen=True)
 class QuestParams:
     head_timeout_s: float = 0.2          # PLAN §6: head older than this -> not live -> PAUSED
+    arms_settle_s: float = 0.5           # a trigger toggles the controller arms only this long after ACTIVE began: the
+                                         # trigger press that closes the panel (RESUME) must not toggle them too
     controller_timeout_s: float = 0.15   # PLAN §6: controller older than this -> not held (no walking, no buttons)
     hand_timeout_s: float = 0.25         # PLAN §5: hand older than this -> not tracked (arms.py holds, then parks)
     calibrate_window_s: float = 1.0      # calibrate on the frames of the last second
@@ -101,6 +105,8 @@ class QuestSource:
         self.fingers = fingers or FingerTargets(p.hands)
         self.cal: Optional[Calibration] = None
         self.locked = False
+        self.controller_arms = False                      # the arms engaged to the controllers (a trigger press)
+        self._active_since: Optional[float] = None        # supervisor ACTIVE since (trigger toggles wait arms_settle_s)
         self._settings_lock: Optional[bool] = None
         self._cal_deadline: Optional[float] = None      # a calibration request is open until then
         self._cal_error: Optional[str] = None
@@ -118,7 +124,7 @@ class QuestSource:
     def status(self, now: float) -> dict:
         """OperatorInput.status: the source's own state for the headset panel and the log (plain values only)."""
         out = {"calibrated": self.cal is not None, "heading_lock": self.locked or self.posture.crouch is not Crouch.STAND,
-               "engage_pending": self._engage_until is not None}
+               "engage_pending": self._engage_until is not None, "controller_arms": self.controller_arms}
         if self.mode.mode is not OperatorMode.NONE:
             out["mode"] = self.mode.mode.value
         progress = self.gestures.calibrate_progress(now)
@@ -193,6 +199,10 @@ class QuestSource:
                 self.locked = not self.locked
             elif g is Gesture.STOP:
                 events.append(Event.STOP)
+            elif g is Gesture.ARMS_TOGGLE:
+                settled = self._active_since is not None and now - self._active_since >= self.p.arms_settle_s - 1e-9
+                if settled and self.mode.mode is OperatorMode.WALK and data.settings.controller_arms:
+                    self.controller_arms = not self.controller_arms
         for a in data.ui:
             kind = UiKind(a.kind)
             if kind is UiKind.CALIBRATE:
@@ -213,10 +223,16 @@ class QuestSource:
             self.locked = self._settings_lock = s.heading_lock
         ctrls = {} if f is None else {k: c for k, c in f.controllers.items()
                                       if c.stamp.fresh(now, self.p.controller_timeout_s)}
+        if state is not State.ACTIVE:
+            self._active_since = None
+        elif self._active_since is None:
+            self._active_since = now
         events = self._events(now, data, state)
         self._attempt_calibration(now, new_frame)
         events += self._engage_events(now, state)
         mode = self.mode.step(now, f)
+        if mode is not OperatorMode.WALK or not s.controller_arms:
+            self.controller_arms = False                  # controllers put down: the next pick-up starts parked
         ready = self.cal is not None
         intent = self._intent(now, f, s, mode, ctrls) if ready and f.head.T is not None else Intent()
         return OperatorInput(live=self.live(now, data), ready=ready, events=tuple(events), intent=intent,
@@ -251,7 +267,8 @@ class QuestSource:
         else:
             base = loco.base
         arms = self.arms.step(now, f.hands, mode, post.shoulders, post.torso_lean, s,
-                              low=post.crouch is Crouch.KNEEL, controllers=ctrls)
+                              low=post.crouch is Crouch.KNEEL, controllers=ctrls,
+                              controller_arms=self.controller_arms)
         hands = self.fingers.step(now, f.hands, arms.modes, s)
         self._out = {"hand_left": arms.modes["left"].value, "hand_right": arms.modes["right"].value,
                      "crouch": post.crouch.value, "body_turning": h.turning,

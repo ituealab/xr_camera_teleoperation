@@ -33,13 +33,14 @@ face (sim). Leaving the kneel, the normal limits pull the hands back up (rate li
 Per side (HandMode):
   TRACKED     HANDS mode, arm tracking on, the hand fresh: the mapped target. Entered with a half-cosine ramp from the
               current output over track_s.
-  CONTROLLER  WALK mode with settings.controller_arms on, the controller fresh: the same mapping, with the wrist pose
+  CONTROLLER  WALK mode, engaged by a trigger press (quest_source.py; settings.controller_arms allows it), the
+              controller fresh: the same mapping, with the wrist pose
               the controller's target ray implies (controller_wrist: the hand around the grip, palm toward the
               midline, controller_wrist_m back along the ray). The fingers keep what they had (hands.py), and the
               stick still walks: the operator can carry something while walking.
   HOLD        the hand (controller) stopped being fresh: the last target is held (in the torso frame), for at most
               hold_s.
-  PARKED      WALK without controller_arms, NONE, arm tracking off, or the hand lost longer than hold_s: the park pose,
+  PARKED      WALK not engaged, NONE, arm tracking off, or the hand lost longer than hold_s: the park pose,
            arms hanging at the sides (D8), reached over park_s (ramps: _Ramp). It keeps the Dex3 hands clear of the hips (P1: in
            SONIC's own idle pose the right index finger catches on the hip).
 """
@@ -273,12 +274,12 @@ class Arms:
         self.sides = {s: _Side(s, params) for s in SIDES}
 
     def _source(self, now: float, side: str, hands: dict, controllers: dict, mode: OperatorMode,
-                settings: OperatorSettings):
+                settings: OperatorSettings, controller_arms: bool):
         """(the tracking mode wanted or None, its fresh sample (stamp, wrist pose in F) or None)."""
         if mode is OperatorMode.HANDS and settings.arm_tracking:
             h = hands[side]
             return HandMode.TRACKED, ((h.stamp, h.T) if h.stamp.fresh(now, self.hand_timeout_s) else None)
-        if mode is OperatorMode.WALK and settings.controller_arms:
+        if mode is OperatorMode.WALK and controller_arms:
             c = controllers.get(side)
             fresh = c is not None and c.T is not None
             return HandMode.CONTROLLER, ((c.stamp, controller_wrist(c.T, side, self.p.controller_wrist_m))
@@ -286,16 +287,17 @@ class Arms:
         return None, None
 
     def step(self, now: float, hands: dict, mode: OperatorMode, shoulders_F, torso_lean,
-             settings: OperatorSettings, low: bool = False, controllers: Optional[dict] = None) -> ArmsOut:
+             settings: OperatorSettings, low: bool = False, controllers: Optional[dict] = None,
+             controller_arms: bool = False) -> ArmsOut:
         """`hands`: the frame's Hand per side; `shoulders_F`: operator shoulder frame (posture.py); `torso_lean`:
         torso_link pose in the pelvis frame the wrists are placed in; `low`: kneeling (the widened limits);
-        `controllers`: the fresh controllers by side (CONTROLLER mode)."""
+        `controllers`: the fresh controllers by side, `controller_arms`: the arms engaged to them (CONTROLLER)."""
         p = self.p
         scale, reach, z_min = (p.kneel_scale, p.kneel_reach_m, p.kneel_z_min_m) if low else (p.scale, p.reach_m,
                                                                                                p.z_min_m)
         goals = {}
         for s, st in self.sides.items():
-            want, sample = self._source(now, s, hands, controllers or {}, mode, settings)
+            want, sample = self._source(now, s, hands, controllers or {}, mode, settings, controller_arms)
             if sample is not None:
                 stamp, T = sample
                 if st.mode is not want and st.mode is not HandMode.HOLD or st.source is not want:
