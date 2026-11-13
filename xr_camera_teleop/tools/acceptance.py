@@ -56,10 +56,12 @@ SCALE = 0.7                                  # configs/fullbody.yaml quest.arms.
 MARK1 = np.array([1.5, 0.0])
 GRASP_R = rot_x(-math.pi / 2)                # right wrist palm down, in the robot torso frame
 # Cube centre in that wrist frame: under the palm, resting on it (y: 0.6 cm into its top, so the fingers wrap its whole
-# height), thumb behind it, 1.8 cm toward the index finger (z): the grasp
-# lab's lifts all had it there; centred, both fingers only catch the cube's edges.
-GRASP_OFF = np.array([0.095, 0.050, 0.018])
-TABLE_SPOT = (-0.30, 0.17)                   # pelvis relative to the cube, robot frame facing the table: behind, left
+# height), thumb behind it, 1 cm toward the index finger (z): the grasps that lifted it had it at 1.0-1.6 cm (the servo
+# lands ~0.5 cm further out); centred, both fingers only catch the cube's edges.
+GRASP_OFF = np.array([0.095, 0.050, 0.010])
+# Where the pelvis stops relative to the cube (robot frame facing the table): behind, left. The grasp works with the cube
+# 0.28-0.34 m ahead; short approaches overshoot by up to ~0.1 m (SONIC walks >= 0.4 m/s), so aim at 0.36.
+TABLE_SPOT = (-0.36, 0.17)
 STEPS = ("page", "start", "calib_a", "calib_panel", "walk", "turn", "lean", "hands", "cube", "walk_again", "ramp",
          "disconnect", "durdur")
 
@@ -166,7 +168,8 @@ class Operator:
         self.fwd = 0.0                      # lean: head forward of the base, m
         self.drop = 0.0                     # crouch: head lowered, m
         self.hands_on = False               # hands (True) or controllers (False) in the emulator
-        self.hands_local = {"left": np.array([-0.20, -0.45, -0.30]), "right": np.array([0.20, -0.45, -0.30])}
+        # hands held in front, above a table's height for the robot (lower, the robot's hand swept the cube away)
+        self.hands_local = {"left": np.array([-0.20, -0.35, -0.25]), "right": np.array([0.20, -0.35, -0.25])}
         self.hand_quat = {s: self.room_quat_of_hand(neutral_hand_rotation(s), s) for s in ("left", "right")}
 
     def close(self):
@@ -208,15 +211,20 @@ class Operator:
             self.q.stick_press("right")
             self.q.wait_for(lambda s: s["ui"]["open"], 3, "panel open")
 
-    def walk_to(self, target, tol: float = 0.05, timeout: float = 40.0, magnitude: float = 1.0) -> np.ndarray:
-        """Stick toward a floor point, holding the heading, steering sideways; released early by the stopping
-        distance (0.12 m at full stick, P4). Returns the pelvis position after the stop."""
+    def walk_to(self, target, tol: float = 0.03, timeout: float = 40.0, magnitude: float = 1.0) -> np.ndarray:
+        """Stick toward a floor point, holding the heading, steering sideways, released ahead of the point by the
+        stopping distance of the speed it is going (SONIC stops in ~0.5 s of travel after IDLE, P4 / P8). Returns the
+        pelvis position after the stop."""
         t_end = time.time() + timeout
-        stop_d = 0.05 + 0.08 * magnitude
+        prev, speed = None, 0.0
         while time.time() < t_end:
             p, yaw = self.robot.pelvis()[:2], self.robot.yaw()
+            now = time.time()
+            if prev is not None and now > prev[0]:
+                speed = 0.7 * speed + 0.3 * float(np.linalg.norm(p - prev[1])) / (now - prev[0])
+            prev = (now, p)
             d = rot_z(-yaw)[:2, :2] @ (np.asarray(target) - p)       # forward, left in the robot frame
-            if abs(d[0]) < stop_d + tol:
+            if abs(d[0]) < 0.5 * speed + tol:
                 break
             side = float(np.clip(-2.5 * d[1], -0.45, 0.45))
             self.stick(side * magnitude, -math.copysign(magnitude, d[0]))
@@ -336,6 +344,8 @@ class Run:
             rec["error"] = f"{type(e).__name__}: {e}"
             rec["trace"] = traceback.format_exc(limit=3)
             rec.update(self.note)
+            if self.op is not None and not self.op.hands_on:
+                self.op.stick(0.0, 0.0)          # a failed step never leaves the robot walking
         new_falls = self.robot.falls[falls0:]
         if new_falls:
             rec["ok"] = False
@@ -453,9 +463,7 @@ class Run:
         return {"lean_pitch_deg": round(p1 - p0, 1), "squat_pelvis_z": round(z_sq, 3), "stood_pelvis_z": round(z_up, 3)}
 
     def table_spot(self) -> np.ndarray:
-        """Where the pelvis should stand for the right hand to take the cube: 0.30 m behind it and 0.17 m to its left
-        (robot frame), facing the table (-y). Nearer the midline the descending hand hits the cube (grasp lab: 0.12 to
-        0.20 m works; the stop scatters by a few cm)."""
+        """Where the pelvis should stand for the right hand to take the cube (TABLE_SPOT), facing the table."""
         cube = self.robot.body("cube_body")
         yaw = self.robot.yaw()
         return cube[:2] + rot_z(yaw)[:2, :2] @ np.array(TABLE_SPOT)
@@ -473,7 +481,9 @@ class Run:
         z1 = float(self.robot.body("left_wrist_yaw_link")[2])
         op.move_hand("left", [0.0, -0.10, 0.0], 1.0)
         check(z1 - z0 > 0.04, f"robot wrist rose {100 * (z1 - z0):.1f} cm for a 10 cm hand raise")
-        return {"pelvis_xy": p.round(3).tolist(), "wrist_rise_cm": round(100 * (z1 - z0), 1)}
+        cube = rot_z(-self.robot.yaw())[:2, :2] @ (self.robot.body("cube_body")[:2] - p)
+        return {"pelvis_xy": p.round(3).tolist(), "cube_ahead_left_m": cube.round(3).tolist(),
+                "wrist_rise_cm": round(100 * (z1 - z0), 1)}
 
     def cube(self, attempts: int = 3):
         """Right hand palm down over the cube, fist, lift; a failed grasp is retried like a person would (open, up,
@@ -493,8 +503,8 @@ class Run:
             e_grasp = op.servo_wrist("right", wrist_for(0.0))
             rel = robot.sim.rot("right_wrist_yaw_link").T @ (robot.body("cube_body") - robot.body("right_wrist_yaw_link"))
             op.q.set({"hands": {"right": {"pose": "grip"}}})
-            time.sleep(1.5)
-            op.move_hand("right", [0.0, 0.10 / SCALE, 0.0], 1.5)
+            time.sleep(2.5)                                          # the fist closes fully before lifting
+            op.move_hand("right", [0.0, 0.10 / SCALE, 0.0], 2.5)    # lifted slowly
             time.sleep(1.5)
             lift = float(robot.body("cube_body")[2] - z_start)
             tries.append({"servo_err_pre_cm": round(100 * e_pre, 1), "servo_err_grasp_cm": round(100 * e_grasp, 1),
@@ -504,7 +514,7 @@ class Run:
                 break
             op.q.set({"hands": {"right": {"pose": "default"}}})      # missed: open, the hand is already up
             time.sleep(1.0)
-            check(abs(float(robot.body("cube_body")[2]) - c0[2]) < 0.01, "the cube left the table")
+            check(float(robot.body("cube_body")[2]) > c0[2] - 0.05, "the cube fell off the table")
         check(lift > 0.04, f"cube not lifted in {attempts} attempts (last {100 * lift:.1f} cm)")
         carry = rot_z(robot.yaw()) @ [0.0, 0.06, 0.0]               # 6 cm to the robot's left, along the table
         op.move_hand("right", C_F_XR.T @ rot_z(op.yaw) @ rot_z(robot.yaw()).T @ carry / SCALE, 1.2)

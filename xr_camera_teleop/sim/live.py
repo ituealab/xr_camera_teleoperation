@@ -73,11 +73,14 @@ class LiveSim:
                 raise RuntimeError(f"no running sim announced in {path} (is the sim up?)")
             time.sleep(0.2)
 
-    def update(self) -> float:
-        """Latest physics state -> body poses; returns its sim time."""
-        got = self._snap.read(self.data.qpos)
-        if got is None:
-            raise RuntimeError("the sim's state snapshot has no complete record")
+    def update(self, timeout_s: float = 0.5) -> float:
+        """Latest physics state -> body poses; returns its sim time. A reader that keeps landing on the writer's
+        update (seqlock) waits a little and tries again, for up to timeout_s."""
+        t_end = time.monotonic() + timeout_s
+        while (got := self._snap.read(self.data.qpos)) is None:
+            if time.monotonic() >= t_end:
+                raise RuntimeError("the sim's state snapshot has no complete record")
+            time.sleep(0.001)
         self.sim_time = got[1]
         self._mj.mj_kinematics(self.model, self.data)
         return self.sim_time
