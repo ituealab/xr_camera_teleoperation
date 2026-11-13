@@ -4,8 +4,9 @@
 #
 #   1. data/xr-env     fullbody_node: conda-forge base (envs/robot-conda.yml: pinocchio, nlopt, ...) + torch CPU +
 #                      dex_retargeting (silencht fork, --no-deps) + this repo (editable, --no-deps)
-#   2. data/quest-env  Quest server + RealSense IR stream: python 3.10, envs/quest-env-aarch64.in (vuer 0.1.6 as on the
-#                      MSI, opencv headless, pyrealsense2); what resolved is written to envs/quest-env-aarch64.freeze.txt
+#   2. data/quest-env  Quest server: python 3.10, envs/quest-env-aarch64.in (vuer 0.1.6 as on the MSI, opencv
+#                      headless); what resolved is written to envs/quest-env-aarch64.freeze.txt
+#      data/camera-env RealSense IR stream: python 3.9 + envs/camera-env-aarch64.txt (pyrealsense2's runnable wheels)
 #   3. data/quest-cert self-signed TLS cert for the headset (SAN: the robot's aksoy-lab IP + hostname)
 #   4. systemd: quest-https-redirect (443 -> 8012, so the headset opens https://<robot>/) and g1-free-camera (stops
 #      Unitree's video hubs at boot so the RealSense is free)
@@ -37,12 +38,18 @@ echo "== 2/6 $QUEST_ENV"
 if [[ ! -x "$QUEST_ENV/bin/python" ]]; then
   "$MM" create -y -q -p "$QUEST_ENV" -c conda-forge python=3.10 pip
 fi
-# Python 3.10 because pyrealsense2 has no aarch64 wheel above cp310; parts of the MSI freeze (py3.12) need >=3.11,
+# Python 3.10 (the conda-forge base the robot already caches); parts of the MSI freeze (py3.12) need >=3.11,
 # so the direct requirements are pinned here and the resolved set is recorded in envs/quest-env-aarch64.freeze.txt.
 "$UV" pip install -q --python "$QUEST_ENV/bin/python" -r "$REPO/envs/quest-env-aarch64.in"
 "$UV" pip freeze --python "$QUEST_ENV/bin/python" | grep -v -E '^(-e|xr-camera-teleop)' \
   > "$REPO/envs/quest-env-aarch64.freeze.txt"
 "$UV" pip install -q --python "$QUEST_ENV/bin/python" --no-deps -e "$REPO"
+
+CAMERA_ENV="$REPO/data/camera-env"
+if [[ ! -x "$CAMERA_ENV/bin/python" ]]; then
+  "$MM" create -y -q -p "$CAMERA_ENV" -c conda-forge python=3.9 pip
+fi
+"$UV" pip install -q --python "$CAMERA_ENV/bin/python" -r "$REPO/envs/camera-env-aarch64.txt"
 
 echo "== 3/6 TLS cert"
 CERT="$REPO/data/quest-cert"
@@ -96,10 +103,13 @@ make_source({"kind": "quest"}, cfg["fullbody"])      # builds the Dex3 retargete
 print("xr-env ok: numpy", numpy.__version__, "torch", torch.__version__, "pinocchio", pinocchio.__version__)
 PY
 "$QUEST_ENV/bin/python" - <<'PY'
-import vuer, aiohttp, cv2, zmq, msgpack, numpy, pyrealsense2
+import vuer, aiohttp, cv2, zmq, msgpack, numpy
 import xr_camera_teleop.operator.quest.server
-print("quest-env ok: vuer", vuer.__version__ if hasattr(vuer, "__version__") else "?", "cv2", cv2.__version__,
-      "pyrealsense2", getattr(pyrealsense2, "__version__", "ok"))
+print("quest-env ok: cv2", cv2.__version__)
+PY
+"$CAMERA_ENV/bin/python" - <<'PY'
+import pyrealsense2 as rs, cv2, zmq, msgpack, numpy
+print("camera-env ok: RealSense devices", len(rs.context().query_devices()))
 PY
 )
 "$XR_ENV/bin/python" -m xr_camera_teleop.sonic.assets --manifest "$REPO/configs/sonic_assets_robot.yaml" verify --quick

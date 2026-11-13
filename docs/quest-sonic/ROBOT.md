@@ -21,7 +21,7 @@ cd ~/repos/xr_camera_teleoperation && bash deploy/setup_robot_fullbody.sh
 
 Script tekrar çalıştırılabilir; şunları kurar:
 
-- `data/xr-env` (node) ve `data/quest-env` (sunucu ve kamera) ortamları
+- `data/xr-env` (node), `data/quest-env` (sunucu) ve `data/camera-env` (RealSense, py3.9) ortamları
 - headset için TLS sertifikası
 - 443 → 8012 yönlendirmesi (`quest-https-redirect.service`)
 - `g1-free-camera.service`: Unitree'nin video servislerini açılışta durdurur, RealSense boş kalır

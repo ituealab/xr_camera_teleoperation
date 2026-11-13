@@ -13,6 +13,7 @@ REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LOG_DIR="$HOME/.local/state/xr_fullbody"
 NODE_PY="$REPO/data/xr-env/bin/python"
 QUEST_PY="$REPO/data/quest-env/bin/python"
+CAMERA_PY="$REPO/data/camera-env/bin/python"
 QUEST_HEALTH=http://127.0.0.1:8771/health
 ROBOT_IP="${ROBOT_IP:-192.168.1.164}"           # aksoy-lab, static (ROBOT.md)
 QUEST_URL="https://$ROBOT_IP"                   # :443 -> :8012 (quest-https-redirect.service)
@@ -58,7 +59,7 @@ start() {
   if ! running camera; then
     if [[ -f "$REPO/deploy/realsense_ir_stream.py" ]]; then
       free_camera
-      launch camera "$QUEST_PY" -u "$REPO/deploy/realsense_ir_stream.py" "${CAMERA_ARGS[@]}"
+      launch camera "$CAMERA_PY" -u "$REPO/deploy/realsense_ir_stream.py" "${CAMERA_ARGS[@]}"
     else
       printf 'UYARI: deploy/realsense_ir_stream.py yok; kamerasız devam.\n' >&2
     fi

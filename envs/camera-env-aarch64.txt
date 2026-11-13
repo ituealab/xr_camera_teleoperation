@@ -1,0 +1,7 @@
+# PC2 RealSense IR stream (deploy/realsense_ir_stream.py), python 3.9: the only pyrealsense2 aarch64 wheels that run
+# on Ubuntu 20.04 (glibc 2.31) are cp39 and below (the cp310 ones need glibc 2.32). deploy/setup_robot_fullbody.sh.
+pyrealsense2==2.55.1.6486
+numpy==1.26.4
+pyzmq==27.3.0
+msgpack==1.1.2
+opencv-python-headless==4.11.0.86
