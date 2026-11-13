@@ -8,7 +8,6 @@ from xr_camera_teleop.fullbody.arms import (Arms, ArmsParams, HandMode, map_wris
 from xr_camera_teleop.fullbody.frames import inv_pose, pose, rot_x, rot_y, rot_z, rotation_angle
 from xr_camera_teleop.fullbody.operator_mode import OperatorMode
 from xr_camera_teleop.fullbody.settings import OperatorSettings
-from xr_camera_teleop.fullbody.supervisor import half_cosine
 from xr_camera_teleop.fullbody.xr_frame import SIDES, Hand, Stamp
 from xr_camera_teleop.operator.hand_geometry import neutral_hand_rotation
 
@@ -63,12 +62,36 @@ def test_tracking_reaches_the_mapped_target_after_the_ramp():
     for s in SIDES:
         want = UPRIGHT @ map_wrist(SH @ neutral_rel(s), SH, s, P.scale, P.robot_shoulders)
         assert np.allclose(out[-1].wrist(s), want, atol=1e-6)
-    # from the park pose, the first ticks follow a half-cosine over track_s
+    # from the (lower) park pose the ramp rises first, beside the body, then reaches: halfway the height is there
     park = P.park_pose("left")
     want = UPRIGHT @ map_wrist(SH @ neutral_rel("left"), SH, "left", P.scale, P.robot_shoulders)
-    k = int(0.35 / DT)
-    frac = np.linalg.norm(out[k].left[:3, 3] - park[:3, 3]) / np.linalg.norm(want[:3, 3] - park[:3, 3])
-    assert frac == pytest.approx(half_cosine(0.35 / P.track_s), abs=0.05)
+    assert want[2, 3] > park[2, 3]
+    k = int(0.5 * P.track_s / DT)
+    assert out[k].left[2, 3] == pytest.approx(want[2, 3], abs=0.01)
+    assert np.allclose(out[k].left[:2, 3], park[:2, 3], atol=0.01)
+
+
+def test_the_hand_never_travels_forward_while_low():
+    """Park (hanging at the sides) <-> a hand held over a table in front: the wrist only moves forward once it is at
+    its final height, and on the way back it draws back before it lowers. A straight blend swept the fingers under the
+    table's edge (P8: the arm stuck there and the wrist could not rise into HANDS)."""
+    arms = Arms()
+    over_table = lambda t, i: {s: hand_at(s, pose(neutral_rel(s)[:3, :3], neutral_rel(s)[:3, 3] + [0.15, 0, 0.05]),
+                                             t, i) for s in SIDES}                                 # noqa: E731
+    out = drive(arms, int(1.0 / DT), over_table)
+    goal = out[-1].right
+    park = P.park_pose("right")
+    assert goal[0, 3] > park[0, 3] + 0.1 and goal[2, 3] > park[2, 3] + 0.1
+    for o in out:
+        w = o.right[:3, 3]
+        if w[0] > park[0, 3] + 0.005:
+            assert w[2] >= goal[2, 3] - 0.005
+    back = drive(arms, int(1.5 / DT), over_table, mode=OperatorMode.WALK, t0=10.0)
+    for o in back:
+        w = o.right[:3, 3]
+        if w[2] < goal[2, 3] - 0.005:
+            assert w[0] <= park[0, 3] + 0.005
+    assert np.allclose(back[-1].right, park, atol=1e-9)
 
 
 def test_walk_mode_parks_both_arms_on_a_ramp():
@@ -80,7 +103,9 @@ def test_walk_mode_parks_both_arms_on_a_ramp():
         assert np.allclose(out[-1].wrist(s), P.park_pose(s), atol=1e-9)
     steps = [np.linalg.norm(b.left[:3, 3] - a.left[:3, 3]) / DT for a, b in zip(out, out[1:])]
     assert max(steps) <= P.max_lin + 1e-9
-    assert np.argmax(steps) == pytest.approx(P.park_s / 2 / DT, abs=3)    # half-cosine: fastest mid-way
+    k = int(0.5 * P.park_s / DT)                         # down to the park pose: draw back first, then lower
+    assert np.allclose(out[k].left[:2, 3], P.park_pose("left")[:2, 3], atol=0.01)
+    assert out[k].left[2, 3] > P.park_pose("left")[2, 3] + 0.05
 
 
 def test_lost_hand_holds_then_parks():

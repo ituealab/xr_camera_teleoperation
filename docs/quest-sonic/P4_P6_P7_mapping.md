@@ -150,10 +150,17 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
   çıkılır, yan ve yükseklik korunur); pelvis frame'inde z ≥ −0.15 m; iki bilek ≥ 0.15 m (Dex3 başparmağı ~6 cm
   içeri uzanıyor). İhlal sınıra izdüşürülür. Sonra 1.2 m/s, 4 rad/s. Rampalar ve hız sınırları adım başına en fazla
   0.03 s entegre eder (`filters.step_dt`): döngü takılırsa hedef sıçramaz.
-- Modlar: TRACKED (ELLER modu, ayar açık, el taze ≤ 0.25 s; girişte 0.7 s yarım-kosinüs), HOLD (el kayıp: son hedef
-  1 s tutulur), PARKED (YÜRÜME, ayar kapalı ya da 1 s'den uzun kayıp: park pozuna 1 s yarım-kosinüs).
-- Park pozu (pelvis frame'i, bilek linki): sol (0.162, 0.222, 0.004) rpy (17.2, 33.2, 9.6)°, sağ ayna. FK: omuz
-  pitch 0, roll ±0.25, dirsek 0.6; parmaklar kalçanın önünde ve dışında (P1'deki kalçaya takılma yok).
+- Modlar: TRACKED (ELLER modu, ayar açık, el taze ≤ 0.25 s; girişte 0.7 s), HOLD (el kayıp: son hedef 1 s tutulur),
+  PARKED (YÜRÜME, ayar kapalı ya da 1 s'den uzun kayıp: park pozuna 1 s).
+- **Park pozu (P8'de değişti):** kollar yanlarda sarkık, dirsek hafif bükük (D8 "yanda dursun", klasik SONIC yürüyüşü).
+  Pelvis frame'inde bilek linki: sol (0.0372, 0.2909, −0.0457) rpy (68.1, 65.2, 66.1)°, sağ ayna. FK: omuz pitch 0,
+  roll ±0.40, dirsek 1.40. Bilek 0.74 m'de uyluğun yanında; el pelvisin en fazla 0.11 m önünde (uzanılan bir masanın
+  kenarı ≥ 0.18 m), yürürken (kalça ±0.6 rad) uyluk/kalçaya ≥ 3.8 cm (`tests/test_fullbody_park_pose.py`). Simde ramp5
+  4/4 düşmesiz; AKTİF YÜRÜME'de el-bacak mesafesi < 1 cm hiç görülmedi. Eski poz (0.162, 0.222, 0.004) elleri pelvisin
+  0.36 m önüne, 0.64–0.87 m'ye koyuyordu: masaya yaklaşınca eller masanın altına giriyor, ELLER'e geçince kalkamıyordu.
+- **Geçiş rampaları yükseklik önce:** hedef daha yüksekse önce yükseklik (ilk yarı), sonra yatay (ikinci yarı): el
+  vücudun yanında kalkar, sonra uzanır; hedef daha alçaksa önce geri çekilir, sonra iner. Dönme tüm rampa boyunca.
+  Düz karışım parmakları masa kenarının altından süpürüyordu (`test_the_hand_never_travels_forward_while_low`).
 
 ### Parmaklar (`hands.py`)
 - Repodaki Dex3 hattı aynen: WebXR eklemleri → bilek-yerel Unitree el noktaları (`hand_geometry`, wrapper ile

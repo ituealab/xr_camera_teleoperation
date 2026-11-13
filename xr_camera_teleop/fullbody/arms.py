@@ -25,7 +25,7 @@ Per side (HandMode):
            current output over track_s.
   HOLD     the hand stopped being fresh: the last target is held (in the torso frame), for at most hold_s.
   PARKED   WALK (any controller held), NONE, arm tracking off, or the hand lost longer than hold_s: the park pose,
-           reached with a half-cosine ramp over park_s. The park pose keeps the Dex3 hands clear of the hips (P1: in
+           arms hanging at the sides (D8), reached over park_s (ramps: _Ramp). It keeps the Dex3 hands clear of the hips (P1: in
            SONIC's own idle pose the right index finger catches on the hip).
 """
 from __future__ import annotations
@@ -52,8 +52,8 @@ class HandMode(str, Enum):
 
 
 def _park_default():
-    return {"left": {"p": [0.162, 0.222, 0.004], "rpy_deg": [17.2, 33.2, 9.6]},
-            "right": {"p": [0.162, -0.222, 0.004], "rpy_deg": [-17.2, 33.2, -9.6]}}
+    return {"left": {"p": [0.0372, 0.2909, -0.0457], "rpy_deg": [68.1, 65.2, 66.1]},
+            "right": {"p": [0.0372, -0.2909, -0.0457], "rpy_deg": [-68.1, 65.2, -66.1]}}
 
 
 @dataclass(frozen=True)
@@ -167,8 +167,13 @@ def separate(Tl, Tr, gap: float):
 # ---------------------------------------------------------------------------------------------------- state
 
 class _Ramp:
-    """Half-cosine blend from a fixed start pose to a (moving) goal over `duration`; it advances by step_dt per step,
-    so a stalled loop resumes the blend where it was instead of jumping to its end."""
+    """Blend from a fixed start pose to a (moving) goal over `duration`; it advances by step_dt per step, so a stalled
+    loop resumes the blend where it was instead of jumping to its end.
+
+    The hand never travels forward while low: toward a higher goal the height blends in the first half and the
+    horizontal position in the second (rise beside the body, then reach); toward a lower goal the other way round
+    (draw back, then lower). A straight blend from the hanging park pose to a hand over a table swept the fingers
+    forward under the table's edge, where the arm stuck. The rotation blends over the whole ramp (half cosine)."""
 
     def __init__(self, start, duration: float):
         self.start, self.duration, self.x, self.t = np.asarray(start, dtype=float), float(duration), 0.0, None
@@ -176,9 +181,16 @@ class _Ramp:
     def apply(self, now: float, goal) -> tuple[np.ndarray, bool]:
         self.x += step_dt(self.t, now) / self.duration if self.duration > 0 else 1.0
         self.t = now
+        goal = np.asarray(goal, dtype=float)
         if self.x >= 1.0:
-            return np.asarray(goal, dtype=float), True
-        return interpolate_pose(self.start, goal, half_cosine(self.x)), False
+            return goal, True
+        first, second = half_cosine(min(1.0, 2.0 * self.x)), half_cosine(max(0.0, 2.0 * self.x - 1.0))
+        rising = goal[2, 3] >= self.start[2, 3]
+        a_z, a_xy = (first, second) if rising else (second, first)
+        out = interpolate_pose(self.start, goal, half_cosine(self.x))
+        out[:2, 3] = self.start[:2, 3] + a_xy * (goal[:2, 3] - self.start[:2, 3])
+        out[2, 3] = self.start[2, 3] + a_z * (goal[2, 3] - self.start[2, 3])
+        return out, False
 
 
 class _Side:

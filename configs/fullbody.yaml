@@ -137,9 +137,11 @@ quest:
     filter_pos_beta: 2.0
     filter_rot_min_cutoff: 1.5
     filter_rot_beta: 0.5
-    park:                        # wrist_yaw_link in the pelvis frame: FK at shoulder pitch 0, roll +-0.25, elbow 0.6;
-      left: {p: [0.162, 0.222, 0.004], rpy_deg: [17.2, 33.2, 9.6]}        # hands ahead of and outside the hips
-      right: {p: [0.162, -0.222, 0.004], rpy_deg: [-17.2, 33.2, -9.6]}
+    park:                        # wrist_yaw_link in the pelvis frame: FK at shoulder pitch 0, roll +-0.40, elbow 1.40:
+      left: {p: [0.0372, 0.2909, -0.0457], rpy_deg: [68.1, 65.2, 66.1]}   # arms hanging at the sides, elbows slightly
+      right: {p: [0.0372, -0.2909, -0.0457], rpy_deg: [-68.1, 65.2, -66.1]}   # bent (D8 "yanda"); wrists 0.74 m, hands
+                                 # <= 0.11 m ahead of the pelvis (clear of a table in reach), >= 3.8 cm from the thighs
+                                 # over a +-0.6 rad hip swing (tests/test_fullbody_park_pose.py)
   hands:                         # fullbody/hands.py
     rest: *hands_open
     max_rate_rad_s: 8.0
