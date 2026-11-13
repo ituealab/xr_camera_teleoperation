@@ -39,11 +39,13 @@ features:
   steps3: {type: steps, rise: 0.03, count: 2, tread: 0.4, landing: 0.8, width: 2.0}   # 2 up, landing, 2 down
   steps6: {type: steps, rise: 0.06, count: 2, tread: 0.4, landing: 0.8, width: 2.0}
   rough2: {type: rough, height: 0.02, length: 2.4, width: 2.0, cell: 0.025, bump: 0.06, border: 0.2, seed: 1}
-  # Sized for the G1 (1.32 m; its hands are at 0.89 m with the forearms level): a lower top puts the cube at the
-  # end of the arm's reach (shoulder -> wrist 0.37 m), where SONIC no longer gets the wrist down to it.
+  # Sized for the G1 (1.32 m): the palm-down grasp works with the top at 0.82 m. Lower, the cube is at the end of the
+  # arm's reach; higher (0.92 m tried), SONIC no longer brings the wrist into the palm-down pose. Known conflict: the
+  # hands parked in WALK mode (D8) reach 0.36 m ahead of the pelvis at 0.64-0.87 m, so they touch the top's edge when
+  # the robot stands close enough to grasp (P8_results.md, risks).
   table:  {type: table, depth: 0.5, width: 0.8, height: 0.82}
   # PLAN §7: 5 cm, 0.1 kg. Its contact is the scene's grasp tuning (the robot's hand is upstream's, unchanged).
-  cube:   {type: cube, size: 0.06, mass: 0.1, contact: {friction: [1.5, 0.02, 0.001], condim: 4}}
+  cube:   {type: cube, size: 0.06, mass: 0.1, contact: {friction: [2.0, 0.02, 0.001], condim: 4}}
   mark:   {type: mark, radius: 0.12}
 
 # Placements: {feature, [name], pos: [x, y], [yaw_deg], [atop: <earlier table>]}; world x forward of the robot's start,
@@ -77,7 +79,7 @@ courses:
   steps6: [{feature: steps6, pos: [1.0, 0.0]}]
   rough2: [{feature: rough2, pos: [1.0, 0.0]}]
   cross5: [{feature: cross5, pos: [1.0, 0.0]}]
-  # The cube test: a table in reach of the robot's start (tools/cube_test.py)
+  # The cube test (tools/acceptance.py --only cube): table A's situation straight ahead, a short walk from the start
   table:
-    - {feature: table, name: table, pos: [0.22, 0.0]}
-    - {feature: cube, atop: table, pos: [0.08, -0.12]}
+    - {feature: table, name: table, pos: [0.6, 0.0]}
+    - {feature: cube, atop: table, pos: [0.12, -0.17]}

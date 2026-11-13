@@ -104,7 +104,7 @@ def test_morning_keeps_the_robot_indices_and_adds_the_cube_last(sonic_root, morn
     cube = m.body("cube_body")
     assert np.isclose(m.body_mass[cube.id], 0.1)
     g = m.geom(m.body_geomadr[cube.id])
-    assert g.condim == 4 and np.isclose(g.friction[0], 1.5) and g.group == 0     # visible to the robot cameras
+    assert g.condim == 4 and np.isclose(g.friction[0], 2.0) and g.group == 0     # visible to the robot cameras
     assert np.allclose(d.body("cube_body").xpos, [1.5, -0.67, 0.85])             # on table_a, 12 cm from its edge
 
 

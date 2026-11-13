@@ -114,6 +114,40 @@ P0_quest_probe.md §6), so the operator rule is: both controllers to walk, both 
 `tools/xr_frame_validate.py <run>` re-validates a run; `tools/quest_emulator.mjs` drives the server with an
 emulated Quest in headless Chrome (no headset; rates are the browser's, not the Quest's).
 
+## Full-body teleop in simulation (Quest 3S -> SONIC -> MuJoCo G1)
+
+The headset operator drives a simulated G1 (29 DoF + Dex3) through NVIDIA SONIC: the stick walks, the head's yaw
+turns the robot, the head's position leans and crouches it, tracked hands drive the wrists and Dex3 fingers, and a
+headset panel starts, stops and tunes it. Plan and phase documents: `docs/quest-sonic/` (`PLAN.md`; the morning
+guide in Turkish: `SABAH.md`; results: `P8_results.md`).
+
+```bash
+deploy/xr_fullbody_sim.sh morning      # sim (morning course) + viewer + SONIC + camera bridge + Quest server + node
+deploy/xr_fullbody_sim.sh status       # which processes run, which course
+deploy/xr_fullbody_sim.sh stop         # everything (or `stop quest` etc. for one process)
+```
+
+`morning` is idempotent (it starts only what is not running) and prints what to do: open `https://192.168.1.105` in
+Quest Browser, Enter VR; press a thumbstick for the panel, **Başlat**, stand straight and hold **A** for 1 s (or
+**Kalibre et ve devral**); **DURDUR** on the panel ends it. Holding a controller walks (arms parked); with both
+controllers down the hands drive the arms (D8).
+
+The stack runs as the user `emin` (its SONIC venv interpreter is in emin's home). From another account, e.g. at the
+desk: `sudo -u emin -H deploy/xr_fullbody_sim.sh morning`. The MuJoCo viewer goes to the desk's display: the launcher
+uses `DISPLAY` if the shell has one, else the seat's Xwayland, allowed either once with `xhost +SI:localuser:emin`
+in the desk session or, with passwordless sudo, through the desk user's X cookie. Logs: `~emin/.local/state/xr_fullbody/`;
+every run is recorded under `data/fullbody-runs/<time>/` and replays (`tools/fullbody_replay.py`).
+
+Verification without a person (one stack at a time: DDS domain 42 and the Quest ports are fixed):
+
+```bash
+data/xr-env/bin/python -m xr_camera_teleop.tools.acceptance --runs 3             # PLAN §0, emulated Quest, morning course
+data/xr-env/bin/python -m xr_camera_teleop.tools.acceptance --only cube --runs 5 # cube pick/place rate (table course)
+data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.course_test ramp5 --repeat 5   # synthetic operator over a course
+data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sonic_drive starts --count 20  # gantry: start -> stand
+data/sonic-sim-venv/bin/python -m xr_camera_teleop.tools.sim_perf --duration 60         # PLAN §7a, while it runs
+```
+
 ## Updating
 
 PC2 has no GitHub credentials, so copy robot-runtime with a git bundle from MSI, then on PC2:

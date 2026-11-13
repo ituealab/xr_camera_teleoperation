@@ -28,8 +28,8 @@
 //   head {pos, quat}, mode "controller" | "hand",
 //   controllers.left|right {pos, quat, trigger, squeeze, stick: [x, y], stickPress, a, b, connected},
 //   hands.left|right {pos, quat, pinch, pose}   pose: "default" | "point" | "grip" (IWER's own poses, plus "grip": a
-//                                               fist, its curled fingers from "point" and its thumb and index from
-//                                               "pinch", each expressed relative to its own pose's wrist)
+//                                               fist: "point"'s curled fingers, its middle finger's shape also for the
+//                                               index, and "pinch"'s thumb re-expressed relative to "point"'s wrist)
 // Every pose gets a sub-millimetre wobble each frame: a real head or hand is never bit-identical twice, and the
 // server drops identical resends as no new sample.
 // Both modes log every image the page decodes (createImageBitmap: Vuer's path for binary textures) with its byte
@@ -212,12 +212,20 @@ async function runPuppet() {
       const h = dev.hands[side];
       const sym = Object.getOwnPropertySymbols(h).find((k) => h[k] && h[k].poses);
       const P = h[sym].poses;
-      const fromPinch = mul(P.point.jointTransforms.wrist.offsetMatrix, inv(P.pinch.jointTransforms.wrist.offsetMatrix));
+      const J = P.point.jointTransforms;
+      const fromPinch = mul(J.wrist.offsetMatrix, inv(P.pinch.jointTransforms.wrist.offsetMatrix));
+      // the index curled like point's middle finger: that finger's chain re-attached at the index metacarpal
+      const midToIndex = mul(J['index-finger-metacarpal'].offsetMatrix, inv(J['middle-finger-metacarpal'].offsetMatrix));
       const joints = {};
-      for (const [j, v] of Object.entries(P.point.jointTransforms)) {
-        const pinchJ = j.startsWith('thumb') || j.startsWith('index');
-        joints[j] = pinchJ ? { ...P.pinch.jointTransforms[j], offsetMatrix: mul(fromPinch, P.pinch.jointTransforms[j].offsetMatrix) }
-          : { ...v };
+      for (const [j, v] of Object.entries(J)) {
+        if (j.startsWith('thumb')) {
+          joints[j] = { ...P.pinch.jointTransforms[j], offsetMatrix: mul(fromPinch, P.pinch.jointTransforms[j].offsetMatrix) };
+        } else if (j.startsWith('index') && j !== 'index-finger-metacarpal') {
+          const m = J[j.replace('index', 'middle')];
+          joints[j] = { ...m, offsetMatrix: mul(midToIndex, m.offsetMatrix) };
+        } else {
+          joints[j] = { ...v };
+        }
       }
       P.grip = { ...P.point, jointTransforms: joints };
     }
