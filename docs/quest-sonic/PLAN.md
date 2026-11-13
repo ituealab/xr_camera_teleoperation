@@ -2,7 +2,7 @@
 
 Branch: `quest_emin` (`quest-xr`'dan, 3144d6d). Tarih: 2026-11-12.
 
-**Durum (2026-11-12):**
+**Durum (2026-11-13):**
 
 | Faz | Durum |
 |---|---|
@@ -10,7 +10,11 @@ Branch: `quest_emin` (`quest-xr`'dan, 3144d6d). Tarih: 2026-11-12.
 | P1 | Tamam: 10 dk dayanıklılık düşmesiz, §7a fizik hedefleri geçiyor (`P1_sim.md`). GPU 20 W kilidi uykudan dönüş hatasıydı; yeniden başlatmadan sonra kameralar açık da geçiyor (`P1_sim.md` §3a). |
 | P2 | Tamam (`P2_node.md`): node, girdi kaynağı ara yüzü, lifecycle, script senaryoları, kill ve replay testleri; sapmalar orada §5. |
 | P3 | Tamam. Gerçek kayıt §6 kurallarıyla doğrulandı; takip edilen elin işaretçisi artık kontrolcü akışına girmiyor. |
-| P4–P8 | Başlamadı. |
+| P4, P6, P7 | Tamam (`P4_P6_P7_mapping.md`); P6'nın "yürürken taşıma" çıkışı D8 ile imkânsız (§0 madde 7). |
+| P5 | Tamam (`P5_ui.md`). |
+| P8 | Kısmen (`P8_results.md`). Parkurlar ve sabah yerleşimi, gantry (20 başlatma, 0 düşme), tek komutla açılış (`deploy/xr_fullbody_sim.sh morning`, viewer masaüstünde), 5° rampa 5/5, §7a tam sahnede geçiyor. §0 kuru koşusu (emülatör, 3 koşu): küp ve bir el aynalama kontrolü dışında her adım 3/3, düşme 0; **küp al-bırak insansız geçmedi** (park eden eller masaya giriyor; `P8_results.md` §6, §10). Sabah kılavuzu `SABAH.md`. |
+
+Faz belgelerinin PLAN'dan sapmaları her belgenin kendi "PLAN'dan sapmalar" bölümündedir (P1 §7, P2 §5, P4_P6_P7 §7, P5 §7, P8 `P8_results.md` §9).
 
 ## 0. Bitiş tanımı
 
@@ -22,7 +26,9 @@ Plan şu **kabul senaryosu** üç kez üst üste, düşmeden geçtiğinde biter.
 4. Vücuduyla 90° döner, robot da döner. ±15° etrafa bakınca robot dönmez; sadece gövde yaw'ı (bel) bakışı takip eder.
 5. Öne ve yana eğilince robotun gövdesi eğilir. Çömelince robot squat yapar. Kalkınca robot da kalkar, sonra tekrar yürür.
 6. Kontrolcüyü bırakır, iki el serbest kalır. Robotun kolları bilekleri, Dex3 parmakları parmakları takip eder. Masadan bir küpü alıp yerine koyar.
-7. Kontrolcüyü bir eline alır; o kol yana park eder. Küp diğer elindeyken başka bir masaya yürür ve küpü bırakır.
+7. ~~Kontrolcüyü bir eline alır; o kol yana park eder. Küp diğer elindeyken başka bir masaya yürür ve küpü bırakır.~~
+   **D8 ile geçersiz (P8):** kontrolcü alınınca iki kol park eder ve parmaklar açılır, küp düşer; yürürken taşıma bu
+   kuralla mümkün değil. Kabul senaryosunda bu adım yok; ne yapılacağı kullanıcı kararı (`P4_P6_P7_mapping.md` §8 madde 1).
 8. 5°'lik rampayı çıkar ve iner. 10° ve 15° rampalar ile basamaklar ölçülür ve raporlanır; bunlar geçme kapısı değildir.
 9. Quest bağlantısını keser (headset'i çıkarır ya da sayfayı kapatır). Robot ayakta, güvenli şekilde durur.
 

@@ -20,7 +20,7 @@ its hand. Steps (D8: walking with a controller, hands without):
   turn        a 90 deg body turn to the right: the robot follows within 5 deg; +-15 deg glances turn nothing
   lean        lean forward (torso pitches), crouch (squat), stand up
   hands       walk to table_a; controllers down: HANDS; a hand raised lifts the robot's wrist
-  cube        right hand palm down over the cube, fist, lift, carry 6 cm along the table, put down, open
+  cube        right hand palm down over the cube, fist, lift (up to 3 tries), carry 6 cm along the table, put down, open
   walk_again  controllers back: WALK; back to the corridor, a 180 deg turn to the left
   ramp        up the 5 deg ramp and down the other side
   disconnect  the page is closed (and in run 2 the Quest server is stopped too): PAUSED, the robot stands still
