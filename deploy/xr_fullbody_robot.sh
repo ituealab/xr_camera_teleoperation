@@ -21,7 +21,9 @@ QUEST_HEALTH=http://127.0.0.1:8771/health
 ROBOT_IP="${ROBOT_IP:-192.168.1.164}"           # aksoy-lab, static (ROBOT.md)
 QUEST_URL="https://$ROBOT_IP"                   # :443 -> :8012 (quest-https-redirect.service)
 SONIC_CONFIG="$REPO/configs/sonic_robot.yaml"
-CAMERA_ARGS=(--bind tcp://127.0.0.1:5605 --mode 1280x800@30 --quality 80)
+# 848x480 (vfov 58 deg, ~17 Mbit/s): 1280x800 (~40 Mbit/s) stalled the PC2's USB Wi-Fi up to ~0.6 s, and the head data
+# from the Quest waited behind it. XR_CAMERA_MODE=1280x800@30 brings the full sensor back.
+CAMERA_ARGS=(--bind tcp://127.0.0.1:5605 --mode "${XR_CAMERA_MODE:-848x480@30}" --quality "${XR_CAMERA_QUALITY:-80}")
 PREFIX=xr-fullbody
 NAMES=(camera quest node)
 

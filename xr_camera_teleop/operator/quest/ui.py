@@ -34,7 +34,7 @@ Selection
   Raycast from each pointer to the panel plane; the item under the hit point is hovered. A press (click edge) on an
   enabled item captures that pointer. Items with `hold` confirm after hold_s of continuous press on the same item
   (the ring fills); releasing or leaving earlier cancels. Steppers repeat every repeat_s while still held after
-  confirming. Durdur (stop), the page tabs and X act on the press itself: Stop must never wait, and tabs and ✕ do not
+  confirming. Durdur (freeze: the operator's pause, never a SONIC stop), the page tabs and X act on the press itself: it must never wait, and tabs and ✕ do not
   reach the robot. Everything that reaches the robot or the view is hold-to-confirm.
 
 Pages (tabs): Robot (Başlat, Kalibre et ve devral, Duraklat/Devam, status), Hareket and Eller (one row per
@@ -498,8 +498,9 @@ class Panel:
         """Act on a confirmed item. Returns a new view mode, if any."""
         self.flash[it.id] = self.now + self.p.flash_s
         st = self.status
-        if it.id == "stop":
-            req.append(Request(UiKind.STOP))
+        if it.id == "stop":                            # freeze, never a SONIC stop: the operator's pause, so closing
+            req.append(Request(UiKind.PAUSE))           # the panel leaves the robot paused (Devam / A resumes)
+            self.holds_pause, self._last_pause = False, self.now
         elif it.id == "close":
             self._close(req)
         elif it.id.startswith("tab."):

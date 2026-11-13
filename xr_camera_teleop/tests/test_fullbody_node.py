@@ -85,14 +85,14 @@ def test_recorded_run_replays_exactly(tmp_path):
 
 def head_frame(t, fresh=True):
     T = pose(np.eye(3), [0.0, 0.0, 1.6])
-    ts = t if fresh else t - 1.0
+    ts = t if fresh else t - 5.0
     return XRFrame(seq=int(t * 50), t_pub=t, session=1, connected=True,
                    head=Head(Stamp(ts, ts, seq=int(t * 50), valid=True), T))
 
 
 def test_quest_source_liveness_and_replay(tmp_path):
     frames = lambda t: head_frame(t, fresh=t < 1001.0)  # noqa: E731  (head stalls after 1 s)
-    core, ticks = simulate({"kind": "quest"}, 2.0, tmp_path / "q", frames=frames)
+    core, ticks = simulate({"kind": "quest"}, 3.0, tmp_path / "q", frames=frames)   # > 1 s + head_timeout_s
     live = [tk.input.live for tk in ticks]
     assert live[0] and not live[-1] and not any(tk.input.ready for tk in ticks)
     assert all(tk.sup.state is State.OFF for tk in ticks)            # nobody starts SONIC from the headset yet

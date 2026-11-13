@@ -66,13 +66,13 @@ def test_hold_a_calibrates_starts_and_engages():
     assert all(isinstance(v, (str, bool, int, float)) for v in ticks[-1].input.status.values())
 
 
-def test_short_press_pauses_and_resumes_and_stop_combo_stops():
+def test_short_press_pauses_and_resumes_and_stop_combo_freezes():
     sc = intro(Script()).press(0.2, "pause", a=True).hold(1.0).press(0.2, "resume", a=True).hold(1.0)
     sc.press(1.0, "stop", squeeze=True, trigger=True).hold(1.0)
     _, ticks = run(sc)
     ev = [e for tk in ticks for e in tk.input.events]
-    assert ev == [Event.START, Event.ENGAGE, Event.PAUSE, Event.RESUME, Event.STOP]
-    assert ticks[-1].sup.state is State.OFF
+    assert ev == [Event.START, Event.ENGAGE, Event.PAUSE, Event.RESUME, Event.PAUSE]   # the combo freezes, SONIC runs
+    assert ticks[-1].sup.state is State.PAUSED
 
 
 def test_panel_actions_map_to_events_and_calibrate_engages():
@@ -141,11 +141,13 @@ def test_crouch_squats_and_locks_heading():
 
 
 def test_heading_lock_last_writer_wins():
-    sc = intro(Script()).hold(1.0).press(0.2, "B", b=True).hold(0.5).ramp(2.0, "turn", body_yaw=math.radians(90))
-    sc.hold(2.0)
+    # the lock is on by default (configs/fullbody.yaml): B turns it off, B again on, and the last press holds
+    sc = intro(Script()).hold(1.0).press(0.2, "B", b=True).hold(0.5).press(0.2, "B", b=True).hold(0.5)
+    sc.ramp(2.0, "turn", body_yaw=math.radians(90)).hold(2.0)
     core, ticks = run(sc)
     assert ticks[-1].input.status["heading_lock"] is True
-    assert ticks[-1].sup.cmd.facing == pytest.approx(ticks[int(sc.segments[4].t0 / DT)].sup.cmd.facing)
+    turn = next(s for s in sc.segments if s.name == "turn")
+    assert ticks[-1].sup.cmd.facing == pytest.approx(ticks[int(turn.t0 / DT)].sup.cmd.facing)
 
 
 def test_same_input_same_output():

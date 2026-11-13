@@ -3,7 +3,7 @@
   A/X held hold_s            CALIBRATE   (the source calibrates on the last second and engages)
   A/X released < short_s     PAUSE_TOGGLE
   B/Y pressed                LOCK_TOGGLE (heading lock)
-  both grips + a trigger,    STOP        (SONIC stop; the panel has the same button)
+  both grips + a trigger,    STOP        (freeze: the operator's pause, like the panel's Durdur; SONIC keeps running)
   held stop_s
 The trigger itself closes that side's hand (hands.py), it is no gesture.
 A and X are one button for this purpose (either controller), so are B and Y. Each gesture fires once per press.

@@ -21,7 +21,7 @@ node:
 operator_settings:
   speed_scale: 1.0               # x the configured maximum walk speed
   stick_deadzone: 0.15           # radial
-  heading_lock: false
+  heading_lock: true             # the robot does not turn with the head (right stick turns); panel: Yön kilidi
   crouch_enabled: true
   lean_gain: 1.0
   arm_tracking: true
@@ -41,7 +41,7 @@ lifecycle:                       # sonic/lifecycle.py
 supervisor:                      # fullbody/supervisor.py
   engage_blend_s: 1.0            # upper body blends to the operator's targets on entering ACTIVE
   pause_blend_s: 1.5             # and to neutral on entering PAUSED (PLAN §6)
-  auto_resume_s: 0.5             # a pause from a stale head ends after the input is live this long (PLAN §6)
+  auto_resume_s: 0.2             # a pause from a stale head ends after the input is live this long (PLAN §6)
 
 # Link poses in the pelvis frame (+X forward, +Y left, +Z up), R = Rz(yaw) Ry(pitch) Rx(roll).
 # torso = torso_link, left/right = left/right_wrist_yaw_link; sonic/adapter.py turns them into SONIC's VR points.
@@ -64,9 +64,11 @@ postures:
 # The headset operator mapping (fullbody/quest_source.py and its modules; docs/quest-sonic/P4_P6_P7_mapping.md).
 # Below `postures` so it can alias the torso neutral and the open hands (one definition each).
 quest:
-  head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED (PLAN §6)
-  controller_timeout_s: 0.15     # controller older than this: not held (no walking, no buttons)
-  hand_timeout_s: 0.25           # hand older than this: not tracked (the arm holds, then parks)
+  # A sample is held (commands keep flowing with it) for this long: the robot PC2's Wi-Fi stalls up to ~0.6 s while
+  # it streams the camera (2026-11-13), and a 0.2 s timeout paused the robot on every stall.
+  head_timeout_s: 1.0            # head sample older than this: input not live -> PAUSED (PLAN §6)
+  controller_timeout_s: 1.0      # controller older than this: not held (no walking, no buttons)
+  hand_timeout_s: 1.0            # hand older than this: not tracked (the arm holds, then parks)
   calibrate_window_s: 1.0        # calibrate on the frames of the last second
   calibrate_timeout_s: 4.0       # retry that long after the request while the operator settles
   engage_timeout_s: 90.0         # engage after calibration waits this long for SONIC (a relaunch takes ~28 s)

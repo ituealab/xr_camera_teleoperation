@@ -41,10 +41,15 @@ Güncelleme: `cd ~/repos/xr_camera_teleoperation && git pull`. Robotta yerel de�
    - **Bu terminalde `o` = acil durdurma.**
 4. **Terminal 2:** `quest`. Kamera, Quest sunucusu ve node açılır, sonunda adres yazılır.
 5. Quest: yer imini aç, Enter VR, panelden **Başlat**. Dik dur, ileri bak, **A'yı 1 sn tut** (kalibre et ve devral).
+   - **DURDUR** (panel) ya da iki grip + tetik robotu o anki haliyle dondurur (duraklatma). SONIC çalışmaya devam eder.
+     Devam etmek için panelde **Devam** ya da A'ya kısa bas.
+   - Robot kafayla dönmez (Hareket sayfasında **Yön kilidi** açık; sağ stick döndürür). Kapatınca kafayla döner;
+     B/Y de aç/kapa yapar.
+   - Tetik o eli kapatır. Parmak retarget'i robotta kapalı (`--no-finger-retarget`): elle kullanımda parmaklar açık durur.
 6. Bitiş:
-   - paneldeki **DURDUR** (ya da iki grip + tetik)
+   - paneldeki **DURDUR** (robot donar)
    - `quest stop`
-   - SONIC terminalinde Ctrl-C
+   - SONIC terminalinde Ctrl-C (SONIC'i sadece terminali kapatır; panel kapatmaz)
    - robot desteklenmiş haldeyken `developer exit`
 
 Diğer komutlar: `quest status`, `quest logs`, `quest attach node|quest|camera`. Loglar `~/.local/state/xr_fullbody` altında; her koşu `data/fullbody-runs/<zaman>` altına kaydedilir.
@@ -52,8 +57,9 @@ Diğer komutlar: `quest status`, `quest logs`, `quest attach node|quest|camera`.
 ## Güvenlik
 
 - SONIC'i hiçbir şey kendiliğinden yeniden başlatmaz (sim'deki respawn robot profilinde yasak). Her başlatma operatörün komutudur.
-- **Açık soru, ilk iş askıda test edilecek:** DURDUR SONIC'i kapattığında robot fiziksel olarak ne yapıyor? Sönümlemeye mi geçiyor, gevşeyip çöküyor mu? Bu öğrenilmeden askıyı gevşetme.
-- Wi-Fi koparsa ya da kafa verisi 0.2 sn'den eskiyse node PAUSED'a geçer. Bunu askıda bir kez dene: Quest'i çıkar, ya da Wi-Fi'ı kapat.
+- **Açık soru, askıda test edilecek:** SONIC Ctrl-C ya da `o` ile kapandığında robot fiziksel olarak ne yapıyor? Sönümlemeye mi geçiyor, gevşeyip çöküyor mu? Bu öğrenilmeden askıyı gevşetme.
+- Kısa kopukluklarda son veri 1 sn tutulur, komutlar akmaya devam eder (yürüme dahil: en fazla 1 sn son stick değeriyle). Kafa verisi 1 sn'den eskiyse node PAUSED'a geçer, veri gelince 0.2 sn sonra devam eder. Bunu askıda bir kez dene: Quest'i çıkar.
+- Kamera varsayılanı 848x480@30 (~17 Mbit/s). 1280x800 (~40 Mbit/s) robotun USB Wi-Fi'ında (rtl8852bu) 0.5 sn'lik takılmalar yaptı ve Quest'in kafa verisi arkasında bekledi. Tam çözünürlük: `XR_CAMERA_MODE=1280x800@30 quest`.
 - Sıra: askıda (duruş, kollar, Dex3 aç/kapa, kamera, DURDUR), sonra askı gevşek (eğil, çömel, adım, dön), sonra serbest.
 
 ## Ağ

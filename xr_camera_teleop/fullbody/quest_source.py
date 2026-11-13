@@ -11,7 +11,7 @@ is robot-level (`fullbody/types.py`):
                already calibrated, a request that never qualifies engages with the calibration in place), then
                engage: START first if SONIC is off, ENGAGE once it stands (STANDBY / PAUSED), or PAUSE + ENGAGE
                when already ACTIVE so the supervisor re-anchors the heading. A/X short: PAUSE / RESUME. B/Y: heading
-               lock. Both grips + a trigger 0.5 s: STOP. (A trigger alone closes that hand: hands.py.) SET is the
+               lock. Both grips + a trigger 0.5 s: PAUSE (a freeze, as the panel's Durdur). (A trigger alone closes that hand: hands.py.) SET is the
                node's (it hands the result in as settings).
     intent   the mapping modules, each filling its part (all read the live OperatorSettings):
                operator_mode.py  WALK (a controller is held) / HANDS (no controller)  (D8)
@@ -199,8 +199,9 @@ class QuestSource:
                     events.append(Event.RESUME)
             elif g is Gesture.LOCK_TOGGLE:
                 self.locked = not self.locked
-            elif g is Gesture.STOP:
-                events.append(Event.STOP)
+            elif g is Gesture.STOP:                       # a freeze, never a SONIC stop (only its terminal stops it)
+                if state in (State.ACTIVE, State.PAUSED):
+                    events.append(Event.PAUSE)
         for a in data.ui:
             kind = UiKind(a.kind)
             if kind is UiKind.CALIBRATE:

@@ -224,20 +224,20 @@ def test_leaving_the_item_cancels_the_hold():
     assert r.run(0.8) == []
 
 
-def test_stop_is_immediate_and_works_without_the_node():
+def test_stop_freezes_immediately_and_works_without_the_node():
     r = Rig()
     r.open()
     r.point_at("stop")
     r.step()
     r.ctrl["trigger"] = 1.0
-    assert list(r.step().requests) == [ui.Request(UiKind.STOP)]
+    assert list(r.step().requests) == [ui.Request(UiKind.PAUSE)]          # a freeze, never a SONIC stop
     r.ctrl["trigger"] = 0.0
     r.run(0.1, status_age=5.0)                                        # node silent: everything else is disabled
     assert not r.panel.enabled(r.panel.item("robot.calibrate"))
     r.point_at("stop")
     r.step(status_age=5.0)
     r.ctrl["trigger"] = 1.0
-    assert list(r.step(status_age=5.0).requests) == [ui.Request(UiKind.STOP)]
+    assert list(r.step(status_age=5.0).requests) == [ui.Request(UiKind.PAUSE)]
 
 
 def test_disabled_items_do_not_fire():
