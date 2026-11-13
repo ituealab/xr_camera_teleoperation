@@ -1,0 +1,12 @@
+# PC2 (aarch64, python 3.10) Quest server + RealSense IR stream; deploy/setup_robot_fullbody.sh. The MSI's env is
+# envs/quest-env.freeze.txt (py3.12); the pins that matter are the same, the rest is resolved for 3.10.
+vuer==0.1.6
+params-proto==3.3.0
+numpy==1.26.4
+pyzmq==27.3.0
+msgpack==1.2.4
+pillow
+psutil
+pytest
+opencv-python-headless==4.11.0.86
+pyrealsense2==2.55.1.6486

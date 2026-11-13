@@ -1,2 +1,0 @@
-pyrealsense2==2.55.1.6486
-opencv-python-headless==4.11.0.86

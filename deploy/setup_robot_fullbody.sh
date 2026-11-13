@@ -4,8 +4,8 @@
 #
 #   1. data/xr-env     fullbody_node: conda-forge base (envs/robot-conda.yml: pinocchio, nlopt, ...) + torch CPU +
 #                      dex_retargeting (silencht fork, --no-deps) + this repo (editable, --no-deps)
-#   2. data/quest-env  Quest server + RealSense IR stream: python 3.10 + envs/quest-env.freeze.txt (vuer 0.1.6 stack;
-#                      opencv-python -> -headless) + pyrealsense2 (aarch64 deviations: envs/quest-env-aarch64.freeze.txt)
+#   2. data/quest-env  Quest server + RealSense IR stream: python 3.10, envs/quest-env-aarch64.in (vuer 0.1.6 as on the
+#                      MSI, opencv headless, pyrealsense2); what resolved is written to envs/quest-env-aarch64.freeze.txt
 #   3. data/quest-cert self-signed TLS cert for the headset (SAN: the robot's aksoy-lab IP + hostname)
 #   4. systemd: quest-https-redirect (443 -> 8012, so the headset opens https://<robot>/) and g1-free-camera (stops
 #      Unitree's video hubs at boot so the RealSense is free)
@@ -37,9 +37,11 @@ echo "== 2/6 $QUEST_ENV"
 if [[ ! -x "$QUEST_ENV/bin/python" ]]; then
   "$MM" create -y -q -p "$QUEST_ENV" -c conda-forge python=3.10 pip
 fi
-grep -v -E '^(opencv-python|killport)==' "$REPO/envs/quest-env.freeze.txt" > "$REPO/data/quest-env.req"
-"$UV" pip install -q --python "$QUEST_ENV/bin/python" -r "$REPO/data/quest-env.req" \
-  -r "$REPO/envs/quest-env-aarch64.freeze.txt"
+# Python 3.10 because pyrealsense2 has no aarch64 wheel above cp310; parts of the MSI freeze (py3.12) need >=3.11,
+# so the direct requirements are pinned here and the resolved set is recorded in envs/quest-env-aarch64.freeze.txt.
+"$UV" pip install -q --python "$QUEST_ENV/bin/python" -r "$REPO/envs/quest-env-aarch64.in"
+"$UV" pip freeze --python "$QUEST_ENV/bin/python" | grep -v -E '^(-e|xr-camera-teleop)' \
+  > "$REPO/envs/quest-env-aarch64.freeze.txt"
 "$UV" pip install -q --python "$QUEST_ENV/bin/python" --no-deps -e "$REPO"
 
 echo "== 3/6 TLS cert"
