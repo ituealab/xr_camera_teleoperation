@@ -6,7 +6,7 @@ test_panel_drives_the_node            XR_E2E=1. Quest server + fullbody_node (no
 test_panel_runs_the_sim_robot         XR_E2E_SIM=1. The whole stack (deploy/xr_fullbody_sim.sh: sim, SONIC, camera
                                       bridge, Quest server, node --source quest) on its fixed ports: Başlat stands
                                       the robot, a setting is changed by pinch, Kalibre et ve devral engages, the
-                                      palm opens the panel (robot paused) and closing resumes, Durdur stops SONIC,
+                                      the hand menu gesture opens the panel (robot paused) and closing resumes, Durdur stops SONIC,
                                       the Görüntü modes switch, the robot view shows the sim camera, and the image
                                       latency is measured. Only one stack can run on the machine (DDS domain 42):
                                       run it under the stack lock. XR_E2E_OUT=dir keeps the evidence.
@@ -243,11 +243,15 @@ def test_panel_runs_the_sim_robot(tmp_path):
                 time.sleep(2.5)
             lean_frames = view_rec.stop()
 
-            # 4. left palm toward the eyes opens the panel: the robot is paused; closing resumes it
+            # 4. the hand menu gesture opens the panel: the robot is paused; closing resumes it. The raised palm
+            #    alone does not (manipulation raises palms all the time).
             q.palm_toward_eyes("left")
-            q.wait_for(lambda s: s["ui"]["open"], 3, "panel opened by the palm")
+            time.sleep(1.5)
+            assert not q.state()["ui"]["open"] and q.state()["ui"]["hand_menu"]["armed"]
+            q.tap_palm()
+            q.wait_for(lambda s: s["ui"]["open"], 3, "panel opened by the hand menu gesture")
             q.wait_for(lambda s: s["node"]["state"] == "paused", 3, "paused while the panel is open")
-            q.set({"hands": {"left": {"quat": [0, 0, 0, 1]}}})
+            q.set({"hands": {"left": {"quat": [0, 0, 0, 1]}, "right": {"pose": "default"}}})
             q.press_item("close", 0.2, via="hand")
             q.wait_for(lambda s: s["node"]["state"] == "active", 5, "resumed after closing")
 

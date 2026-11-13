@@ -25,7 +25,7 @@ from typing import Optional
 import numpy as np
 
 from xr_camera_teleop.fullbody.frames import C_F_XR
-from xr_camera_teleop.operator.quest import ui
+from xr_camera_teleop.operator.quest import hand_menu, ui
 
 REPO = Path(__file__).resolve().parents[2]
 EMULATOR = REPO / "xr_camera_teleop" / "tools" / "quest_emulator.mjs"
@@ -244,7 +244,7 @@ class EmulatedQuest:
                 raise RuntimeError(f"{side} hand not tracked")
             sh = ui.shoulder(f.head.T, side)
             want = sh + reach * (target - sh) / np.linalg.norm(target - sh)
-            err = want - np.asarray(h.joints[ui.INDEX_KNUCKLE])
+            err = want - np.asarray(h.joints[hand_menu.INDEX_KNUCKLE])
             if np.linalg.norm(err) < tol:
                 return
             pos = np.asarray(self.state_xr["hands"][side]["pos"]) + C_F_XR.T @ err
@@ -252,15 +252,14 @@ class EmulatedQuest:
         raise RuntimeError(f"could not aim the {side} hand at {target_xr}")
 
     def palm_toward_eyes(self, side: str = "left", tol_deg: float = 8.0):
-        """Turn a tracked hand until its palm faces the eyes (the panel's palm gesture)."""
+        """Turn a tracked hand until its palm faces the eyes (the first step of the panel's hand menu gesture)."""
         for _ in range(8):
             t = time.time()
             time.sleep(0.12)
             f = self.fresh_frame(t)
             j = np.asarray(f.hands[side].joints)
-            centre = (j[ui.WRIST] + j[ui.INDEX_MC] + j[ui.MIDDLE_MC] + j[ui.PINKY_MC]) / 4
-            want = f.head.T[:3, 3] - centre
-            n = ui.palm_normal(j, side)
+            want = f.head.T[:3, 3] - hand_menu.palm_centre(j)
+            n = hand_menu.palm_normal(j, side)
             ang = math.degrees(math.acos(max(-1.0, min(1.0, float(n @ want) / np.linalg.norm(want)))))
             if ang < tol_deg:
                 return ang
@@ -268,6 +267,25 @@ class EmulatedQuest:
             q = quat_from_matrix(R_xr @ matrix_from_quat(self.state_xr["hands"][side]["quat"]))
             self.set({"hands": {side: {"quat": q}}})
         raise RuntimeError("could not turn the palm toward the eyes")
+
+    def tap_palm(self, lift: float = 0.02, tol: float = 0.01):
+        """The panel's hand menu gesture: the left palm toward the eyes, then the right index tip ("point" pose) moved
+        onto it, closing the loop on the joints the server reports. Returns the final tip-to-palm distance (m)."""
+        self.set({"hands": {"left": {"pose": "default"}, "right": {"pose": "point"}}})
+        self.palm_toward_eyes("left")
+        time.sleep(hand_menu.HandMenuParams.arm_s + 0.1)
+        for _ in range(12):
+            t = time.time()
+            time.sleep(0.12)
+            f = self.fresh_frame(t)
+            left, right = np.asarray(f.hands["left"].joints), np.asarray(f.hands["right"].joints)
+            target = hand_menu.palm_centre(left) + lift * hand_menu.palm_normal(left, "left")
+            err = target - right[hand_menu.INDEX_TIP]
+            if np.linalg.norm(err) < tol:
+                return float(np.linalg.norm(err))
+            pos = np.asarray(self.state_xr["hands"]["right"]["pos"]) + C_F_XR.T @ err
+            self.set({"hands": {"right": {"pos": [float(x) for x in pos]}}})
+        raise RuntimeError("could not touch the left palm with the right index")
 
     def press_item(self, item_id: str, hold_s: float, side: str = "right", via: str = "controller"):
         """Aim at a panel item and click it for hold_s (trigger or pinch), then release. Returns /state after."""

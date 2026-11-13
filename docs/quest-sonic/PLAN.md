@@ -246,7 +246,7 @@ DISCONNECTED ─(SONIC hazır + Quest bağlı)→ STANDBY ─(kalibrasyon)→ AC
 **Görüntü:** Robot kamerasının stereo görüntüsü ana görüntüdür (mevcut ego/immersive modları). Panel görüntüyü kapatmaz.
 
 **Panel:**
-- Çağrılınca açılır: sol bileği çevirip avuç içine bakınca ya da menü butonuyla. Dünyaya sabitlenir: açıldığı anda göğüs hizasında, 0.45 m önde.
+- Çağrılınca açılır: thumbstick basma ya da el jesti (sol avuç açık yüze, sonra sağ işaret parmağıyla avuca dokunma; tek başına avuç çevirmek manipülasyonda sık olduğu için açmaz, `P5_ui.md` §9). Dünyaya sabitlenir: açıldığı anda göğüs hizasında, 0.45 m önde.
 - Açıkken yürüme ve heading donar, kollar o anki hedefte kalır. Böylece panelle uğraşırken robot hareket etmez.
 - Kapalıyken köşede küçük bir durum şeridi görünür: durum, mod, kilit, el modları, uyarılar.
 

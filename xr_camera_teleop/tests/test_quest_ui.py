@@ -1,5 +1,5 @@
 """operator/quest/ui.py (and ui_draw.py): raycast, hover, hold-to-confirm, immediate Stop, pages built from the knob
-table, SET values, opening and closing (stick, palm), the freeze-while-open rule, hand and controller pointers."""
+table, SET values, opening and closing (stick, hand menu), the freeze-while-open rule, hand and controller pointers."""
 import math
 
 import numpy as np
@@ -9,7 +9,7 @@ from xr_camera_teleop.fullbody.frames import C_F_XR, pose, rot_x, rot_y, rot_z
 from xr_camera_teleop.fullbody.operator_link import NodeStatus
 from xr_camera_teleop.fullbody.settings import KNOBS, OperatorSettings, UiKind
 from xr_camera_teleop.fullbody.xr_frame import Controller, Hand, Head, Stamp, XRFrame
-from xr_camera_teleop.operator.quest import ui
+from xr_camera_teleop.operator.quest import hand_menu, ui
 
 P = ui.UiParams()
 EYE = np.array([0.0, 0.0, 1.6])
@@ -364,29 +364,37 @@ def hand_joints(wrist, palm_normal, fingers, side):
     return j
 
 
-def test_palm_normal_points_out_of_the_palm_for_either_hand():
-    for side in ("left", "right"):
-        j = hand_joints([0, 0, 1.0], [0, 0, -1.0], [1.0, 0, 0], side)                # palm down
-        assert np.allclose(ui.palm_normal(j, side), [0, 0, -1.0], atol=1e-9)
+def tap_hands(palm=EYE + np.array([0.3, 0.1, -0.3])):
+    """A left hand open with its palm toward the eyes, and a right hand whose index tip is on that palm."""
+    left = hand_joints(palm, (EYE - palm) / np.linalg.norm(EYE - palm), [0.3, 0.6, 0.5], "left")
+    right = hand_joints(palm + [0.0, -0.25, 0.0], [0, 0, -1.0], [0.0, 1.0, 0.0], "right")
+    right += hand_menu.palm_centre(left) + 0.02 * hand_menu.palm_normal(left, "left") - right[hand_menu.INDEX_TIP]
+    return left, right
 
 
-def test_left_palm_toward_the_eyes_opens_after_the_hold_and_rearms():
-    r = Rig()
-    palm = EYE + [0.3, 0.1, -0.3]
-    up = hand_joints(palm, (EYE - palm) / np.linalg.norm(EYE - palm), [0.3, 0.6, 0.5], "left")
-    r.left_hand = up
-    r.run(0.3)
-    assert not r.panel.open
-    r.run(0.15)
-    assert r.panel.open
+def test_a_palm_toward_the_eyes_alone_never_opens_the_panel_or_pauses():
+    r = Rig(status("active"))
+    r.left_hand, _ = tap_hands()
+    reqs = r.run(5.0)
+    assert not r.panel.open and reqs == []
+    assert r.panel.strip().segments[-1] == (ui.MENU_HINT_ARMED, "warn")       # the strip says what to do next
+
+
+def test_the_right_index_on_the_raised_left_palm_opens_the_panel_and_pauses():
+    r = Rig(status("active"))
+    left, right = tap_hands()
+    r.left_hand = left
+    r.run(0.4)
+    assert r.panel.strip().segments[-1] == (ui.MENU_HINT_ARMED, "warn")
+    r.hand = (right, 0.08)
+    reqs = r.run(0.2)
+    assert r.panel.open and reqs == [ui.Request(UiKind.PAUSE)]
+    r.hand = None                                            # close with the controller ray
     r.press("close", 0.05)
+    r.hand = (right, 0.08)
     r.run(1.0)
-    assert not r.panel.open                                  # palm still up: not re-opened until it turns away
-    r.left_hand = hand_joints(palm, [0, 0, -1.0], [1.0, 0, 0], "left")
-    r.run(0.1)
-    r.left_hand = up
-    r.run(0.5)
-    assert r.panel.open
+    assert not r.panel.open                                  # still touching: not re-opened until the palm turns away
+    assert r.panel.strip().segments[-1] == (ui.MENU_HINT, "dim")
 
 
 def test_hand_ray_from_the_shoulder_through_the_knuckle_and_pinch_click():
@@ -397,7 +405,7 @@ def test_hand_ray_from_the_shoulder_through_the_knuckle_and_pinch_click():
     sh = ui.shoulder(pose(np.eye(3), EYE), "right", P)
     knuckle = sh + 0.45 * (target - sh)
     j = hand_joints(knuckle - [0.08, 0.0, 0.0], [0, 0, -1.0], [1.0, 0, 0], "right")
-    j += knuckle - j[ui.INDEX_KNUCKLE]
+    j += knuckle - j[hand_menu.INDEX_KNUCKLE]
     r.hand = (j, 0.06)
     r.step()
     assert r.panel.hover == {"right": "robot.start"}

@@ -22,12 +22,15 @@ Görüntü 0.5 s gelmezse kaldırılır, donmuş görüntü canlı gibi görünm
 
 **Durum şeridi.** Panel kapalıyken görüşün altında küçük bir satır: robot durumu (KAPALI / HAZIR / AKTİF /
 DURAKLADI), mod (YÜRÜME / ELLER), yön kilidi (KİLİT), SONIC yoksa uyarı, kalibrasyon gerekiyorsa "kalibre et",
-kafa verisi yoksa uyarı, açık bir kayıt bölümü varsa "● bölüm", ve "Menü: stick / sol avuç".
+kafa verisi yoksa uyarı, açık bir kayıt bölümü varsa "● bölüm", ve "Menü: stick bas / sol avucuna dokun" (sol avuç
+yüze dönükken sarı: "Menü: sağ işaret parmağınla sol avucuna dokun").
 
 **Paneli açmak:**
 - Kontrolcüyle: herhangi bir **thumbstick'e bas** (tıkla). Quest Browser menü (≡) tuşunu WebXR'a vermiyor; stick
   basma §6'da başka bir işe ayrılmamış tek tuş.
-- Elle: **sol avucunu yüzüne çevir**, 0.4 s tut. Avuç tekrar dönene kadar panel yeniden açılmaz.
+- Elle (`operator/quest/hand_menu.py`), iki adım: **sol avucunu açık olarak yüzüne çevir** (0.3 s; şerit sararır ve
+  ne yapacağını yazar), sonra **sağ işaret parmağının ucuyla sol avucuna dokun**. Panel dokununca açılır. Avuç tekrar
+  dönene kadar jest yeniden kurulmaz. Avucu yüze çevirmek tek başına hiçbir şey yapmaz (§9).
 
 Panel açıldığı yerde dünyaya sabitlenir: başının 0.45 m önünde, göz hizasının 0.28 m altında (göğüs), dik ve sana
 dönük.
@@ -169,7 +172,7 @@ Sim'li test (`test_panel_runs_the_sim_robot`, ~90 s, tek yığın kuralı yüzü
 | Ayar | **el ışını + pinch**: Hareket sekmesi, Hız – | node `speed_scale` 1.0 → 0.9; durumda ve her tick'in `settings`'inde |
 | **Kalibre et ve devral** | el ışını + pinch 0.8 s | panel kapandı, kalibre, AKTİF |
 | Kafa eğme ölçümü | kafa 15 cm öne/geri ×4 | §4 |
-| Avuçla aç | sol avuç yüze | panel açıldı, robot DURAKLADI; X ile kapanınca AKTİF |
+| Avuçla aç | sol avuç yüze | panel açıldı, robot DURAKLADI; X ile kapanınca AKTİF (2026-11-13'ten beri: avuç yüze + sağ işaret parmağı avuca, §9) |
 | Görüntü | kontrolcü: Ego → İmmersif → Kapalı → Ego | sunucu görünümü değişti; Kapalı'da 0 Hz, Ego'da 30 Hz |
 | **Durdur** | kontrolcü, tek tık | node KAPALI, SONIC kontrolü 0.1 s'de bıraktı |
 | Robot görüntüsü | `/frames` + :5605 | 454 kare sim kamerasından (`sim_time` dolu), çözülüp sayfada gösterildi |
@@ -243,3 +246,40 @@ olan devralır. Aynı headset'in Wi-Fi kopması sonrası yarım açık soketi de
 - Hareket sayfasındaki "Yön kilidi" satırı **ayarı** gösterir; B/Y ya da çömelme kilidi değiştirdiyse geçerli kilit
   şeritte ve Robot sayfasında (`status.heading_lock`) görünür. Kaynağın kuralı "son yazan kazanır": düğmeye basmak
   ayarı değiştirir ve kilit ona uyar.
+
+## 9. El ile menü jesti (2026-11-13, gerçek headset bulgusu)
+
+**Sorun.** İlk tasarımda sol avucu 0.4 s yüze çevirmek paneli açıyordu; panel açılınca robot duraklıyor. Kullanıcının
+2026-11-13 denemesinde (`data/fullbody-runs/20261113-102932`, ~15 dk ELLER modu) bu jest masada küp tutarken (avuçlar
+yukarı, sonra yumruk) **11 kez** kendiliğinden ateşledi; robot her seferinde DURAKLADI'ya geçti ve kullanıcı paneli
+kapatıp yeniden kalibre etmek zorunda kaldı. Kayıttaki tüm 11 `panel: pause`, jestin kayıt üzerinden yeniden
+oynatılmasıyla birebir aynı anlara düşüyor.
+
+**Yeni jest** (`operator/quest/hand_menu.py`, saf):
+1. **Kur:** sol avuç yüze dönük (avuç normali · göze yön ≥ 0.75, avuç gözden ≤ 0.7 m) ve el açık (dört uzun parmağın
+   her biri en az 0.85 düz; yumruk ~0.3) 0.3 s. Robota hiçbir şey gitmez; şerit "sağ işaret parmağınla sol avucuna
+   dokun" der.
+2. **Dokun:** kuruluyken sağ işaret parmağı ucu, avuç merkezinin 1.5 cm üstündeki noktanın 5 cm yakınında 0.08 s →
+   panel açılır.
+
+Kurulum avuç pozu bozulduktan sonra 0.6 s daha (avucun son pozunda) sürer: dokunan sağ el sol avucu headset
+kameralarından kapatabilir. Açıldıktan sonra (ya da panel stick ile açıldıysa) sol avuç dönmeden jest yeniden kurulmaz.
+
+**Doğrulama** (kayıtlar jestten yeniden oynatıldı, `xr_frame` → `HandMenu`):
+
+| Kayıt | El takibi | Eski jest | Yeni jest | Kuruluyken sağ işaret ucunun dokunma noktasına en yakın hali |
+|---|---|---|---|---|
+| `20261113-102932` (gerçek, masada küp) | 880 s | 11 açılış | **0** | 21.8 cm |
+| `20261113-101551` (gerçek) | 30 s | 0 | **0** | — |
+| `20261112-195840-nopointers` (gerçek, P0) | 153 s | 1 | **0** | 24.7 cm |
+| `20261113-043315`, `-055215`, `-060428` (emülatör, küp al-bırak) | 1141 s | 0 | **0** | — (kurulmadı) |
+
+Bütün gerçek el kaydında sağ işaret ucu sol avuç merkezine hiç 7.3 cm'den yakın gelmedi (%1'lik dilim 14.5 cm; avuç
+hangi yöne bakarsa baksın). Birim testleri `tests/test_quest_hand_menu.py`, panel düzeyinde `tests/test_quest_ui.py`
+(avuç 5 s yukarıda: açılmaz, PAUSE yok; dokununca açılır ve PAUSE). Emülatör e2e testi `tap_palm` ile (puppet).
+
+**Eski "durma" davranışı (kullanıcının hatırladığı):** eski kameralı hatta (`operator/live_ui.py` +
+`recording/gestures.py`) "iki açık avuç kameraya 1 s" veri kaydını başlatıp durduruyordu (varsayılan kapalı). Tam
+vücut hattı bunu içe aktarmıyor. Tam vücut hattında ELLER modunda robotu durdurabilen başka yol yok: kontrolcü jestleri
+(`fullbody/gestures.py`) kontrolcü ister; kafa bayatlaması kendiliğinden geri döner (kayıtta 1 kez, sunucu yeniden
+başlatılırken); recenter kalibrasyonu düşürür (kayıtta robot çalışırken hiç olmadı).

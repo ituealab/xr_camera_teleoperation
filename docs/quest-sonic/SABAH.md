@@ -35,7 +35,7 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 
 | Ne | Nasıl |
 |---|---|
-| Paneli aç | Herhangi bir thumbstick'e **bas** (kontrolcü) ya da **sol avucunu yüzüne çevir**, 0.4 s tut (el) |
+| Paneli aç | Herhangi bir thumbstick'e **bas** (kontrolcü) ya da elle: **sol avucunu açık olarak yüzüne çevir** (alttaki şerit sararır), sonra **sağ işaret parmağınla sol avucuna dokun**. Avucu yüze çevirmek tek başına artık paneli açmaz, robotu durdurmaz |
 | Panelde seç | Kontrolcü ışını + **tetik**, ya da el ışını + **başparmak-işaret pinch**. Robota giden her şey **0.6 s basılı tutma** ister (sarı halka dolar); DURDUR, sekmeler ve X hemen çalışır |
 | Kalibre et ve devral | Dik dur, ileri bak, kıpırdama. **A veya X'i 1 s basılı tut**, ya da panelde **Kalibre et ve devral** |
 | Duraklat / devam | A veya X kısa bas |

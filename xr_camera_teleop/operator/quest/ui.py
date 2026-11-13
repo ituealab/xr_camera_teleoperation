@@ -6,8 +6,10 @@ operator/quest/server.py upserts them, publishes the requests through fullbody/o
 at GET /state. No I/O and no clock reads here: the server passes `now` in.
 
 Opening and closing
-  Open:  press a thumbstick (either controller; Quest Browser does not give WebXR the menu button), or turn the left
-         palm toward the eyes for palm_hold_s (hand tracking). The palm gesture re-arms once the palm turns away.
+  Open:  press a thumbstick (either controller; Quest Browser does not give WebXR the menu button), or, with hand
+         tracking, the hand menu gesture (hand_menu.py): left palm open toward the eyes, then the right index
+         fingertip touches it. A palm turned toward the eyes alone never opens it (manipulation does that all the
+         time, and opening pauses the robot); the strip shows the tap hint while the palm is up.
   Close: the X tab, a thumbstick press, "Devam" (resume) or "Kalibre et ve devral" (which engages the robot).
   The panel is world-locked where it opened: `distance` ahead of the head along its heading, `drop` below the eyes
   (chest height), upright and turned to face the operator. Upright, not tilted toward the eyes: a panel tilted to
@@ -51,6 +53,7 @@ from xr_camera_teleop.fullbody.frames import C_F_XR, yaw_of
 from xr_camera_teleop.fullbody.operator_link import STATUS_STALE_S, NodeStatus
 from xr_camera_teleop.fullbody.settings import KNOBS, UiKind
 from xr_camera_teleop.fullbody.xr_frame import SIDES, XRFrame
+from xr_camera_teleop.operator.quest.hand_menu import INDEX_KNUCKLE, HandMenu, HandMenuParams
 
 PAGES = ("robot", "hareket", "eller", "goruntu", "sistem")
 PAGE_TITLES = {"robot": "Robot", "hareket": "Hareket", "eller": "Eller", "goruntu": "Görüntü", "sistem": "Sistem"}
@@ -59,9 +62,8 @@ VIEW_LABELS = {"ego": "Ego", "immersive": "İmmersif", "none": "Kapalı"}
 STATE_LABELS = {"off": "KAPALI", "standby": "HAZIR", "active": "AKTİF", "paused": "DURAKLADI"}
 SONIC_LABELS = {"controlling": "kontrol ediyor", "waiting": "bekliyor", "absent": "yok"}
 MODE_LABELS = {"walk": "YÜRÜME", "hands": "ELLER"}
-
-# WebXR hand joints (fullbody/xr_frame.py, operator/mano_to_webxr.py order)
-WRIST, INDEX_MC, INDEX_KNUCKLE, MIDDLE_MC, PINKY_MC = 0, 5, 6, 10, 20
+MENU_HINT = "Menü: stick bas / sol avucuna dokun"
+MENU_HINT_ARMED = "Menü: sağ işaret parmağınla sol avucuna dokun"
 
 
 @dataclass(frozen=True)
@@ -81,9 +83,6 @@ class UiParams:
     pinch_on: float = 0.015              # thumb-index tip distance, m
     pinch_off: float = 0.030
     shoulder: tuple = (-0.05, 0.17, -0.22)   # shoulder from the eyes in the head-yaw frame (fwd, side, up), m
-    palm_cos: float = 0.75               # palm normal . direction to the eyes above this: palm faces the eyes
-    palm_reach: float = 0.7              # and the palm within this of the eyes, m
-    palm_hold_s: float = 0.4
     node_stale_s: float = STATUS_STALE_S
 
 
@@ -244,22 +243,6 @@ def shoulder(head_T, side: str, p: UiParams = UiParams()) -> np.ndarray:
     return np.asarray(head_T, dtype=float)[:3, 3] + np.array([c * fwd - s * lat, s * fwd + c * lat, up])
 
 
-def palm_normal(joints, side: str) -> np.ndarray:
-    """Unit normal out of the palm from the wrist and the index and pinky metacarpals (no joint-axis conventions)."""
-    j = np.asarray(joints, dtype=float)
-    n = np.cross(j[INDEX_MC] - j[WRIST], j[PINKY_MC] - j[WRIST])
-    n = n if side == "right" else -n
-    return n / max(np.linalg.norm(n), 1e-9)
-
-
-def palm_faces_eyes(joints, side: str, head_T, p: UiParams = UiParams()) -> bool:
-    j = np.asarray(joints, dtype=float)
-    centre = (j[WRIST] + j[INDEX_MC] + j[MIDDLE_MC] + j[PINKY_MC]) / 4
-    to_eye = np.asarray(head_T, dtype=float)[:3, 3] - centre
-    dist = float(np.linalg.norm(to_eye))
-    return 0.05 < dist <= p.palm_reach and float(palm_normal(j, side) @ to_eye) / dist >= p.palm_cos
-
-
 def pointers(frame: Optional[XRFrame], now: float, was_pressed: dict, p: UiParams = UiParams()) -> dict:
     """{side: Pointer} for the sides with a usable pointer source. `was_pressed`: {side: bool} of the last update
     (click hysteresis)."""
@@ -353,8 +336,9 @@ class Panel:
     """The panel's state. `step` once per server update (any rate; ~60 Hz); read `picture()`, `strip()`, `rays`,
     `describe()` after it."""
 
-    def __init__(self, params: UiParams = UiParams()):
+    def __init__(self, params: UiParams = UiParams(), menu: HandMenuParams = HandMenuParams()):
         self.p = params
+        self.menu = HandMenu(menu)
         self.layout = build_layout(params)
         self.open = False
         self.T: Optional[np.ndarray] = None  # panel pose in F while open
@@ -367,8 +351,6 @@ class Panel:
         self.flash: dict = {}                # item id -> until
         self._pressed: dict = {}
         self._sticks: dict = {}
-        self._palm_since: Optional[float] = None
-        self._palm_armed = True
         self._last_pause = -math.inf
         self.status: Optional[NodeStatus] = None
         self.status_rx: Optional[float] = None
@@ -424,7 +406,7 @@ class Panel:
 
         toggle = self._stick_edge(frame, now)
         if not self.open:
-            if toggle or self._palm_gesture(frame, now):
+            if self.menu.step(frame, now) or toggle:
                 self._open(frame, now, req)
         elif toggle:
             self._close(req)
@@ -461,28 +443,12 @@ class Panel:
         self._sticks = sticks
         return edge
 
-    def _palm_gesture(self, frame, now) -> bool:
-        h = frame.hands["left"] if frame is not None and frame.connected else None
-        up = (h is not None and h.stamp.fresh(now, self.p.hand_timeout_s) and h.joints is not None
-              and frame.head.T is not None and palm_faces_eyes(h.joints, "left", frame.head.T, self.p))
-        if not up:
-            self._palm_since, self._palm_armed = None, True
-            return False
-        if not self._palm_armed:
-            return False
-        if self._palm_since is None:
-            self._palm_since = now
-        if now - self._palm_since >= self.p.palm_hold_s:
-            self._palm_armed = False
-            return True
-        return False
-
     def _open(self, frame, now, req):
         if frame is None or frame.head.T is None:
             return
         self.open, self.T, self.capture = True, panel_pose(frame.head.T, self.p), None
         self.opened += 1
-        self._palm_armed = False                    # a palm still up must turn away before it opens it again
+        self.menu.require_release()                 # a palm still up must turn away before it arms again
         st = self.status
         if self.node_ok() and (st.state == "active" or (st.state == "paused" and st.resumes_by_itself)):
             req.append(Request(UiKind.PAUSE))
@@ -672,7 +638,7 @@ class Panel:
     def strip(self) -> StripPicture:
         st, ok = self.status, self.node_ok()
         if not ok:
-            return StripPicture((("NODE YOK", "bad"), ("Menü: stick bas / sol avuç", "dim")))
+            return StripPicture((("NODE YOK", "bad"), self._menu_hint()))
         tone = {"active": "ok", "paused": "warn", "standby": "ok", "off": "bad"}.get(st.state, "warn")
         segs = [(STATE_LABELS.get(st.state, st.state), tone)]
         mode = st.operator.get("mode")
@@ -688,13 +654,19 @@ class Panel:
             segs.append(("kafa verisi yok", "bad"))
         if st.segment:
             segs.append(("● bölüm", "warn"))
-        segs.append(("Menü: stick / sol avuç", "dim"))
+        segs.append(self._menu_hint())
         return StripPicture(tuple(segs))
+
+    def _menu_hint(self) -> tuple:
+        if self.menu.armed:
+            return MENU_HINT_ARMED, "warn"
+        return MENU_HINT, "dim"
 
     def describe(self) -> dict:
         """JSON-able state for GET /state: what is open, where (WebXR world), what is hovered and held."""
         d = {"open": self.open, "page": self.page, "holds_pause": self.holds_pause, "opened": self.opened,
-             "hover": dict(self.hover), "capture": None, "pointers": {}, "items": []}
+             "hover": dict(self.hover), "capture": None, "pointers": {}, "items": [],
+             "hand_menu": self.menu.describe()}
         if self.capture is not None:
             c = self.capture
             d["capture"] = {"side": c.side, "item": c.item, "held_s": round(self.now - c.t0, 3), "fired": c.fired}
