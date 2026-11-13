@@ -1,0 +1,45 @@
+# SONIC on the robot's PC2 (Jetson Orin NX, JetPack 5): the existing build in ~/sonic_jp5 (PLAN D10: referenced, never
+# copied into this repo). Same schema as sonic_assets.yaml, named by configs/sonic_robot.yaml (deploy.assets).
+# Check on PC2:  data/xr-env/bin/python -m xr_camera_teleop.sonic.assets --manifest configs/sonic_assets_robot.yaml verify
+#
+# No `source` section: nothing is imported from the source tree on PC2, and the binary was built from
+# GR00T-WholeBodyControl v1.1 (a0732b6) with a local TensorRT 8.5 CMakeLists patch, so the binary is what is pinned.
+# The policy, observation config and reference motions are byte-identical to the MSI's pins in sonic_assets.yaml
+# (verified 2026-11-13); the planner is upstream's TensorRT 8.5 friendly export of the same V2 planner.
+
+roots:
+  deploy: ~/sonic_jp5/GR00T-WholeBodyControl/gear_sonic_deploy
+
+files:
+  encoder:
+    root: deploy
+    path: policy/sonic_v1_1/model_encoder.onnx
+    sha256: fb97de22819b2057b41459802128d91723d91a25f0ad73e7bfc41a9cf8365bae
+  decoder:
+    root: deploy
+    path: policy/sonic_v1_1/model_decoder.onnx
+    sha256: 34bae8570d4a4421a5391a5c2befd745d4a02d182ec539e5f9da44c091c67509
+  observation_config:
+    root: deploy
+    path: policy/sonic_v1_1/observation_config.yaml
+    sha256: 4a67713b310932e50aca81f19188c8d76013148e98b15c8b5bbea995f12e59f0
+  # LayerNorm lowered for TensorRT 8.5 (what the existing `sonic` alias runs). The binary reads "V2" from the path.
+  planner:
+    root: deploy
+    path: planner/target_vel/V2/planner_sonic_trt85.onnx
+    sha256: d1b72659ca9f50fa25ade799952f50c3fde114592a7c8255671efaad9a28753e
+  # aarch64 g1_deploy_onnx_ref (TensorRT 8.5, ONNX Runtime 1.16.3 via RUNPATH: no extra library dir needed).
+  deploy_binary:
+    root: deploy
+    path: target/release/g1_deploy_onnx_ref
+    sha256: f62d21d70695f0e6cecde8b8b9d727c4d81c61066b539d826d7d2a998e56ff36
+
+dirs:
+  reference_motions:
+    root: deploy
+    path: reference/example
+    sha256: 72306b8c835773b81db1c4287553ebcb154ca2abae0a3510a8d7d23848a9db51
+
+deploy:
+  dds_domain: 0                # upstream's, compiled in: the real robot
+  planner_version: V2

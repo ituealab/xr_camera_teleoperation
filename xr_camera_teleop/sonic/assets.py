@@ -10,6 +10,11 @@ module, so a moved checkout is a one-line config change.
     data/xr-env/bin/python -m xr_camera_teleop.sonic.assets hash planner      # print the sha256 to pin a new asset
 
 Directory hashes (`sha256_tree`) cover relative paths and file contents, not mtimes or permissions.
+
+Two manifests: `sonic_assets.yaml` (the MSI sim: x86 binary + the upstream source the sim imports) and
+`sonic_assets_robot.yaml` (PC2: the JetPack build in ~/sonic_jp5). The deploy config names its manifest
+(`deploy.assets`, see `for_deploy`). The `source` section is optional: PC2 imports nothing from the source tree and its
+binary was built from a locally patched (TensorRT 8.5) checkout, so the robot manifest pins the binary itself instead.
 """
 from __future__ import annotations
 
@@ -42,8 +47,8 @@ class Asset:
 
 @dataclass(frozen=True)
 class Manifest:
-    source_root: Path
-    source_commit: str
+    source_root: Path | None        # None: the manifest pins no source checkout (robot)
+    source_commit: str | None
     python_paths: tuple[Path, ...]  # what the sim venv puts on sys.path (gear_sonic, unitree_sdk2py)
     assets: dict[str, Asset]
     dds_domain: int                 # the deploy binary's compiled-in DDS domain; the sim follows it
@@ -51,6 +56,8 @@ class Manifest:
 
     def path(self, name: str) -> Path:
         if name == "source":
+            if self.source_root is None:
+                raise ManifestError("this manifest pins no source checkout")
             return self.source_root
         try:
             return self.assets[name].path
@@ -62,8 +69,8 @@ def load(path: Path | str = MANIFEST) -> Manifest:
     raw = yaml.safe_load(Path(path).read_text())
     try:
         roots = {k: Path(v).expanduser() for k, v in raw["roots"].items()}
-        src = raw["source"]
-        source_root = roots[src["root"]]
+        src = raw.get("source")
+        source_root = roots[src["root"]] if src else None
         assets = {}
         for kind, section in (("file", "files"), ("dir", "dirs")):
             for name, a in (raw.get(section) or {}).items():
@@ -71,12 +78,17 @@ def load(path: Path | str = MANIFEST) -> Manifest:
                     raise ManifestError(f"duplicate asset name {name!r}")
                 assets[name] = Asset(name, roots[a["root"]] / a["path"], kind, a.get("sha256"))
         deploy = raw["deploy"]
-        return Manifest(source_root=source_root, source_commit=str(src["commit"]),
-                        python_paths=tuple(source_root / p for p in src.get("python_paths", [])),
+        return Manifest(source_root=source_root, source_commit=str(src["commit"]) if src else None,
+                        python_paths=tuple(source_root / p for p in src.get("python_paths", [])) if src else (),
                         assets=assets, dds_domain=int(deploy["dds_domain"]),
                         planner_version=str(deploy["planner_version"]))
     except KeyError as e:
         raise ManifestError(f"{path}: missing key {e}") from None
+
+
+def for_deploy(deploy: dict) -> Path:
+    """The manifest a deploy config section names (`assets`, a file in configs/), default the sim's."""
+    return CONFIGS / deploy.get("assets", MANIFEST.name)
 
 
 def sha256_file(path: Path) -> str:
@@ -134,12 +146,13 @@ class Check:
 def verify(m: Manifest, hashes: bool = True) -> list[Check]:
     """Every check, failed or not, in a stable order. `hashes=False` checks presence only (fast)."""
     out = []
-    head, dirty = git_state(m.source_root) if m.source_root.is_dir() else (None, False)
-    if head is None:
-        out.append(Check("source", False, f"{m.source_root}: not a git checkout"))
-    else:
-        ok = head == m.source_commit and not dirty
-        out.append(Check("source", ok, f"{head[:12]}{' (dirty)' if dirty else ''}, pinned {m.source_commit[:12]}"))
+    if m.source_root is not None:
+        head, dirty = git_state(m.source_root) if m.source_root.is_dir() else (None, False)
+        if head is None:
+            out.append(Check("source", False, f"{m.source_root}: not a git checkout"))
+        else:
+            ok = head == m.source_commit and not dirty
+            out.append(Check("source", ok, f"{head[:12]}{' (dirty)' if dirty else ''}, pinned {m.source_commit[:12]}"))
     for p in m.python_paths:
         out.append(Check(f"python_path {p.name}", p.is_dir(), str(p)))
     for a in m.assets.values():
@@ -161,7 +174,7 @@ def verify(m: Manifest, hashes: bool = True) -> list[Check]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--manifest", type=Path, default=MANIFEST)
+    ap.add_argument("--manifest", type=Path, default=MANIFEST, help="e.g. configs/sonic_assets_robot.yaml on PC2")
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("verify", help="check commit, presence, sha256 and the planner version token")
     v.add_argument("--quick", action="store_true", help="presence only, skip hashing (~3 GB)")

@@ -71,12 +71,19 @@ CONFIG = CONFIGS / "fullbody.yaml"
 
 # ---------------------------------------------------------------------------------------------------- config
 
-def load_config(path: Path | str = CONFIG) -> dict:
-    """{"fullbody": configs/fullbody.yaml, "sonic_deploy": the deploy section of the SONIC config it names}."""
+def load_config(path: Path | str = CONFIG, sonic_config: Path | str | None = None) -> dict:
+    """{"fullbody": configs/fullbody.yaml, "sonic_deploy": the deploy section of the SONIC config it names}.
+
+    `sonic_config` overrides fullbody.yaml's `sonic_config` (a path, or a file name in the config's directory): the
+    robot runs the same node with configs/sonic_robot.yaml.
+    """
     path = Path(path)
     fb = yaml.safe_load(path.read_text())
-    sonic_cfg = yaml.safe_load((path.parent / fb["sonic_config"]).read_text())
-    return {"fullbody": fb, "sonic_deploy": sonic_cfg["deploy"]}
+    sc = Path(sonic_config if sonic_config is not None else fb["sonic_config"])
+    if not sc.is_absolute() and not sc.exists():
+        sc = path.parent / sc
+    sonic_cfg = yaml.safe_load(sc.read_text())
+    return {"fullbody": fb, "sonic_deploy": sonic_cfg["deploy"], "sonic_config": str(sc)}
 
 
 def make_source(desc: dict, fullbody_cfg: dict) -> InputSource:
@@ -358,8 +365,10 @@ def run_meta(source: InputSource, cfg: dict, config_path: Path) -> dict:
     meta = {"writer": "fullbody/node.py", "source": source.describe(), "config": cfg,
             "config_sha256": hashlib.sha256(Path(config_path).read_bytes()).hexdigest()}
     try:
-        m = assets.load()
-        meta["sonic_assets"] = {"manifest_sha256": hashlib.sha256(assets.MANIFEST.read_bytes()).hexdigest(),
+        manifest = assets.for_deploy(cfg["sonic_deploy"])
+        m = assets.load(manifest)
+        meta["sonic_assets"] = {"manifest": manifest.name,
+                                "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
                                 "source_commit": m.source_commit, "dds_domain": m.dds_domain}
     except Exception as e:  # noqa: BLE001  (the manifest is informative here, never a reason not to run)
         meta["sonic_assets"] = {"error": repr(e)}
@@ -498,6 +507,8 @@ def main(argv=None) -> int:
     ap.add_argument("--xr-replay", type=Path, metavar="RUN_DIR",
                     help="quest source: play the xr_frame records of a recorded run instead of the Quest server")
     ap.add_argument("--config", type=Path, default=CONFIG)
+    ap.add_argument("--sonic-config", type=Path, metavar="YAML",
+                    help="SONIC deploy config instead of fullbody.yaml's sonic_config (PC2: sonic_robot.yaml)")
     ap.add_argument("--run-dir", type=Path, help="run directory (default: a new data/fullbody-runs/<time>)")
     ap.add_argument("--no-log", action="store_true")
     a = ap.parse_args(argv)
@@ -505,7 +516,7 @@ def main(argv=None) -> int:
         ap.error("--source script needs --scenario")
     if a.xr_replay and a.source != "quest":
         ap.error("--xr-replay belongs to --source quest")
-    cfg = load_config(a.config)
+    cfg = load_config(a.config, a.sonic_config)
     desc = {"kind": "script", "scenario": a.scenario, "stop_at_end": not a.keep_running} if a.source == "script" \
         else {"kind": "quest"}
     source = make_source(desc, cfg["fullbody"])

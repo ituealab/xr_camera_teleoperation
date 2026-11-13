@@ -5,7 +5,11 @@ Paths come from configs/sonic_assets.yaml (verified first), the interface and ZM
 The process is replaced by the binary (exec), so its stdin stays the terminal: in zmq_manager mode the binary reads
 `o` there as its emergency stop. Its TensorRT engines are cached next to the ONNX files on the first start.
 
-    data/xr-env/bin/python -m xr_camera_teleop.sonic.run_deploy [--print] [--full-verify] [--respawn]
+    data/xr-env/bin/python -m xr_camera_teleop.sonic.run_deploy [--config F] [--print] [--full-verify] [--respawn]
+
+--config: the deploy config, configs/sonic_sim.yaml (default, the MSI sim) or configs/sonic_robot.yaml (PC2, the real
+robot: eth0, the ~/sonic_jp5 build named by its `deploy.assets` manifest). A config with `deploy.respawn: false`
+(the robot's) refuses --respawn.
 
 --respawn: run the binary as a child (stdin still the terminal) and start it again whenever it exits. SONIC's `stop`
 ends the process, so this is what makes stop -> start possible without a person (the node's lifecycle simply keeps
@@ -44,6 +48,9 @@ def deploy_argv(m: assets.Manifest, cfg: dict, logs_dir: Path = LOGS_DIR) -> lis
             "--zmq-port", str(d["zmq_port"]),
             "--zmq-out-port", str(d["zmq_out_port"]),
             "--logs-dir", str(logs_dir)]
+    for key in ("planner_precision", "policy_precision"):      # optional: the binary's default otherwise
+        if key in d:
+            argv += ["--" + key.replace("_", "-"), str(d[key])]
     if cfg["dds"]["interface"] in ("lo", "lo0"):
         argv.append("--disable-crc-check")        # upstream deploy.sh does this for sim: MuJoCo sends no CRC
     return argv
@@ -51,6 +58,8 @@ def deploy_argv(m: assets.Manifest, cfg: dict, logs_dir: Path = LOGS_DIR) -> lis
 
 def deploy_env(m: assets.Manifest, base: dict | None = None) -> dict:
     env = dict(os.environ if base is None else base)
+    if "deploy_libs" not in m.assets:              # the PC2 build finds its libraries by RUNPATH
+        return env
     libs = str(m.path("deploy_libs"))
     env["LD_LIBRARY_PATH"] = libs + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
     return env
@@ -97,8 +106,12 @@ def main(argv=None) -> int:
     ap.add_argument("--full-verify", action="store_true", help="hash every asset first (~1 s)")
     ap.add_argument("--respawn", action="store_true", help="relaunch the binary whenever it exits (sim)")
     a = ap.parse_args(argv)
-    m = assets.load()
     cfg = sim_config.load(a.config)
+    if a.respawn and cfg["deploy"].get("respawn", True) is False:
+        print(f"[sonic] {a.config} forbids --respawn (every start ramps the joints: an operator's decision)",
+              file=sys.stderr)
+        return 2
+    m = assets.load(assets.for_deploy(cfg["deploy"]))
     cmd = deploy_argv(m, cfg)
     if a.print:
         print(shlex.join(cmd))

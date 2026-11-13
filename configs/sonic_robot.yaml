@@ -1,0 +1,17 @@
+# How SONIC runs on the real robot (PC2). The counterpart of sonic_sim.yaml's `dds` and `deploy` sections; the node
+# and run_deploy read the same keys from either (fullbody_node --sonic-config, run_deploy --config).
+#   deploy/xr_fullbody_robot.sh sonic   (alias sonic-quest)  - SONIC in the foreground, `o` = emergency stop
+# Same process graph as the sim (PLAN D11); only the DDS end differs: eth0 to the robot instead of lo to MuJoCo.
+
+dds:
+  interface: eth0              # the robot's internal network (192.168.123.164); CRC check on (only lo disables it)
+
+deploy:
+  assets: sonic_assets_robot.yaml   # configs/<file>: the PC2 build in ~/sonic_jp5
+  input_type: zmq_manager
+  zmq_host: localhost
+  zmq_port: 5556               # SONIC subscribes; fullbody_node binds PUB
+  zmq_out_port: 5557           # SONIC telemetry PUB (topic g1_debug)
+  planner_precision: 32        # as the existing `sonic` alias on PC2
+  policy_precision: 32
+  respawn: false               # never: every start ramps all joints to the default pose, an operator's decision
