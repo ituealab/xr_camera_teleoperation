@@ -224,14 +224,34 @@ def jpeg_size(data):
     return None
 
 
-def view_plane(mode, aspect, vfov_deg=70.0, ego_height=0.9):
+EGO_DISTANCE_M = 1.0
+# Stereo convergence (camera distance shown at the plane's depth), per view. The ZED 2i baseline (0.12 m) is ~1.9x
+# the eyes', and with zero disparity at infinity everything near popped out of the window: the robot's hands (~0.5 m)
+# ~5 deg in front of the 2 m ego window, which the wearer saw double (2026-11-13). Shifting the eyes' images so
+# that CONVERGE_M sits at the window splits the range: in ego (minified ~0.36x) hands 0.5 m +2.5 deg, floor 5 m
+# -2.0 deg (the window at 1 m allows 3.6 deg of uncrossed disparity before the eyes would have to diverge; at 2 m it
+# was 1.8). Immersive shows the full disparity, so it converges farther for the floor to stay fusable.
+CONVERGE_M = {"ego": 1.0, "immersive": 1.5}
+
+
+def view_plane(mode, aspect, vfov_deg=70.0, ego_height=0.45):
     """Head-locked image plane for the robot camera: (distanceToCamera, height).
     immersive: the plane spans the camera's vertical FOV, so objects appear at true angular size;
-    ego: a smaller window 2 m ahead, passthrough around it."""
+    ego: a smaller window EGO_DISTANCE_M ahead (25 deg tall by default), passthrough around it."""
     if mode == "immersive":
         d = 1.0
         return d, 2.0 * d * float(np.tan(np.radians(vfov_deg) / 2.0))
-    return 2.0, float(ego_height)
+    return EGO_DISTANCE_M, float(ego_height)
+
+
+def stereo_shift_px(height_px: int, vfov_deg: float, baseline_m: float, converge_m: float) -> float:
+    """Disparity (px) of a point converge_m in front of a parallel stereo pair: f b / Z with f = (H/2) / tan(vfov/2).
+    Cropping that many columns off the left image's left edge and the right image's right edge puts that distance at
+    the image plane's depth (horizontal image translation); 0 if converge_m <= 0."""
+    if converge_m <= 0.0 or baseline_m <= 0.0:
+        return 0.0
+    f = 0.5 * height_px / float(np.tan(np.radians(vfov_deg) / 2.0))
+    return f * baseline_m / converge_m
 
 
 def project_head_view(points_xr, T_head_xr, size=(640, 480), fov_deg=90.0):

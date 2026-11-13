@@ -524,14 +524,19 @@ class QuestServer:
     def view_elements(self, f):
         """Two head-locked planes, left image on the left eye's layer 1 and right on layer 2 (as TeleVuer).
         A mono stream shows the same image to both eyes."""
-        from xr_camera_teleop.operator.quest.convert import view_plane
+        from xr_camera_teleop.operator.quest.convert import CONVERGE_M, stereo_shift_px, view_plane
         from xr_camera_teleop.operator.quest.vuer_app import image_plane
         w, h = f["size"]
         dist, height = view_plane(self.view, w / h, self.a.view_vfov_deg, self.a.ego_height)
         right = f["right"] or f["left"]
-        common = dict(aspect=w / h, height=height, distanceToCamera=dist, interpolate=True, seq=f["seq"])
-        return [image_plane(src=f["left"], key=VIEW_KEYS[0], layers=1, **common),
-                image_plane(src=right, key=VIEW_KEYS[1], layers=2, **common)]
+        shift = 0.0
+        if f["right"] is not None:                    # stereo: converge at CONVERGE_M (convert.py), cropping both eyes
+            shift = min(0.25 * w, stereo_shift_px(h, self.a.view_vfov_deg, self.a.camera_baseline,
+                                                  CONVERGE_M.get(self.view, 0.0)))
+        c = shift / w
+        common = dict(aspect=(w - shift) / h, height=height, distanceToCamera=dist, interpolate=True, seq=f["seq"])
+        return [image_plane(src=f["left"], key=VIEW_KEYS[0], layers=1, crop=[c, 1.0 - c], **common),
+                image_plane(src=right, key=VIEW_KEYS[1], layers=2, crop=[0.0, 1.0 - c], **common)]
 
     # ------------------------------------------------------------------ overlay + http
     def overlay_loop(self):
@@ -714,9 +719,12 @@ def main():
     ap.add_argument("--camera", default=None, metavar="ZMQ",
                     help="robot stereo stream to show in the headset (PC2: tcp://192.168.123.164:5605)")
     ap.add_argument("--view", choices=("ego", "immersive", "none"), default="ego",
-                    help="ego: window 2 m ahead with passthrough around it; immersive: fills the camera's FOV")
-    ap.add_argument("--view-vfov-deg", type=float, default=70.0, help="camera vertical FOV for --view immersive")
-    ap.add_argument("--ego-height", type=float, default=0.9, help="window height (m) at 2 m for --view ego")
+                    help="ego: window 1 m ahead with passthrough around it; immersive: fills the camera's FOV")
+    ap.add_argument("--view-vfov-deg", type=float, default=70.0,
+                    help="camera vertical FOV (immersive size, stereo convergence)")
+    ap.add_argument("--camera-baseline", type=float, default=0.12,
+                    help="stereo baseline (m; ZED 2i and the sim: 0.12) for the convergence; 0 = none")
+    ap.add_argument("--ego-height", type=float, default=0.45, help="window height (m) at 1 m for --view ego")
     ap.add_argument("--view-width", type=int, default=0,
                     help="downscale each eye to this width on MSI before sending over Wi-Fi (0 = as received)")
     ap.add_argument("--camera-timeout", type=float, default=0.5,

@@ -16,8 +16,13 @@ deploy/xr_fullbody_sim.sh stop
 Quest'te `https://192.168.1.105` → **Enter VR**.
 
 **Görüntü.** Robotun kafasındaki ZED stereo kameranın görüntüsü (simde `zed_left` / `zed_right`, 960×540, 30 fps).
-Varsayılan **Ego**: 2 m önde bir pencere. **İmmersif**: görüntü kameranın tüm görüş alanını kaplar. **Kapalı**:
-görüntü yok. Sol üst köşede sim saati ve görüntünün çekildiği anın saati yazar (`sim 123.456  23:12:05.123`).
+Varsayılan **Ego**: 1 m önde, 25° yüksekliğinde bir pencere. **İmmersif**: görüntü kameranın tüm görüş alanını
+kaplar. **Kapalı**: görüntü yok. **Stereo yakınsama** (`convert.CONVERGE_M`): ZED 2i'nin bazı 0.12 m, gözlerin ~1.9
+katı. Sıfır paralaks sonsuzdayken yakın her şey pencerenin önüne fırlıyordu: robotun elleri (~0.5 m) 2 m'deki
+pencerenin ~5° önüne. Kullanıcı bunu çift gördü (2026-11-13). Şimdi sol gözün görüntüsünden soldan, sağ gözünkinden
+sağdan f·b/Z_c piksel kırpılıyor, böylece Z_c (ego 1 m, immersif 1.5 m) pencerenin derinliğine düşüyor. Ego'da eller
++2.5°, 5 m'deki zemin −2.0° oluyor. Pencere 1 m'de olduğu için gözler 3.6°'ye kadar uzaklaşan paralaksı ıraksamadan
+birleştirebiliyor; 2 m'de bu sınır 1.8°'ydi. Sunucu: `--camera-baseline` (0 = yakınsama yok), `--ego-height`. Sol üst köşede sim saati ve görüntünün çekildiği anın saati yazar (`sim 123.456  23:12:05.123`).
 Görüntü 0.5 s gelmezse kaldırılır, donmuş görüntü canlı gibi görünmez.
 
 **Durum şeridi.** Panel kapalıyken görüşün altında küçük bir satır: robot durumu (KAPALI / HAZIR / AKTİF /

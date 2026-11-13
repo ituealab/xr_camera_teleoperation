@@ -140,7 +140,8 @@ RECONNECT_JS = """<script>/* xr_camera_teleop operator/quest/vuer_app.py: reconn
 
 # The client components (see above). Props:
 #   IMAGE_TAG  src (encoded image bytes), aspect, height (m), frame ("head" | "world"), interpolate (linear vs
-#              nearest sampling), seq (report SHOWN_EVENT with it once shown);
+#              nearest sampling), seq (report SHOWN_EVENT with it once shown), crop ([u offset, u repeat]: the
+#              horizontal part of the image shown; stereo convergence);
 #              head: distanceToCamera (m), position (offset in the head frame, m), layers (1 left eye, 2 right,
 #              none: both); world: position (m), rotation (three.js XYZ Euler, rad).
 #   RAY_TAG    points ([origin, end], m), color, width (m), tSrc (client time of its sample, ms: report SHOWN_EVENT).
@@ -158,7 +159,7 @@ ELEMENTS_JS = """<script>/* xr_camera_teleop operator/quest/vuer_app.py: %(image
     };
 
     function Image({ _key, src, seq = null, aspect = 1, height = 1, frame = 'head', distanceToCamera = 1,
-                     position = null, rotation = null, layers = null, interpolate = true }) {
+                     position = null, rotation = null, layers = null, interpolate = true, crop = null }) {
       const mesh = React.useRef(null);
       const gl = FIBER.useThree((s) => s.gl);
       const shown = useShown(_key);
@@ -178,6 +179,11 @@ ELEMENTS_JS = """<script>/* xr_camera_teleop operator/quest/vuer_app.py: %(image
         tex.minFilter = tex.magFilter = interpolate ? THREE.LinearFilter : THREE.NearestFilter;
         if (tex.image) tex.needsUpdate = true;
       }, [tex, interpolate]);
+      const [cropOff, cropRep] = crop || [0, 1];
+      React.useEffect(() => {
+        tex.offset.set(cropOff, 0);
+        tex.repeat.set(cropRep, 1);
+      }, [tex, cropOff, cropRep]);
       React.useEffect(() => {
         if (!src) return;
         const n = ++st.current.asked;

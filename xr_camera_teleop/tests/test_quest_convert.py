@@ -139,7 +139,18 @@ def test_jpeg_size_and_view_plane():
     assert jpeg_size(b"not a jpeg") is None and jpeg_size(None) is None
     d, hh = view_plane("immersive", 16 / 9, vfov_deg=70.0)
     assert np.degrees(2 * np.arctan(hh / 2 / d)) == pytest.approx(70.0)   # true angular size
-    assert view_plane("ego", 16 / 9, ego_height=0.9) == (2.0, 0.9)
+    assert view_plane("ego", 16 / 9) == (1.0, 0.45)                       # 25 deg tall, as the old 0.9 m at 2 m
+
+
+def test_stereo_convergence_shift():
+    from xr_camera_teleop.operator.quest.convert import stereo_shift_px
+    f = 270.0 / np.tan(np.radians(35.0))                                   # 540 px tall, 70 deg
+    assert stereo_shift_px(540, 70.0, 0.12, 1.0) == pytest.approx(f * 0.12)
+    # after the crop a point at the convergence distance lands on the same plane column in both eyes
+    z, s = 1.0, stereo_shift_px(540, 70.0, 0.12, 1.0)
+    u_left, u_right = 480 + f * 0.06 / z, 480 - f * 0.06 / z              # left eye 6 cm to the left
+    assert u_left - s == pytest.approx(u_right)
+    assert stereo_shift_px(540, 70.0, 0.12, 0.0) == 0.0 and stereo_shift_px(540, 70.0, 0.0, 1.0) == 0.0
 
 
 @pytest.mark.parametrize("guard", [True, False])
