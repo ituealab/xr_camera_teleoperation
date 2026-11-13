@@ -5,11 +5,15 @@ The retarget is the repo's existing Dex3 pipeline, unchanged: WebXR joints -> wr
 (robot/vendor/hand_retargeting.py) -> thumb shaping toward poses taught on the real hands (robot/thumb_shaping.py),
 returned in Dex3 motor order (thumb0, thumb1, thumb2, middle0, middle1, index0, index1).
 
-Per side, by the arm's HandMode (arms.py):
-  TRACKED  the retarget of each new hand sample (settings.fingers off: rest)
-  HOLD     the last retarget (the hand is briefly lost: a grasp is not dropped)
-  CONTROLLER  unchanged: the arm follows a controller and the fingers keep what they had (settings.controller_arms)
-  PARKED   rest (D8: fingers neutral while walking or when the hand is gone)
+Per side:
+  a controller held  its trigger closes the hand: rest + trigger (rest -> closed), the analog value, so held fully
+                     the hand is a fist, released it opens (whatever the arm does: CONTROLLER or PARKED). `closed`:
+                     fingers curled in, the thumb folded over them (the fist thumb taught on the real hands,
+                     robot/thumb_shaping.py), free of self-collision in the sim.
+  otherwise, by the arm's HandMode (arms.py):
+    TRACKED  the retarget of each new hand sample (settings.fingers off: rest)
+    HOLD     the last retarget (the hand is briefly lost: a grasp is not dropped)
+    PARKED   rest (fingers neutral when the hand is gone)
 Every output moves toward its target at <= max_rate_rad_s per joint, so a mode switch never snaps the fingers.
 `rest` is the supervisor's hands_open (configs/fullbody.yaml aliases one into the other).
 dex-retargeting needs torch: the retargeter is built with FingerTargets (~0.7 s, at node start), never inside the
@@ -33,6 +37,8 @@ from xr_camera_teleop.operator.hand_geometry import unitree_hand_points
 @dataclass(frozen=True)
 class HandsParams:
     rest: tuple = ((0.0,) * N_HAND_JOINTS, (0.0,) * N_HAND_JOINTS)   # (left, right), = postures.hands_open
+    closed: tuple = ((-1.13, 0.69, 1.54, -1.25, -1.45, -1.25, -1.45),   # (left, right): a trigger held fully
+                     (-1.13, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45))
     max_rate_rad_s: float = 8.0
     thumb_shaping: bool = True
 
@@ -42,15 +48,19 @@ class HandsParams:
         if unknown:
             raise KeyError(f"unknown hands parameters: {sorted(unknown)}")
         cfg = dict(cfg)
-        if "rest" in cfg:
-            r = cfg["rest"]
-            cfg["rest"] = (tuple(r["left"]), tuple(r["right"])) if isinstance(r, dict) else tuple(map(tuple, r))
-            if any(len(x) != N_HAND_JOINTS for x in cfg["rest"]):
-                raise ValueError(f"hands.rest: {N_HAND_JOINTS} joints per hand")
+        for k in ("rest", "closed"):
+            if k in cfg:
+                r = cfg[k]
+                cfg[k] = (tuple(r["left"]), tuple(r["right"])) if isinstance(r, dict) else tuple(map(tuple, r))
+                if any(len(x) != N_HAND_JOINTS for x in cfg[k]):
+                    raise ValueError(f"hands.{k}: {N_HAND_JOINTS} joints per hand")
         return cls(**cfg)
 
     def rest_of(self, side: str) -> np.ndarray:
         return np.asarray(self.rest[0 if side == "left" else 1], dtype=float)
+
+    def closed_of(self, side: str) -> np.ndarray:
+        return np.asarray(self.closed[0 if side == "left" else 1], dtype=float)
 
 
 class Dex3Retargeter:
@@ -81,12 +91,17 @@ class FingerTargets:
         self._seq = {s: None for s in SIDES}
         self._t: Optional[float] = None
 
-    def step(self, now: float, hands: dict, modes: dict, settings: OperatorSettings) -> Hands:
+    def step(self, now: float, hands: dict, modes: dict, settings: OperatorSettings,
+             controllers: Optional[dict] = None) -> Hands:
+        """`controllers`: the fresh controllers by side (their triggers close the hands)."""
         dt = step_dt(self._t, now)
         self._t = now
         for s in SIDES:
-            mode, h = modes[s], hands[s]
-            if not settings.fingers or mode is HandMode.PARKED:
+            mode, h, c = modes[s], hands[s], (controllers or {}).get(s)
+            if settings.fingers and c is not None:
+                rest, v = self.p.rest_of(s), min(1.0, max(0.0, float(c.trigger)))
+                self._target[s], self._seq[s] = rest + v * (self.p.closed_of(s) - rest), None
+            elif not settings.fingers or mode in (HandMode.PARKED, HandMode.CONTROLLER):
                 self._target[s], self._seq[s] = self.p.rest_of(s), None
             elif mode is HandMode.TRACKED and h.stamp.seq != self._seq[s]:
                 self._seq[s] = h.stamp.seq

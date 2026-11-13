@@ -62,7 +62,7 @@ def test_hold_a_calibrates_starts_and_engages():
     assert ticks[-1].sup.state is State.ACTIVE and ticks[-1].input.ready
     st = ticks[int(2.5 / DT)].input.status
     assert st["mode"] == "walk" and 0.4 < st["calibrating"] < 0.6           # hold progress for the HUD
-    assert ticks[-1].input.status["hand_left"] == "parked" and "calibrating" not in ticks[-1].input.status
+    assert ticks[-1].input.status["hand_left"] == "controller" and "calibrating" not in ticks[-1].input.status
     assert all(isinstance(v, (str, bool, int, float)) for v in ticks[-1].input.status.values())
 
 
@@ -105,14 +105,14 @@ def test_recalibration_while_active_re_anchors_and_recenter_drops_calibration():
     assert not tick.input.ready and tick.sup.state is State.PAUSED
 
 
-def test_walk_mode_walks_and_parks_hands_mode_tracks_and_stands():
+def test_walk_mode_walks_with_the_controller_arms_hands_mode_tracks_and_stands():
     sc = intro(Script()).stick(2.0, 0.0, 1.0, "walk")
     sc.to_hands({s: rest_hand(s) for s in SIDES}).hold(3.0, "hands")
     _, ticks = run(sc)
     k_walk = int((sc.segments[3].t0 + 1.5) / DT)
     tk = ticks[k_walk]
     assert tk.sup.cmd.base.mode in WALKING and tk.sup.cmd.base.velocity[0] > 0.35
-    assert tk.input.status["hand_left"] == "parked" == tk.input.status["hand_right"]
+    assert tk.input.status["hand_left"] == "controller" == tk.input.status["hand_right"]
     end = ticks[-1]
     assert end.input.status["mode"] == "hands" and end.sup.cmd.base.mode is Mode.IDLE
     assert end.input.status["hand_left"] == "tracked" == end.input.status["hand_right"]
@@ -158,14 +158,15 @@ def test_same_input_same_output():
         assert x.input.status == y.input.status
 
 
-def test_hands_mode_steps_walk_the_robot_and_leans_do_not():
+def test_step_walk_on_hands_mode_steps_walk_the_robot_and_leans_do_not():
     hands = {s: rest_hand(s) for s in SIDES}
     sc = intro(Script()).to_hands(hands).hold(2.0, "still")
     sc.ramp(1.0, "lean", lean_pitch=math.radians(25)).hold(2.5, "leaning").ramp(1.0, "back", lean_pitch=0.0)
     sc.hold(1.5, "upright")
     t_lean = (sc.segments[-5].t0, sc.segments[-1].t1)
     sc.ramp(0.8, "step", x=0.3).hold(3.0, "stepped")
-    core, ticks = run(sc)
+    on = UiAction(UiKind.SET, "step_walk", True, t=0.0, seq=99)
+    core, ticks = run(sc, ui={0.5: [on]})
     lean = ticks[int(t_lean[0] / DT):int(t_lean[1] / DT)]
     assert all(tk.sup.cmd.base.mode is Mode.IDLE for tk in lean)
     assert all(tk.input.status["steps"] == 0 for tk in lean)
@@ -175,12 +176,19 @@ def test_hands_mode_steps_walk_the_robot_and_leans_do_not():
     assert ticks[-1].input.status["lean_pitch_deg"] == pytest.approx(0.0, abs=1.0)    # the step is not a lean
 
 
-def test_step_walk_off_keeps_the_robot_still():
+def test_hands_mode_by_default_never_walks_but_leans_and_crouches():
+    """HANDS mode gives no xy targets (user decision 2026-11-13): the operator's own steps move nothing, a lean
+    still bends the torso and a crouch still squats."""
     hands = {s: rest_hand(s) for s in SIDES}
     sc = intro(Script()).to_hands(hands).hold(2.0, "still").ramp(0.8, "step", x=0.3).hold(3.0, "stepped")
-    off = UiAction(UiKind.SET, "step_walk", False, t=0.0, seq=99)
-    _, ticks = run(sc, ui={0.5: [off]})
-    assert not any(tk.sup.cmd.base.mode in WALKING for tk in ticks[int(sc.segments[-2].t0 / DT):])
+    sc.ramp(1.0, "lean", lean_pitch=math.radians(20)).hold(2.0, "leaning")
+    sc.ramp(1.0, "up", lean_pitch=0.0).ramp(1.0, "crouch", drop=0.25).hold(2.0, "crouched")
+    _, ticks = run(sc)
+    seg = {x.name: x for x in sc.segments}
+    assert not any(tk.sup.cmd.base.mode in WALKING for tk in ticks[int(seg["still"].t0 / DT):])
+    assert ticks[int(seg["leaning"].t1 / DT) - 1].input.status["lean_pitch_deg"] > 15.0
+    assert ticks[int(seg["crouched"].t1 / DT) - 1].sup.cmd.base.mode is Mode.SQUAT
+    ticks = ticks[:int(seg["stepped"].t1 / DT)]
     st = ticks[-1].input.status
     assert st["steps"] == 0 and abs(st["lean_pitch_deg"]) < 3.0                # the stance still follows: no lean
 
@@ -204,47 +212,27 @@ def test_right_stick_turns_left_stick_walks_one_controller_walks():
     assert at(seg["walk left stick"].t1).sup.cmd.facing == at(seg["walk left stick"].t0).sup.cmd.facing
 
 
-def test_a_trigger_engages_the_arms_to_the_controllers_and_leaves_the_fingers():
-    """Picking up the controllers walks with the arms parked; a trigger press makes the arms follow the controllers
-    (fingers untouched), a second one parks them; putting the controllers down mirrors the hands, and the next
-    pick-up starts parked again."""
-    hands = {s: rest_hand(s) for s in SIDES}
-    sc = intro(Script()).hold(2.0, "controllers held")
-    sc.press(0.3, "trigger", trigger=True).hold(2.0, "engaged")
-    sc.press(0.3, "trigger again", trigger=True).hold(2.0, "parked again")
-    sc.press(0.3, "trigger 3", trigger=True).hold(1.0, "engaged 2")
-    sc.to_hands(hands).hold(2.0, "hands")
-    sc.to_controllers().hold(2.0, "picked up")
+def test_a_trigger_held_closes_that_hand_and_released_opens_it():
+    """With the controllers the arms follow them; a trigger held closes that side's Dex3 hand to the fist pose, its
+    release opens it again (the trigger has no other job). With the controller arms knob off the arms park and the
+    trigger still closes the hand."""
+    P = QuestParams.from_config(CFG["quest"]).hands
+    sc = intro(Script()).hold(1.0, "held")
+    sc.add("right trigger", 1.5, lambda t, s: replace(s, pads={**s.pads, "right": replace(s.pads["right"], trigger=True)}))
+    sc.add("released", 1.5, lambda t, s: replace(s, pads={**s.pads, "right": replace(s.pads["right"], trigger=False)}))
     _, ticks = run(sc)
     seg = {x.name: x for x in sc.segments}
-    at = lambda name: ticks[int(seg[name].t1 / DT) - 1].input.status
-    assert at("controllers held")["hand_left"] == "parked" and not at("controllers held")["controller_arms"]
-    assert at("engaged")["hand_left"] == "controller" == at("engaged")["hand_right"]
-    assert at("engaged")["controller_arms"] and at("engaged")["mode"] == "walk"
-    assert at("parked again")["hand_left"] == "parked"
-    assert at("hands")["mode"] == "hands" and at("hands")["hand_left"] == "tracked"
-    assert at("picked up")["hand_left"] == "parked" and not at("picked up")["controller_arms"]
-    held = ticks[int(seg["controllers held"].t1 / DT) - 1].sup.cmd
-    engaged = ticks[int(seg["engaged"].t1 / DT) - 1].sup.cmd
-    assert not np.allclose(engaged.upper.left, held.upper.left, atol=0.02)                # not the park pose
-    assert np.allclose(engaged.hands.left, held.hands.left)                              # fingers untouched
-
-
-def test_the_trigger_does_not_engage_the_arms_paused_with_a_grip_or_with_the_knob_off():
-    sc = intro(Script()).hold(2.0, "held")
-    sc.press(0.3, "pause (A short)", a=True).hold(0.5, "paused")
-    sc.press(0.3, "trigger while paused", trigger=True).hold(1.0, "after")
-    sc.press(0.3, "resume (A short)", a=True)
-    sc.press(0.3, "trigger right after resuming (closing the panel)", trigger=True).hold(1.0, "resumed")
-    sc.press(0.3, "grip + trigger", trigger=True, squeeze=True).hold(1.0, "after grip")
-    _, ticks = run(sc)
-    seg = {x.name: x for x in sc.segments}
-    assert ticks[int(seg["trigger while paused"].t0 / DT)].sup.state.value == "paused"
-    assert not any(tk.input.status.get("controller_arms") for tk in ticks)
-    knob_off = UiAction(UiKind.SET, "controller_arms", False, t=0.0, seq=98)
-    sc2 = intro(Script()).hold(1.0, "held").press(0.3, "trigger", trigger=True).hold(1.0, "after")
-    _, ticks2 = run(sc2, ui={0.5: [knob_off]})
-    assert not any(tk.input.status.get("controller_arms") for tk in ticks2)
+    at = lambda name: ticks[int(seg[name].t1 / DT) - 1]
+    assert at("held").input.status["hand_right"] == "controller"
+    assert np.allclose(at("held").sup.cmd.hands.right, P.rest_of("right"))
+    assert np.allclose(at("right trigger").sup.cmd.hands.right, P.closed_of("right"), atol=1e-6)
+    assert np.allclose(at("right trigger").sup.cmd.hands.left, P.rest_of("left"))          # the other hand stays
+    assert np.allclose(at("released").sup.cmd.hands.right, P.rest_of("right"), atol=1e-6)
+    off = UiAction(UiKind.SET, "controller_arms", False, t=0.0, seq=98)
+    _, ticks = run(sc, ui={0.5: [off]})
+    at = lambda name: ticks[int(seg[name].t1 / DT) - 1]
+    assert at("right trigger").input.status["hand_right"] == "parked"
+    assert np.allclose(at("right trigger").sup.cmd.hands.right, P.closed_of("right"), atol=1e-6)
 
 
 def test_a_failed_recalibration_takes_over_with_the_calibration_in_place():

@@ -26,8 +26,8 @@ operator_settings:
   lean_gain: 1.0
   arm_tracking: true
   fingers: true
-  step_walk: true                # HANDS mode: the robot walks with the operator's own walking
-  controller_arms: true          # WALK mode: a trigger press makes the arms follow the controllers (again: park)
+  step_walk: false               # HANDS mode: the robot walks with the operator (off: only leans and crouches, no xy)
+  controller_arms: true          # WALK mode: the arms follow the controllers; a trigger held closes that hand
 
 lifecycle:                       # sonic/lifecycle.py
   start_resend_s: 0.2
@@ -62,7 +62,6 @@ postures:
 # Below `postures` so it can alias the torso neutral and the open hands (one definition each).
 quest:
   head_timeout_s: 0.2            # head sample older than this: input not live -> PAUSED (PLAN §6)
-  arms_settle_s: 0.5             # a trigger toggles the controller arms only this long after ACTIVE (panel close)
   controller_timeout_s: 0.15     # controller older than this: not held (no walking, no buttons)
   hand_timeout_s: 0.25           # hand older than this: not tracked (the arm holds, then parks)
   calibrate_window_s: 1.0        # calibrate on the frames of the last second
@@ -184,5 +183,8 @@ quest:
                                  # over a +-0.6 rad hip swing (tests/test_fullbody_park_pose.py)
   hands:                         # fullbody/hands.py
     rest: *hands_open
+    closed:                      # a controller's trigger held fully: fingers curled in, the thumb over them (fist)
+      left: [-1.13, 0.69, 1.54, -1.25, -1.45, -1.25, -1.45]
+      right: [-1.13, -0.69, -1.54, 1.25, 1.45, 1.25, 1.45]
     max_rate_rad_s: 8.0
     thumb_shaping: true

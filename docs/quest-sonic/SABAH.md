@@ -30,15 +30,12 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 
 **İki mod (D8):**
 - **YÜRÜME:** en az bir kontrolcü elinde. **Sol stick yürütür, sağ stick (sağa/sola) robotu döndürür.** Tek
-  kontrolcü tutuyorsan onun stick'i yürütür. Kontrolcüyü alınca robotun kolları yanlarda sarkar. **Tetiğe bir kez
-  bas:** kollar kontrolcüleri izler, parmaklar olduğu gibi kalır (yürürken bir şey taşımak için). Tekrar bas: kollar
-  iner. Kontrolcüleri bırakıp ellerin görününce kendiliğinden ELLER'e geçer; tekrar alınca kollar yine inik başlar.
-  (Panel açıkken tetik sadece seçim yapar. Panelde Eller → **Kumandayla kol** kapatılırsa tetik bunu yapmaz.)
-- **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Joystick'siz
-  yer değiştirme: **kendin yürü** (ileri, geri, yana): robot seninle birlikte yürür (başın ~13 cm ilerleyince
-  başlar, yana ~20 cm; durunca o da kalan yolu bitirip durur). Yürümek ellerin yerini değiştirmez. Öne eğilmek,
-  uzanmak, ağırlığını bir bacağa vermek robotu yürütmez. Robot en az ~20 cm yürür; çok küçük adımlar izlenmez. Panelde
-  Eller → **Adımla yürüme** ile kapatılır.
+  kontrolcü tutuyorsan onun stick'i yürütür. Robotun kolları kontrolcüleri izler. **Tetiği basılı tut: o taraftaki
+  el kapanır (yumruk), bırak: açılır.** Yürürken bir şey taşımak için. (Panel açıkken tetik ayrıca panelde seçim
+  yapar. Panelde Eller → **Kumandayla kol** kapatılırsa kollar yanlarda sarkar; tetik eli yine kapatır.)
+- **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Robot bu
+  modda **yer değiştirmez**: kendin yürüsen de durur. Öne eğilme ve çömelme çalışır. (Panelde Eller → **Adımla
+  yürüme** açılırsa robot seninle yürür; varsayılan kapalı.)
 - Geçişte Quest girdiyi 0.6–1.5 s keser; robot kısa bir an DURAKLADI'ya geçer, sonra kendiliğinden devam eder.
 
 | Ne | Nasıl |
@@ -52,7 +49,7 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 | Dön | Sağ stick sağa/sola (tam itince 60°/s; yön kilidi açıkken de çalışır), ya da vücudunla dön (kafa 25°'den fazla ve 0.3 s). Etrafa bakmak (±20°) robotu döndürmez |
 | Eğil, çömel | Öne eğil: robotun gövdesi eğilir (öne en fazla 30°; yana eğilmez). Çömel (stick boşta): robot squat yapar; kalkınca kalkar |
 | Yerden al | Çömel, sonra **yere kadar in** (kalibrasyondaki boyundan ~55 cm aşağı, 0.5 s): robot iki dizinin üstüne çöker (KNEEL) ve öne eğilerek elleri yere ulaşır. Kalkınca (40 cm'nin üstüne) robot ~2 s'de ayağa kalkar |
-| Yürüyerek yer değiştir | ELLER modunda kendin yürü: robot seninle yürür |
+| Eli kapat | Kontrolcüde tetiği basılı tut (bırakınca açılır) |
 | Acil durdur | Panelde kırmızı **DURDUR**, ya da iki grip + tetik 0.5 s |
 
 Panel açıkken robot donar (DURAKLADI); panel kapanınca devam eder. Panel sayfaları: Robot (Başlat, Kalibre et ve
@@ -76,8 +73,8 @@ eğim, sağda 3 ve 6 cm basamaklar ile pürüzlü zemin.
    (alçakta uzanırsan robotun eli küpü iter). Küpü **sağ elinle, avuç aşağı** al: avucun küpün üstüne otursun,
    başparmak arkasında, parmaklar önünde; **yumruk yap, ~2 s tut, yavaşça kaldır**, biraz yana taşı, indir, elini aç.
    Tutmazsa elini aç, kaldır, tekrar dene (simde çoğu zaman 2.–3. denemede tuttu).
-7. (İsteğe bağlı, §0 madde 7) Kontrolcüleri al, **tetiğe bir kez bas**: kollar kontrolcüleri izler, parmaklar olduğu
-   gibi kalır. Not: kontrolcüye geçiş 1 s'den uzun sürerse parmaklar o arada açılır.
+7. (İsteğe bağlı, §0 madde 7) Kontrolcüleri al: kollar kontrolcüleri izler. Küpü robotun eliyle kavramak için
+   **tetiği basılı tut**, taşı, bırakınca el açılır.
 7b. **Yerden al:** başlangıçta robotun 0.8 m solunda yerde ikinci bir küp var. Ona dön, ~40 cm gerisine yürü,
    kontrolcüleri bırak. Çömel ve yere kadar in: robot diz çöker. Sağ elinle avuç aşağı küpü almayı dene, kalk.
    (Simde diz çökme kararlı ama emüle operatörle küp alınamadı; deneysel.)

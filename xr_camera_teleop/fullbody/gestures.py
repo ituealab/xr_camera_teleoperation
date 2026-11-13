@@ -5,8 +5,7 @@
   B/Y pressed                LOCK_TOGGLE (heading lock)
   both grips + a trigger,    STOP        (SONIC stop; the panel has the same button)
   held stop_s
-  a trigger pressed          ARMS_TOGGLE (the arms follow the controllers / park; quest_source.py: only while ACTIVE,
-  (its grip released)                    so the panel's trigger selections never toggle; the grip excludes STOP)
+The trigger itself closes that side's hand (hands.py), it is no gesture.
 A and X are one button for this purpose (either controller), so are B and Y. Each gesture fires once per press.
 In HANDS mode there are no buttons; the headset panel covers those actions.
 
@@ -32,7 +31,6 @@ class Gesture(str, Enum):
     PAUSE_TOGGLE = "pause_toggle"
     LOCK_TOGGLE = "lock_toggle"
     STOP = "stop"
-    ARMS_TOGGLE = "arms_toggle"
 
 
 @dataclass(frozen=True)
@@ -60,7 +58,6 @@ class Gestures:
         self._b_down = False
         self._stop_since: Optional[float] = None
         self._stop_fired = False
-        self._trigger_down = {s: False for s in SIDES}
 
     @property
     def holding_calibrate(self) -> bool:
@@ -91,7 +88,6 @@ class Gestures:
         """The gestures of this tick."""
         if frame is None:
             self._a_since, self._b_down, self._stop_since = None, False, None
-            self._trigger_down = {s: False for s in SIDES}
             return ()
         live = [frame.controllers[s] for s in SIDES if frame.controllers[s].stamp.fresh(now, self.controller_timeout_s)]
         out = []
@@ -121,14 +117,4 @@ class Gestures:
         if b and not self._b_down:
             out.append(Gesture.LOCK_TOGGLE)
         self._b_down = b
-
-        toggle = False
-        for s in SIDES:
-            c = frame.controllers[s]
-            down = c.stamp.fresh(now, self.controller_timeout_s) and c.trigger_press
-            if down and not self._trigger_down[s] and not c.squeeze_press:
-                toggle = True                    # one toggle per tick, even if both triggers go down together
-            self._trigger_down[s] = down
-        if toggle:
-            out.append(Gesture.ARMS_TOGGLE)
         return tuple(out)
