@@ -93,6 +93,7 @@ eğim, sağda 3 ve 6 cm basamaklar ile pürüzlü zemin.
 |---|---|
 | Robot görüntüsü yok | Sol üstteki saat donuksa sim/köprü durmuş olabilir: `status`, sonra `morning` (eksikleri açar) |
 | Panel "kalibre et" diyor, A çalışmıyor | Dik dur, ileri bak, 1 s kıpırdama; ya da panelden **Kalibre et ve devral**. Recenter (Meta tuşu) kalibrasyonu düşürür |
+| Kalibre et ve devral sonrası robot duruyor | Kalibrasyon için başın dik (≤ 20°) ve sabit olmalı. Olmazsa robot 4 s sonra eski kalibrasyonla kendiliğinden devam eder |
 | Robot DURAKLADI'da kaldı | Kısa A/X (devam) ya da paneli aç/kapat. Kafa verisi gelmiyorsa şeritte uyarı çıkar |
 | Robot düştü | Sim ~20 s sonra robotu kendisi diker; ya da panelde **DURDUR** (bant robotu yakalar), ~30 s sonra **Başlat** |
 | Robot yürümüyor | ELLER modundasın (kontrolcü yok) ya da panel açık. Kontrolcüyü al |

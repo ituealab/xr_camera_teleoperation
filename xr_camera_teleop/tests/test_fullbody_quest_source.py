@@ -245,3 +245,17 @@ def test_the_trigger_does_not_engage_the_arms_paused_with_a_grip_or_with_the_kno
     sc2 = intro(Script()).hold(1.0, "held").press(0.3, "trigger", trigger=True).hold(1.0, "after")
     _, ticks2 = run(sc2, ui={0.5: [knob_off]})
     assert not any(tk.input.status.get("controller_arms") for tk in ticks2)
+
+
+def test_a_failed_recalibration_takes_over_with_the_calibration_in_place():
+    """Panel "Kalibre et ve devral" while paused, the operator looking down: calibration is rejected, but the robot
+    is engaged with the calibration it has instead of staying PAUSED (2026-11-13 session)."""
+    sc = intro(Script()).hold(2.0, "active")
+    sc.press(0.3, "pause (A short)", a=True).hold(1.0, "paused")
+    sc.add("look down", 8.0, lambda t, s: replace(s, head_pitch=math.radians(40)))
+    cal = UiAction(UiKind.CALIBRATE, t=0.0, seq=97)
+    core, ticks = run(sc, ui={sc.segments[-1].t0 + 0.5: [cal]})
+    seg = {x.name: x for x in sc.segments}
+    assert ticks[int(seg["paused"].t1 / DT) - 1].sup.state.value == "paused"
+    assert "tilted" in ticks[int((seg["look down"].t0 + 2.0) / DT)].input.status.get("calibration_error", "")
+    assert ticks[-1].sup.state.value == "active"

@@ -7,8 +7,8 @@ is robot-level (`fullbody/types.py`):
     ready    calibrated for the current headset session and recenter epoch (`Calibration.matches`)
     events   controller gestures (gestures.py) and headset panel actions (`OperatorData.ui`):
                START / STOP / PAUSE / RESUME as they are; CALIBRATE (panel) and A/X held 1 s (controller): calibrate
-               on the last second (retried on new frames until the pose qualifies or calibrate_timeout_s passes),
-               then engage: START first if SONIC is off, ENGAGE once it stands (STANDBY / PAUSED), or PAUSE + ENGAGE
+               on the last second (retried on new frames until the pose qualifies or calibrate_timeout_s passes;
+               already calibrated, a request that never qualifies engages with the calibration in place), then engage: START first if SONIC is off, ENGAGE once it stands (STANDBY / PAUSED), or PAUSE + ENGAGE
                when already ACTIVE so the supervisor re-anchors the heading. A/X short: PAUSE / RESUME. B/Y: heading
                lock. Both grips + a trigger 0.5 s: STOP. A trigger (WALK, ACTIVE, settings.controller_arms): the arms
                follow the controllers, again: they park (not within arms_settle_s of ACTIVE: closing the panel); putting the controllers down (HANDS) clears it, so every
@@ -161,6 +161,12 @@ class QuestSource:
                 return
         if now > self._cal_deadline:
             self._cal_deadline = None
+            if self.cal is not None:
+                # Already calibrated: take over with the calibration in place rather than leave the robot paused.
+                # (2026-11-13: "Kalibre et ve devral" pressed looking down at 24-46 deg, five times rejected, the robot
+                # stayed PAUSED and the wearer, in HANDS mode without buttons, saw the switch to the hands fail.)
+                self._cal_error = f"{self._cal_error}; previous calibration kept" if self._cal_error else None
+                self._engage_until, self._start_sent = now + self.p.engage_timeout_s, False
 
     def _install(self, cal: Calibration, now: float):
         self.cal, self._cal_deadline, self._cal_error = cal, None, None
