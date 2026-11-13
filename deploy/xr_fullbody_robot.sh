@@ -9,6 +9,9 @@
 #                                logs in ~/.local/state/xr_fullbody; idempotent (starts only what is not running)
 #   quest stop [NAME] | status | logs | attach camera|quest|node
 set -euo pipefail
+# An interactive robot shell sources the ROS Foxy / robot_runtime env (g1_ros_env/env.sh): its PYTHONPATH points at
+# python 3.8 packages (numpy among them) and breaks our conda envs. Our processes never use ROS python.
+unset PYTHONPATH PYTHONHOME
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LOG_DIR="$HOME/.local/state/xr_fullbody"
 NODE_PY="$REPO/data/xr-env/bin/python"
