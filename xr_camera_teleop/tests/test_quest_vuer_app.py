@@ -1,5 +1,6 @@
 """operator/quest/vuer_app.py: the reconnect script injected into Vuer's page, run in node against a scripted
-WebSocket (a server that is down for a long time, comes back, drops again), and its injection into index.html."""
+WebSocket (a server that is down for a long time, comes back, drops again); the injection of it and of the client
+elements into index.html; what the elements rely on in the bundled 0.1.6 client; the server's scene."""
 import json
 import shutil
 import subprocess
@@ -7,11 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from xr_camera_teleop.operator.quest.vuer_app import RECONNECT_DIAL_MS, RECONNECT_JS, with_reconnect
+from xr_camera_teleop.operator.quest.vuer_app import (ELEMENTS_JS, IMAGE_TAG, RAY_TAG, RECONNECT_DIAL_MS,
+                                                     RECONNECT_JS, with_scripts)
 
 REPO = Path(__file__).resolve().parents[2]
 CLIENT_INDEX = next((REPO / "data" / "quest-env" / "lib").glob("python*/site-packages/vuer/client_build/index.html"),
                     None) if (REPO / "data" / "quest-env" / "lib").exists() else None
+QUEST_PY = REPO / "data" / "quest-env" / "bin" / "python"
 
 # Runs the injected script in a vm context whose WebSocket is a fake: each dial fails while `serverUp` is false.
 # Timers are a manual queue, so "100 s down" is 100 dial periods, run instantly.
@@ -107,14 +110,44 @@ def test_close_while_dialling_stops_quietly(shim):
 
 def test_injected_first_in_head():
     html = "<!DOCTYPE html><html><head><title>x</title></head><body><script src=a.js type=module></script></body>"
-    out = with_reconnect(html)
-    assert out.startswith("<!DOCTYPE html><html><head>" + RECONNECT_JS + "<title>")
+    out = with_scripts(html)
+    assert out.startswith("<!DOCTYPE html><html><head>" + RECONNECT_JS + ELEMENTS_JS + "<title>")
     assert out.count("window.WebSocket = PatientWebSocket") == 1
+    assert f"CONTRIB_COMPONENT_LIST['{IMAGE_TAG}']" in out and f"CONTRIB_COMPONENT_LIST['{RAY_TAG}']" in out
     with pytest.raises(RuntimeError):
-        with_reconnect("<html><body></body></html>")
+        with_scripts("<html><body></body></html>")
 
 
 @pytest.mark.skipif(CLIENT_INDEX is None, reason="needs data/quest-env (Vuer 0.1.6's bundled client)")
-def test_bundled_client_page_takes_the_script():
-    out = with_reconnect(CLIENT_INDEX.read_text(encoding="utf-8"))
-    assert out.index(RECONNECT_JS) < out.index('type="module"')     # runs before the client's bundle
+def test_bundled_client_page_takes_the_scripts():
+    out = with_scripts(CLIENT_INDEX.read_text(encoding="utf-8"))
+    assert out.index(RECONNECT_JS) < out.index(ELEMENTS_JS) < out.index('type="module"')   # before the bundle
+
+
+@pytest.mark.skipif(CLIENT_INDEX is None, reason="needs data/quest-env (Vuer 0.1.6's bundled client)")
+def test_bundled_client_has_what_the_elements_use():
+    assets = CLIENT_INDEX.parent / "assets"
+    entry = "".join(f.read_text(encoding="utf-8") for f in (assets / "entries").glob("pages_index.*.js"))
+    # the globals are published in one statement, THREE before FIBER: ELEMENTS_JS installs on the FIBER assignment
+    i_three, i_fiber = entry.find("window.THREE="), entry.find("window.FIBER=")
+    assert 0 < i_three < i_fiber and "window.React=" in entry and "window.VUER=" in entry
+    main = "".join(f.read_text(encoding="utf-8") for f in (assets / "chunks").glob("chunk-*.js"))
+    assert ",CONTRIB_COMPONENT_LIST," in main and ",useSocket," in main             # exported: window.VUER
+    assert "comp_list[Z]||CONTRIB_COMPONENT_LIST[Z]" in main                         # how a tag is resolved
+    # why the client's own scene is replaced: its PerspectiveCamera is a virtual camera that renders off-screen
+    # and then binds the default framebuffer, which would leave nothing for the headset
+    assert "tag: PerspectiveCamera" in entry
+    assert "this.spark.renderer.setRenderTarget(null)" in main
+
+
+@pytest.mark.skipif(not QUEST_PY.exists(), reason="needs data/quest-env")
+def test_server_scene_replaces_the_client_scene_without_cameras():
+    code = ("import json; from xr_camera_teleop.operator.quest.vuer_app import quest_scene, image_plane, ray;"
+            "from vuer.schemas import Head;"
+            "s = quest_scene(Head(key='head'))._serialize();"
+            "print(json.dumps({'tag': s['tag'], 'bg': [e['tag'] for e in s['bgChildren']],"
+            " 'img': image_plane(key='i', src=b'x', seq=3)._serialize()['tag'], 'ray': ray(key='r')._serialize()['tag']}))")
+    r = subprocess.run([str(QUEST_PY), "-c", code], capture_output=True, text=True, timeout=60, cwd=REPO)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out == {"tag": "Scene", "bg": ["Head"], "img": IMAGE_TAG, "ray": RAY_TAG}

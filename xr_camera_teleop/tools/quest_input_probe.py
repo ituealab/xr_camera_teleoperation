@@ -25,6 +25,7 @@ from collections import deque
 from pathlib import Path
 
 from xr_camera_teleop.operator.quest.convert import client_time_s
+from xr_camera_teleop.operator.quest.flow import InFlight
 
 REPO = Path(__file__).resolve().parents[2]
 DATA = REPO / "data"
@@ -84,6 +85,7 @@ def _jsonable(x):
 class Probe:
     def __init__(self, a):
         self.a = a
+        self.flow = InFlight()                # synthetic stereo frames the page has not drawn yet
         self.lock = threading.Lock()
         self.head = Stream()
         self.hand = {s: Stream() for s in SIDES}
@@ -140,14 +142,20 @@ class Probe:
                     self.ctrl[s].tick(now, _key([pose, st]))
                     self.ctrl_state[s] = st
 
+    async def on_shown(self, event, session):
+        if isinstance(event.value, dict) and isinstance(event.value.get("seq"), int):
+            self.flow.shown(event.value["seq"], time.monotonic())
+
     async def main(self, session):
         from vuer.schemas import Hands, Head, MotionControllers
+
+        from xr_camera_teleop.operator.quest.vuer_app import quest_scene
         self.sessions += 1
         print(f"[probe] headset connected (session {self.sessions})", flush=True)
-        session.upsert([Head(stream=True, key="head", fps=self.a.fps),
-                        Hands(stream=True, key="hands", fps=self.a.fps, hideLeft=False, hideRight=False),
-                        MotionControllers(stream=True, key="controllers", fps=self.a.fps, left=True, right=True)],
-                       to="bgChildren")
+        session.set @ quest_scene(Head(stream=True, key="head", fps=self.a.fps),
+                                  Hands(stream=True, key="hands", fps=self.a.fps, hideLeft=False, hideRight=False),
+                                  MotionControllers(stream=True, key="controllers", fps=self.a.fps, left=True,
+                                                    right=True))
         if not self.a.stereo:
             while True:
                 await asyncio.sleep(1.0)
@@ -157,19 +165,26 @@ class Probe:
         """Synthetic 960x540 stereo pair at --stereo-hz, the size the real ZED view uses, so the event rates above
         are measured under the same Wi-Fi load."""
         import cv2
-        from vuer.schemas import ImageBackground
+        from xr_camera_teleop.operator.quest.vuer_app import image_plane
         from xr_camera_teleop.tools.stereo_test_source import render
         w, h = 960, 540
         f = h / 2 / __import__("math").tan(__import__("math").radians(35))
         period = 1.0 / self.a.stereo_hz
+        seq = 0
+        self.flow.reset()
         while True:
             t0 = time.monotonic()
             t = time.time()
+            if not self.flow.can_send(t0):          # the page is behind: skip this frame (operator/quest/flow.py)
+                await asyncio.sleep(period)
+                continue
+            seq += 1
             imgs = [cv2.imencode(".jpg", render(eye, t, w, h, f, 0.12), [cv2.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()
                     for eye in (-1, 1)]
-            common = dict(aspect=w / h, height=0.9, distanceToCamera=2.0, interpolate=True)
-            session.upsert([ImageBackground(src=imgs[0], key="probe-left", layers=1, **common),
-                            ImageBackground(src=imgs[1], key="probe-right", layers=2, **common)], to="bgChildren")
+            common = dict(aspect=w / h, height=0.9, distanceToCamera=2.0, interpolate=True, seq=seq)
+            session.upsert([image_plane(src=imgs[0], key="probe-left", layers=1, **common),
+                            image_plane(src=imgs[1], key="probe-right", layers=2, **common)], to="bgChildren")
+            self.flow.sent(seq, time.monotonic())
             await asyncio.sleep(max(0.0, period - (time.monotonic() - t0)))
 
     def status_loop(self):
@@ -207,12 +222,13 @@ def main():
     a = ap.parse_args()
     Path(a.log).parent.mkdir(parents=True, exist_ok=True)
 
-    from xr_camera_teleop.operator.quest.vuer_app import make_vuer_app
+    from xr_camera_teleop.operator.quest.vuer_app import SHOWN_EVENT, make_vuer_app
     probe = Probe(a)
     app = make_vuer_app(a.port, a.cert, a.key, DATA / "quest-static")
     app.add_handler("HEAD_MOVE")(probe.on_head)
     app.add_handler("HAND_MOVE")(probe.on_hand)
     app.add_handler("CONTROLLER_MOVE")(probe.on_ctrl)
+    app.add_handler(SHOWN_EVENT)(probe.on_shown)
     app.spawn(start=False)(probe.main)
     threading.Thread(target=probe.status_loop, daemon=True).start()
     for ip in os.popen("hostname -I").read().split():

@@ -24,8 +24,15 @@ Streams, msgpack on ZMQ:
 
 Panel (PLAN §6a, docs/quest-sonic/P5_ui.md): operator/quest/ui.py decides everything (pointers, raycast, hover,
 hold-to-confirm, pages, the freeze while open); ui_draw.py draws it; this module only steps it at UI_HZ on the event
-loop, publishes its requests and upserts the pictures: the panel as a world-locked `Image`, the status strip as a
-head-locked `ImageBackground` while the panel is closed, each pointer's ray as a `Line`.
+loop, publishes its requests and upserts the pictures (vuer_app's client elements): the panel as a world-locked
+image, the status strip as a head-locked one while the panel is closed, each pointer's ray as a ray.
+
+The robot view and the panel are flow-controlled (flow.py): the page confirms each picture it has drawn, and a new
+one is sent only while at most two are unconfirmed, so a page that falls behind drops frames instead of building a
+backlog. /health reports the view and panel round trips and the ray latency (controller sample -> ray drawn).
+
+Each connection starts with the server's own scene (vuer_app.quest_scene), which replaces the client's built-in one:
+that one holds a virtual camera whose per-frame preview render keeps anything from reaching the headset in VR.
 
 Vuer streams head (Head, getViewerPose), hands (Hands) and controllers (MotionControllers) together; each is
 sampled every XR frame and sent at --input-fps. The connection whose immersive session renders (distinct head
@@ -55,6 +62,7 @@ from xr_camera_teleop.fullbody.xr_frame import source as xr_source
 from xr_camera_teleop.operator.quest import ui
 from xr_camera_teleop.operator.quest.assembler import XRFrameAssembler
 from xr_camera_teleop.operator.quest.connections import HeadsetArbiter
+from xr_camera_teleop.operator.quest.flow import InFlight, Latency
 from xr_camera_teleop.operator.quest.convert import (WEBXR_BONES, build_message, client_time_s, joint_matrices,
                                                      pose_from_flat16, project_head_view)
 
@@ -64,6 +72,8 @@ UI_HZ = 60.0                 # panel steps per second (hold-to-confirm resolutio
 PANEL_DRAW_HZ = 15.0         # the panel image is redrawn at most this often, and only when it changed
 STRIP_DRAW_HZ = 2.0
 RAY_HZ = 30.0
+VIEW_KEYS = ("robot-left", "robot-right")
+RAY_WIDTH = 0.003            # m
 STRIP = dict(distanceToCamera=0.9, height=0.026, position=[-0.10, -0.27, 0.0])   # head-locked, below the ego view
 
 PAGE = b"""<!doctype html><meta charset=utf-8><title>Quest hands</title>
@@ -232,6 +242,9 @@ class QuestServer:
         self.view_rate = RateWin()
         self.view = a.view            # live: GET /view?mode=none|ego|immersive (or the panel) switches it
         self.view_log = deque(maxlen=600)    # robot view frames sent to the headset (GET /frames)
+        # what the page has drawn (vuer_app SHOWN_EVENT): pictures in flight per stream (flow.py), latencies
+        self.view_flow, self.panel_flow = InFlight(), InFlight()
+        self.view_latency, self.panel_latency, self.ray_latency = Latency(), Latency(), Latency()
         # headset panel: ui.Panel decides, the outbox carries its requests to the node, the feed brings node status
         self.server_id = f"{socket.gethostname()}-{os.getpid()}-{int(time.time())}"
         self.ui_pub = ctx.socket(zmq.PUB)
@@ -286,6 +299,21 @@ class QuestServer:
         v = event.value if isinstance(event.value, dict) else {}
         self.publish_xr(self.assembler.controllers_event(event.ts, v, time.time()))
 
+    async def on_shown(self, event, session):
+        """The page drew a picture (its seq) or a ray (the client time of its controller sample, tSrc)."""
+        if not self._active(session) or not isinstance(event.value, dict):
+            return
+        now, key, v = time.monotonic(), event.key, event.value
+        if key in VIEW_KEYS or key == "ui-panel":
+            flow, lat = (self.view_flow, self.view_latency) if key in VIEW_KEYS else (self.panel_flow,
+                                                                                     self.panel_latency)
+            rtt = flow.shown(v.get("seq"), now) if isinstance(v.get("seq"), int) else None
+            if rtt is not None:
+                lat.add(now, rtt)
+        elif key.startswith("ui-ray-") and isinstance(v.get("tSrc"), (int, float)) \
+                and isinstance(v.get("tShown"), (int, float)):
+            self.ray_latency.add(now, (v["tShown"] - v["tSrc"]) / 1000.0)
+
     async def on_hand_move(self, event, session):
         if not self._active(session):
             return
@@ -334,12 +362,15 @@ class QuestServer:
     async def serve(self, session):
         import asyncio
         from vuer.schemas import Hands, Head, MotionControllers
+
+        from xr_camera_teleop.operator.quest.vuer_app import quest_scene
         fps = self.a.input_fps
-        session.upsert([Head(stream=True, key="head", fps=fps),
-                        Hands(stream=True, key="hands", fps=fps, hideLeft=not self.a.show_hands,
-                              hideRight=not self.a.show_hands),
-                        MotionControllers(stream=True, key="controllers", fps=fps, left=True, right=True)],
-                       to="bgChildren")
+        session.set @ quest_scene(Head(stream=True, key="head", fps=fps),
+                                  Hands(stream=True, key="hands", fps=fps, hideLeft=not self.a.show_hands,
+                                        hideRight=not self.a.show_hands),
+                                  MotionControllers(stream=True, key="controllers", fps=fps, left=True, right=True))
+        self.view_flow.reset()
+        self.panel_flow.reset()
         await asyncio.gather(self.camera_loop(session), self.ui_loop(session))
 
     async def camera_loop(self, session):
@@ -347,7 +378,7 @@ class QuestServer:
         if self.camera is None:
             while True:
                 await asyncio.sleep(1.0)
-        keys = ["robot-left", "robot-right"]
+        keys = list(VIEW_KEYS)
         shown, last_seq = False, None
         while True:
             if not self._active(session):
@@ -362,10 +393,12 @@ class QuestServer:
                 if shown:
                     session.remove @ keys
                     shown, last_seq = False, None
+                    self.view_flow.reset()
             elif f is not None and now - f["t_rx"] < self.a.camera_timeout:
-                if f["seq"] != last_seq:
+                if f["seq"] != last_seq and self.view_flow.can_send(now):      # never queue frames: drop them
                     last_seq = f["seq"]
                     session.upsert(self.view_elements(f), to="bgChildren")
+                    self.view_flow.sent(f["seq"], now)
                     self.view_rate.tick(now)
                     self.view_log.append({"seq": f["seq"], "stamp_ns": f["stamp_ns"], "sim_time": f["sim_time"],
                                           "t_rx": f["t_rx_wall"], "t_sent": time.time(), "left_bytes": len(f["left"]),
@@ -375,6 +408,7 @@ class QuestServer:
                 # never leave a frozen robot view up: it would look live
                 session.remove @ keys
                 shown = False
+                self.view_flow.reset()
                 print("[quest] robot camera stale: view removed", flush=True)
             await asyncio.sleep(0.004)
 
@@ -394,12 +428,11 @@ class QuestServer:
         """Step the panel at UI_HZ, send its requests, draw what changed."""
         import asyncio
 
-        from vuer.schemas import Image, ImageBackground, Line
-
         from xr_camera_teleop.operator.quest import ui_draw
+        from xr_camera_teleop.operator.quest.vuer_app import image_plane, ray
 
         loop = asyncio.get_running_loop()
-        panel_pic, strip_pic, rays_sent = None, None, {}
+        panel_pic, strip_pic, rays_sent, panel_seq = None, None, {}, 0
         t_panel = t_strip = t_rays = t_rates = 0.0
         rates = {}
         shown = {"panel": False, "strip": False}
@@ -429,11 +462,16 @@ class QuestServer:
 
             if panel.open:
                 pic = panel.picture()
-                if (pic != panel_pic or not shown["panel"]) and now - t_panel >= 1.0 / PANEL_DRAW_HZ:
+                if ((pic != panel_pic or not shown["panel"]) and now - t_panel >= 1.0 / PANEL_DRAW_HZ
+                        and self.panel_flow.can_send(time.monotonic())):
                     jpg = await loop.run_in_executor(None, ui_draw.render_panel, pic, panel.p.width, panel.p.height)
                     pos, rot = ui.to_xr(panel.T)
-                    session.upsert(Image(src=jpg, key="ui-panel", position=pos, rotation=rot, height=panel.p.height,
-                                         aspect=panel.p.width / panel.p.height, interpolate=True), to="bgChildren")
+                    panel_seq += 1
+                    session.upsert(image_plane(src=jpg, key="ui-panel", seq=panel_seq, frame="world", position=pos,
+                                               rotation=rot, height=panel.p.height,
+                                               aspect=panel.p.width / panel.p.height, interpolate=True),
+                                   to="bgChildren")
+                    self.panel_flow.sent(panel_seq, time.monotonic())
                     panel_pic, t_panel, shown["panel"] = pic, now, True
                 if shown["strip"]:
                     session.remove @ ["ui-strip"]
@@ -442,10 +480,11 @@ class QuestServer:
                 if shown["panel"]:
                     session.remove @ ["ui-panel"]
                     shown["panel"], panel_pic = False, None
+                    self.panel_flow.reset()
                 pic = panel.strip()
                 if (pic != strip_pic or not shown["strip"]) and now - t_strip >= 1.0 / STRIP_DRAW_HZ:
                     jpg, aspect = await loop.run_in_executor(None, ui_draw.render_strip, pic)
-                    session.upsert(ImageBackground(src=jpg, key="ui-strip", aspect=aspect, interpolate=True, **STRIP),
+                    session.upsert(image_plane(src=jpg, key="ui-strip", aspect=aspect, interpolate=True, **STRIP),
                                    to="bgChildren")
                     strip_pic, t_strip, shown["strip"] = pic, now, True
 
@@ -454,14 +493,19 @@ class QuestServer:
                 rays = {}
                 for side, (o, e, pressed) in panel.rays.items():
                     rays[side] = ([ui.point_to_xr(o), ui.point_to_xr(e)], pressed)
+                fr, offset = self.assembler.frame, self.assembler.clock.offset
                 for side in ("left", "right"):
                     key = f"ui-ray-{side}"
                     if side in rays:
                         pts, pressed = rays[side]
                         old = rays_sent.get(side)
                         if old is None or old[1] != pressed or np.abs(np.subtract(old[0], pts)).max() > 0.003:
-                            session.upsert(Line(points=pts, color="#3ddc84" if pressed else "#ffffff", lineWidth=3,
-                                                key=key), to="bgChildren")
+                            # the client time of the sample this ray shows: the page reports the loop latency
+                            src = fr.hands[side] if fr.hands[side].stamp.valid else fr.controllers[side]
+                            # (an int: Vuer packs floats as float32, far too coarse for epoch milliseconds)
+                            t_src = int(round((src.stamp.t - offset) * 1000.0)) if src.stamp.valid else None
+                            session.upsert(ray(points=pts, color="#3ddc84" if pressed else "#ffffff", width=RAY_WIDTH,
+                                               tSrc=t_src, key=key), to="bgChildren")
                             rays_sent[side] = (pts, pressed)
                     elif side in rays_sent:
                         session.remove @ [key]
@@ -480,14 +524,14 @@ class QuestServer:
     def view_elements(self, f):
         """Two head-locked planes, left image on the left eye's layer 1 and right on layer 2 (as TeleVuer).
         A mono stream shows the same image to both eyes."""
-        from vuer.schemas import ImageBackground
         from xr_camera_teleop.operator.quest.convert import view_plane
+        from xr_camera_teleop.operator.quest.vuer_app import image_plane
         w, h = f["size"]
         dist, height = view_plane(self.view, w / h, self.a.view_vfov_deg, self.a.ego_height)
         right = f["right"] or f["left"]
-        common = dict(aspect=w / h, height=height, distanceToCamera=dist, interpolate=True)
-        return [ImageBackground(src=f["left"], key="robot-left", layers=1, **common),
-                ImageBackground(src=right, key="robot-right", layers=2, **common)]
+        common = dict(aspect=w / h, height=height, distanceToCamera=dist, interpolate=True, seq=f["seq"])
+        return [image_plane(src=f["left"], key=VIEW_KEYS[0], layers=1, **common),
+                image_plane(src=right, key=VIEW_KEYS[1], layers=2, **common)]
 
     # ------------------------------------------------------------------ overlay + http
     def overlay_loop(self):
@@ -546,6 +590,10 @@ class QuestServer:
                 "undecoded": {f"{s}:{t}:{n}": c for (s, t, n), c in self.undecoded.items()},
                 "view": self.view if self.camera else "none",
                 "view_hz": self.view_rate.hz(now),
+                "view_in_flight": self.view_flow.pending,
+                # sent -> drawn -> confirmed (server clock); a ray: controller sampled -> drawn (headset clock)
+                "latency_ms": {"view": self.view_latency.summary(now), "panel": self.panel_latency.summary(now),
+                               "ray": self.ray_latency.summary(now)},
                 "panel": {"open": self.panel.open, "actions_sent": self.outbox.sent},
             }
         if self.camera is not None:
@@ -679,13 +727,14 @@ def main():
                     help="fullbody_node status PUB to subscribe to (configs/fullbody.yaml node.status_addr)")
     a = ap.parse_args()
 
-    from xr_camera_teleop.operator.quest.vuer_app import make_vuer_app
+    from xr_camera_teleop.operator.quest.vuer_app import SHOWN_EVENT, make_vuer_app
 
     srv = QuestServer(a)
     app = make_vuer_app(a.port, a.cert, a.key, DATA / "quest-static")
     app.add_handler("HEAD_MOVE")(srv.on_head_move)
     app.add_handler("HAND_MOVE")(srv.on_hand_move)
     app.add_handler("CONTROLLER_MOVE")(srv.on_controller_move)
+    app.add_handler(SHOWN_EVENT)(srv.on_shown)
     app.spawn(start=False)(srv.main)
     srv.http()
     threading.Thread(target=srv.overlay_loop, daemon=True).start()

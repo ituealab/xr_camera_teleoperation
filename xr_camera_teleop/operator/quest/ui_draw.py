@@ -1,7 +1,7 @@
 """Pixels of the headset panel and status strip: `PanelPicture` / `StripPicture` (operator/quest/ui.py) -> JPEG.
 
 One job: draw. What is on the panel, where, and in which state is ui.py's; the server upserts the JPEG as a
-world-locked Vuer `Image` (panel) or a head-locked `ImageBackground` (strip). Drawing on the server with a TrueType
+world-locked Vuer `Image` (panel) or a head-locked image (strip, vuer_app.head_image). Drawing on the server with a TrueType
 font keeps the Turkish labels exact in the headset (Vuer's text elements would need a font download on the Quest).
 
 The panel image maps 1:1 onto the panel rectangle: PX_PER_M pixels per metre, origin top left, y down, the same
