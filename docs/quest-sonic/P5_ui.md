@@ -76,8 +76,13 @@ kapatmaz, denemeleri işaretler (`MARK` → node notu ve `tick.ui`).
 | `tools/quest_emulator.mjs --puppet`, `tools/quest_puppet.py` | Testler için emülatörü adım adım süren operatör: kontrolcü/el ışınıyla hedefleme, tetik, pinch, avuç. |
 | `tools/view_latency.py` | Görüntü gecikmesi aşamaları ve node'da kafa örneği yaşı. |
 
-Panel çizimi: dünyaya sabit bir Vuer `Image` (0.44 × 0.28 m, 2400 px/m), şerit kafaya sabit `ImageBackground`
-(0.9 m'de), ışınlar `Line`. Panel resmi yalnız değişince ve en çok 15 Hz yeniden çizilir (~70 kB JPEG), şerit 2 Hz.
+Panel çizimi: dünyaya sabit bir resim düzlemi (0.44 × 0.28 m, 2400 px/m), şerit kafaya sabit bir resim düzlemi
+(0.9 m'de), ışınlar ince bir kutu: üçü de sayfaya enjekte edilen kendi istemci öğelerimiz (`vuer_app.ELEMENTS_JS`),
+Vuer'in `Image` / `ImageBackground` / `Line`'ı değil (bunlar her güncellemede yeni doku ya da shader derler, sayfayı
+boğuyordu; ayrıntı `vuer_app.py`). Panel resmi yalnız değişince ve en çok 15 Hz yeniden çizilir (~70 kB JPEG), şerit
+2 Hz. Robot görüntüsü ve panel akış denetimli (`operator/quest/flow.py`): sayfa çizdiği her resmi onaylar, en çok iki
+onaysız resim yolda olur; geride kalan sayfa kare atlar, kuyruk birikmez. `/health` → `latency_ms`: görüntü ve panel
+gidiş-dönüşü, ışın döngüsü (kontrolcü/el örneği → ışın çizildi).
 
 ## 3. Portlar ve taşıma
 
