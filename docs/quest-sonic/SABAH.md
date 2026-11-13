@@ -33,9 +33,10 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
   kontrolcü tutuyorsan onun stick'i yürütür. Robotun iki kolu yanlarda sarkar, parmaklar açık. Panelde Eller →
   **Kumandayla kol** açıksa kollar kontrolcüleri izler, parmaklar olduğu gibi kalır (yürürken bir şey taşımak için).
 - **ELLER:** iki kontrolcüyü de bırak. Robotun bilekleri ellerini, Dex3 parmakları parmaklarını izler. Joystick'siz
-  ufak yer değiştirme: **kendin bir adım at** (ileri, geri, yana; ~15 cm'den büyük), adım bitince robot da aynı adımı
-  atar. Öne eğilmek, uzanmak, ağırlığını bir bacağa vermek adım sayılmaz. Panelde Eller → **Adımla yürüme** ile
-  kapatılır.
+  yer değiştirme: **kendin yürü** (ileri, geri, yana): robot seninle birlikte yürür (başın ~13 cm ilerleyince
+  başlar, yana ~20 cm; durunca o da kalan yolu bitirip durur). Yürümek ellerin yerini değiştirmez. Öne eğilmek,
+  uzanmak, ağırlığını bir bacağa vermek robotu yürütmez. Robot en az ~20 cm yürür; çok küçük adımlar izlenmez. Panelde
+  Eller → **Adımla yürüme** ile kapatılır.
 - Geçişte Quest girdiyi 0.6–1.5 s keser; robot kısa bir an DURAKLADI'ya geçer, sonra kendiliğinden devam eder.
 
 | Ne | Nasıl |
@@ -49,7 +50,7 @@ bunu da söyler (çare: kendi oturumunda bir kez `xhost +SI:localuser:emin`, son
 | Dön | Sağ stick sağa/sola (tam itince 60°/s; yön kilidi açıkken de çalışır), ya da vücudunla dön (kafa 25°'den fazla ve 0.3 s). Etrafa bakmak (±20°) robotu döndürmez |
 | Eğil, çömel | Öne/yana eğil: robotun gövdesi eğilir (öne en fazla 30°). Çömel (stick boşta): robot squat yapar; kalkınca kalkar |
 | Yerden al | Çömel, sonra **yere kadar in** (kalibrasyondaki boyundan ~55 cm aşağı, 0.5 s): robot iki dizinin üstüne çöker (KNEEL) ve öne eğilerek elleri yere ulaşır. Kalkınca (40 cm'nin üstüne) robot ~2 s'de ayağa kalkar |
-| Adımla yer değiştir | ELLER modunda kendin adım at: robot aynı adımı atar |
+| Yürüyerek yer değiştir | ELLER modunda kendin yürü: robot seninle yürür |
 | Acil durdur | Panelde kırmızı **DURDUR**, ya da iki grip + tetik 0.5 s |
 
 Panel açıkken robot donar (DURAKLADI); panel kapanınca devam eder. Panel sayfaları: Robot (Başlat, Kalibre et ve

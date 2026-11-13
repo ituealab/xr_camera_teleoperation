@@ -94,8 +94,21 @@ def test_operator_shoulder_frame_follows_the_lean():
     o0 = run(post, [Pose()])[-1]
     w = frames_of(EXACT, Pose())
     assert np.allclose(o0.shoulders[:3, 3], w["shoulders"][:3, 3] + [0, 0, EXACT.shoulders_below_neck - P.shoulders_below_neck])
-    o = run(calibrated(), [Pose(lean_pitch=D(20))])[-1]
+    o = run(calibrated(), [Pose(lean_pitch=D(20))] * 75)[-1]                 # once the commanded lean caught up
     assert rotation_angle(o.shoulders[:3, :3], frames_of(EXACT, Pose(lean_pitch=D(20)))["shoulders"][:3, :3]) < 1e-6
+
+
+def test_operator_frame_leans_only_as_far_as_the_robot_torso():
+    """The frame the wrists are measured in turns with the commanded lean (rate limit, waist clamp), never past it:
+    a walk misread as a lean once turned it 90 deg and the hands with it."""
+    post = calibrated()
+    o = run(post, [Pose(), Pose(lean_pitch=D(20))])[-1]                      # one tick: the command barely moved
+    assert rotation_angle(o.shoulders[:3, :3], np.eye(3)) == pytest.approx(P.rate_rad_s * DT, abs=1e-6)
+    o = run(calibrated(), [Pose(lean_pitch=D(60))] * 150)[-1]                # past the waist limit
+    assert o.pitch == pytest.approx(D(60), abs=1e-6)
+    assert rotation_angle(o.shoulders[:3, :3], np.eye(3)) == pytest.approx(D(P.pitch_fwd_max_deg), abs=1e-6)
+    o = run(calibrated(), [Pose(lean_pitch=D(20))] * 75, settings=OperatorSettings(lean_gain=0.0))[-1]
+    assert rotation_angle(o.shoulders[:3, :3], np.eye(3)) < 1e-9             # lean off: an upright frame
 
 
 def crouch_poses(depth, seconds, lean=0.0):

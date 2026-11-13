@@ -13,8 +13,8 @@ panel actions the node received in the recording (calibrations, pauses, settings
 overrides operator settings.
 
 Reported: supervisor states and their durations, operator modes (WALK / HANDS), squat entries (each with time and
-the lean-corrected head drop), facing changes, walking time, hand modes, events, operator steps (stepping.py: time,
-body-frame displacement, mode, whether the robot followed). tools/fullbody_sim_test.py uses
+the lean-corrected head drop), facing changes, walking time, hand modes, events, the robot's follow walks (stepping.py:
+start time, mode, the stance). tools/fullbody_sim_test.py uses
 `run_offline` for the false-crouch count of the synthetic and the real streams.
 """
 from __future__ import annotations
@@ -114,7 +114,7 @@ def run_offline(frames: list, fullbody_cfg: dict, calibrate_at: float | None = N
         if n_steps > prev_steps:
             stp = core.source.stepping
             steps.append({"t": round(now - t0, 2), "mode": mode, "state": st,
-                          "stance": [round(float(x), 3) for x in stp.stance], "followed": stp.walking})
+                          "stance": [round(float(x), 3) for x in stp.stance]})
         prev_steps = n_steps
         crouch = inp.status.get("crouch", "stand")
         if crouch == "squat" and prev_crouch != "squat":

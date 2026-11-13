@@ -17,7 +17,7 @@ is robot-level (`fullbody/types.py`):
                locomotion.py     base from the left stick, turn rate from the right stick's x (WALK only;
                                  with one controller its stick walks)
                stepping.py       the stance (where the operator stands; the lean reference) follows the operator's
-                                 own steps; in HANDS mode with step_walk the robot walks the same steps
+                                 own walking at once; in HANDS mode with step_walk the robot walks with them
                posture.py        torso; SQUAT + height or KNEEL (override locomotion), IDLE while rising; the operator
                                  shoulder frame and the torso frame the wrists are placed in
                arms.py           left_wrist, right_wrist (TRACKED / HOLD / PARKED per side)
@@ -242,8 +242,8 @@ class QuestSource:
         follow = (mode is OperatorMode.HANDS and s.step_walk and self.posture.crouch is Crouch.STAND
                   and not loco.deflected)
         steps = self.stepping.step(now, self.posture.neck(f.head.T), h.psi_body, follow)
-        post = self.posture.step(now, f.head.T, h.psi_body, h.waist_yaw, loco.deflected or steps.walking, s,
-                                 stance=steps.stance)
+        post = self.posture.step(now, f.head.T, h.psi_body, h.waist_yaw,
+                                 loco.deflected or steps.walking or steps.moving, s, stance=steps.stance)
         if post.legs is not None:
             base = post.legs
         elif steps.base is not None:
@@ -255,7 +255,7 @@ class QuestSource:
         hands = self.fingers.step(now, f.hands, arms.modes, s)
         self._out = {"hand_left": arms.modes["left"].value, "hand_right": arms.modes["right"].value,
                      "crouch": post.crouch.value, "body_turning": h.turning,
-                     "stepping": steps.walking, "steps": self.stepping.steps,
+                     "stepping": steps.walking, "steps": self.stepping.steps, "op_walking": steps.moving,
                      "lean_pitch_deg": round(float(np.degrees(post.pitch)), 1),
                      "lean_roll_deg": round(float(np.degrees(post.roll)), 1)}
         return Intent(base=base, heading=h.heading, torso=post.torso, left_wrist=arms.left, right_wrist=arms.right,

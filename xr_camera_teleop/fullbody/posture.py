@@ -7,11 +7,16 @@ rotation: nodding, glancing and tilting the head turn it about (roughly) the nec
 eyes move several cm (a 30 deg nod moves them ~4 cm forward and 5 cm down). The head *angle* is never read as lean.
 
 Lean: the neck's displacement from its reference, in the body yaw frame psi_body (heading.py). The reference is the
-stance (stepping.py): the calibrated neck position, carried along when the operator physically steps.
+stance (stepping.py): the calibrated neck position, carried along at once when the operator walks or steps.
     theta_pitch = asin(dx_fwd / Ln)   (forward +),   theta_roll = -asin(dy_left / Ln)   (rightward +, Rx convention)
-  - operator lean (unscaled) -> the operator torso frame (frames.operator_body_frame) the wrists are measured in.
-  - commanded lean = gain * settings.lean_gain * lean, clamped to the waist limits, rate-limited -> the torso_link
-    target R = Rz(waist_yaw) Ry(pitch) Rx(roll) about its neutral position (the VR torso point follows; adapter.py).
+  - commanded lean = g * lean (g = gain * settings.lean_gain), clamped to the waist limits, rate-limited -> the
+    torso_link target R = Rz(waist_yaw) Ry(pitch) Rx(roll) about its neutral position (the VR torso point follows;
+    adapter.py).
+  - the operator torso frame (frames.operator_body_frame) the wrists are measured in leans by the commanded lean / g:
+    the operator's lean as far as the robot follows it. The wrists are placed in the commanded torso (arms.py), so a
+    hand keeps its place relative to the operator's shoulders whatever the clamp and the rate limit do; with the raw
+    lean an operator leaning past the waist limit (or a walk misread as a lean, which saturated at 90 deg) turned the
+    hands with a frame the robot's torso never followed.
   - `torso_lean`: the same target without the waist-yaw share, the frame the robot wrists are placed in (arms.py):
     a glance turns the head (and the torso, as far as SONIC tracks it), never the hands.
 
@@ -214,7 +219,9 @@ class Posture:
         R_lean = rot_y(self.pitch_cmd) @ rot_x(self.roll_cmd)
         torso_lean = pose(R_lean, p.torso_neutral)
         torso = pose(rot_z(waist_yaw) @ R_lean, p.torso_neutral)
-        T_op = operator_body_frame(n, psi_body, pitch, roll, self.Ln)
+        g = p.gain * settings.lean_gain
+        T_op = operator_body_frame(n, psi_body, self.pitch_cmd / g if g > 1e-6 else 0.0,
+                                   self.roll_cmd / g if g > 1e-6 else 0.0, self.Ln)
         shoulders = T_op @ pose(p=[0.0, 0.0, self.Ln - p.shoulders_below_neck])
         height = None
         if self.crouch is Crouch.SQUAT:

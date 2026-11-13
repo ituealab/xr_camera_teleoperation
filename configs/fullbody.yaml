@@ -26,7 +26,7 @@ operator_settings:
   lean_gain: 1.0
   arm_tracking: true
   fingers: true
-  step_walk: true                # HANDS mode: the robot steps after the operator's own steps
+  step_walk: true                # HANDS mode: the robot walks with the operator's own walking
   controller_arms: false         # WALK mode: the arms follow the controllers, the fingers stay as they are
 
 lifecycle:                       # sonic/lifecycle.py
@@ -122,20 +122,32 @@ quest:
     kneel_hold_s: 0.5            # bends over them and brings the hands to the floor, its squat cannot: P4_P6_P7 §9)
     kneel_exit_m: 0.40
     kneel_rise_s: 2.0
-  stepping:                      # fullbody/stepping.py (the operator's own steps; HANDS mode: the robot follows)
-    min_step_m: 0.15             # neck offset from the stance at least this (sideways counted x lateral_weight)
-    lean_margin_m: 0.08          # and this much of it not explained by a lean's drop
-    lateral_weight: 0.6          # weight shifts move the head sideways 10-15 cm without a drop
-    seated_below_m: 1.35         # calibrated head height below this: seated, no steps
-    settle_speed: 0.10           # m/s: a step is over when the neck is this slow
-    settle_s: 0.35               # for this long
-    max_step_m: 1.0              # larger jumps only move the stance (tracking glitch)
-    speed: 0.4                   # m/s, the followed walk (SONIC barely moves below ~0.3)
-    speed_gain: 0.83             # pulse model D(T) = gain * speed * (T - lag), sim (PLAN D15)
-    speed_gain_back: 1.15        # backward pulses go further
-    lag_fwd_s: 0.0
+  stepping:                      # fullbody/stepping.py (the stance follows the operator's walking; HANDS: the robot too)
+    drop_noise_m: 0.010          # neck drop explaining no lean (standing height varies, walking lowers it)
+    sway_fwd_m: 0.08             # neck offset no drop explains that may stay a lean: forward, back, sideways ...
+    sway_back_m: 0.06
+    sway_lat_m: 0.08             # weight shifts move the head sideways 10-15 cm without a drop
+    walk_sway_m: 0.04            # ... while the operator walks; beyond it the stance is dragged along
+    walk_min_m: 0.05             # walking: the stance dragged this far (leaky sum, walk_hold_s)
+    walk_hold_s: 0.5
+    upright_drop_m: 0.01         # at rest and upright: the stance drawn to the neck (unwalked) ...
+    relax_tau_s: 1.5             # ... with this time constant
+    seated_below_m: 1.35         # calibrated head height below this: seated, the stance stays
+    settle_speed: 0.08           # m/s: the neck at rest below this ...
+    settle_s: 0.3                # ... this long: a walk is over (its tail absorbed)
+    start_m: 0.08                # pending displacement that starts the robot's walk (sideways x lateral_weight)
+    lateral_weight: 0.5
+    speed: 0.4                   # m/s, the following walk (SONIC barely moves below ~0.3) ...
+    speed_max: 0.5               # ... up to this while more than catch_up_m is pending
+    catch_up_m: 0.4
+    gain_fwd: 1.20               # walk model D(T) = gain * v * (T - lag), sim (PLAN D15): forward ...
+    lag_fwd_s: 0.23
+    gain_back: 1.15              # ... backward ...
+    lag_back_s: 0.0
+    gain_lat: 0.83               # ... sideways
     lag_lat_s: 0.6               # SONIC starts sideways walks ~1 s late
     min_walk_s: 0.6
+    pending_tau_s: 1.5           # what the stance is dragged outside a walk (leans, shuffles) fades
   arms:                          # fullbody/arms.py
     scale: 0.7                   # robot arm / human arm (0.37 / ~0.53 m)
     robot_shoulders: [0.004, 0.0, 0.235]   # shoulder midpoint in the torso_link frame (G1 FK)

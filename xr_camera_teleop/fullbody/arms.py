@@ -9,7 +9,9 @@ then into the pelvis frame through the commanded torso lean without its waist-ya
 lean is not applied twice (D9) and a glance never moves the hands. There is no arm IK (D3): SONIC's VR 3-point mode
 tracks the wrist links; sonic/adapter.py turns them into its proxies. The absolute body-frame mapping needs no wrist
 calibration (with D8 the operator usually calibrates holding a controller), and `scale` ~ robot arm / human arm.
-The WebXR wrist rotation is used as is (PLAN §5), One-Euro filtered with the position (operator/filters.py).
+The WebXR wrist rotation is used as is (PLAN §5), One-Euro filtered with the position (operator/filters.py) in the
+operator shoulder frame: filtered in F, a walking operator's hands lagged behind the shoulders by the filter's lag and
+the robot's hands drifted with every step.
 
 Cheap geometric safety, no collision model: in the torso frame the wrist stays within `reach_m` of its shoulder,
 in front of the torso (x >= front_min_m: never behind the robot, never beside the hips), across the midline by at
@@ -140,10 +142,15 @@ def controller_wrist(T_ray, side: str, offset) -> np.ndarray:
     return pose(T[:3, :3] @ neutral_hand_rotation(side), T[:3, 3] + T[:3, :3] @ np.asarray(offset, dtype=float))
 
 
+def place_wrist(rel, side: str, scale: float, robot_shoulders) -> np.ndarray:
+    """Operator wrist pose in the operator shoulder frame -> robot wrist_yaw_link pose in the torso_link frame."""
+    rel = np.asarray(rel, dtype=float)
+    return pose(rel[:3, :3] @ ego_wrist_offset(side), np.asarray(robot_shoulders, dtype=float) + scale * rel[:3, 3])
+
+
 def map_wrist(T_wrist_F, shoulders_F, side: str, scale: float, robot_shoulders) -> np.ndarray:
     """Operator wrist pose (floor frame F) -> robot wrist_yaw_link pose in the torso_link frame."""
-    rel = inv_pose(shoulders_F) @ np.asarray(T_wrist_F, dtype=float)
-    return pose(rel[:3, :3] @ ego_wrist_offset(side), np.asarray(robot_shoulders, dtype=float) + scale * rel[:3, 3])
+    return place_wrist(inv_pose(shoulders_F) @ np.asarray(T_wrist_F, dtype=float), side, scale, robot_shoulders)
 
 
 def _forward_out_of_capsule(p, a, b, r) -> float:
@@ -296,9 +303,10 @@ class Arms:
                     st.seq, st.source = None, want
                 if stamp.seq != st.seq:
                     st.seq = stamp.seq
-                    pf, Rf = st.filter(T[:3, 3], T[:3, :3], stamp.t)
+                    rel = inv_pose(shoulders_F) @ T                  # filtered in the shoulder frame
+                    pf, Rf = st.filter(rel[:3, 3], rel[:3, :3], stamp.t)
                     st.filtered = pose(Rf, pf)
-                st.local = torso_safety(map_wrist(st.filtered, shoulders_F, s, scale, p.robot_shoulders), s, p, reach)
+                st.local = torso_safety(place_wrist(st.filtered, s, scale, p.robot_shoulders), s, p, reach)
                 st.last_seen = now
                 st.enter(want, now, p.track_s)
             elif want is not None and want is st.source and st.local is not None and st.mode is not HandMode.PARKED \

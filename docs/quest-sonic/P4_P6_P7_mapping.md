@@ -85,7 +85,8 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 `OperatorInput.status` (panel ve log için, düz değerler): `mode` (walk/hands; ilk girdiden önce yok),
 `heading_lock`, `calibrating` (A/X basılıyken 0→1; panel isteği denenirken 1), `calibrated`, `calibration_error`
 (son red nedeni), `engage_pending`, `hand_left`/`hand_right` (tracked/controller/hold/parked), `crouch`
-(stand/squat/kneel/rising), `body_turning`, `stepping` (adım yürüyüşü sürüyor), `steps` (algılanan adım sayısı),
+(stand/squat/kneel/rising), `body_turning`, `stepping` (robot operatörü izleyerek yürüyor), `steps` (başlayan izleme yürüyüşü sayısı), `op_walking`
+(operatör yürüyor),
 `lean_pitch_deg`/`lean_roll_deg`.
 
 ## 4. Tasarım ayrıntıları
@@ -139,14 +140,17 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
   kilitli.
 
 ### Kollar (`arms.py`)
-- **Operatör omuz frame'i** (posture): yaw ψ_body, operatörün kendi eğimi, orijin omuz hattında. Bilek bu frame'e
+- **Operatör omuz frame'i** (posture): yaw ψ_body, eğim = komut edilen gövde eğimi / kazanç (operatörün eğiminin
+  robotun izlediği kadarı: bel sınırı ve hız sınırı dahil), orijin omuz hattında. Ham eğimle, bel sınırını aşan ya da
+  eğilme sanılan bir yürüyüş (kayıtta 90°'ye doydu) elleri robot gövdesinin hiç izlemediği bir frame'le döndürüyordu. Bilek bu frame'e
   alınır; robotta torso_link frame'inde omuz ortasına göre `p = c_robot + 0.7·p_op` (tek ortak merkez: eller
   birleşince robot elleri birleşir), `R = R_op·C_taraf` (`hand_geometry.ego_wrist_offset`; avuç içe, başparmak
   yukarı el → robot bilek nötrü R = I). Sonra komut edilen torso **eğimiyle** (bel-yaw payı olmadan) pelvise.
   Eğilme iki kez yansımaz (D9); bakış elleri oynatmaz.
 - Mutlak gövde-frame eşlemesi: bilek kalibrasyonu gerekmez (D8 ile kalibrasyon çoğunlukla kontrolcü eldeyken).
 - 0.7 = robot kolu (omuz → bilek 0.37 m) / insan kolu (~0.53 m); robot omuz ortası torso_link'te (0.004, 0, 0.235).
-- Filtre: wrapper'ın One-Euro değerleri, sadece yeni el örneğinde. Güvenlik (torso frame'inde, bu sırayla): bilek
+- Filtre: wrapper'ın One-Euro değerleri, sadece yeni el örneğinde, **omuz frame'inde** (F'de filtrelenince yürüyen
+  operatörün elleri filtre gecikmesi kadar omuzların gerisinde kalıyordu). Güvenlik (torso frame'inde, bu sırayla): bilek
   omzundan ≤ 0.36 m; bilek gövdenin önünde (x ≥ 0.08 m: robotun arkasına ya da kalçanın yanına hiç gitmez) ve orta
   hattı en fazla 5 cm geçer; bilek ≥ 0.16 m, el noktası (+0.10 m) ≥ 0.12 m gövde kapsülünden (kapsülden ileri
   çıkılır, yan ve yükseklik korunur); pelvis frame'inde z ≥ −0.15 m; iki bilek ≥ 0.15 m (Dex3 başparmağı ~6 cm
@@ -181,7 +185,7 @@ Node, supervisor, types, settings, sonic/* değişmedi. Ayarların hepsi `Operat
 | mode | confirm_s 0.1 |
 | heading | hold_deg 20, turn_deg 25, turn_delay_s 0.3, rate_deg_s 60, settle_deg 1, step_deg 3, step_band 0.6, waist_yaw_max_deg 0, reissue_s [3.0, 4.5], reissue_rad 0.0698 |
 | locomotion | v_fwd_max 0.5, v_back_max 0.55, v_lat_max 0.45, v_min 0.4, walk_above 0.75, walk_band 0.1, speed_step 0.05, direction_step_deg 10, band 0.6, turn_rate_deg_s 60 |
-| stepping | min_step_m 0.15, lean_margin_m 0.08, lateral_weight 0.6, seated_below_m 1.35, settle_speed 0.10, settle_s 0.35, max_step_m 1.0, speed 0.4, speed_gain 0.83, speed_gain_back 1.15, lag_fwd_s 0, lag_lat_s 0.6, min_walk_s 0.6 |
+| stepping | drop_noise_m 0.01, sway_fwd/back/lat_m 0.08/0.06/0.08, walk_sway_m 0.04, walk_min_m 0.05, walk_hold_s 0.5, upright_drop_m 0.01, relax_tau_s 1.5, seated_below_m 1.35, settle_speed 0.08, settle_s 0.3, start_m 0.08, lateral_weight 0.5, speed 0.4, speed_max 0.5, catch_up_m 0.4, speed_gain 0.83, speed_gain_back 1.15, lag_fwd_s 0, lag_lat_s 0.6, min_walk_s 0.6, pending_tau_s 1.5 |
 | posture | neck_in_head [−0.08, 0, −0.10], shoulders_below_neck 0.09, torso_neutral (*alias*), gain 1, pitch_fwd_max_deg 30, pitch_back_max_deg 10, roll_max_deg 15, rate_rad_s 0.5, stick_idle_s 0.5, enter_m 0.12, enter_hold_s 0.25, exit_m 0.07, rise_s 1.5, h_stand 0.8, k_h 1.0, h_min 0.3, h_max 0.75, height_step 0.03, kneel_enter_m 0.55, kneel_hold_s 0.5, kneel_exit_m 0.40, kneel_rise_s 2.0 |
 | arms | scale 0.7, robot_shoulders, reach_m 0.36, front_min_m 0.08, cross_m 0.05, torso_axis/radius, hand_point/radius, z_min_m −0.15, kneel_scale 1.0, kneel_reach_m 0.70, kneel_z_min_m −0.27, kneel_x_max_m 0.47, kneel_y_max_m 0.35, wrist_gap_m 0.15, controller_wrist_m [−0.10, 0, −0.03], hold_s 1, park_s 1, track_s 0.7, max_lin 1.2, max_ang 4, One-Euro, park |
 | hands | rest (*alias* postures.hands_open), max_rate_rad_s 8, thumb_shaping |
@@ -278,9 +282,11 @@ Yeniden gönderme A/B (aynı senaryo, dönüş başına mutlak hata, en büyüğ
 4. **Gövde dönüşünde kollar:** ELLER modunda operatör yerinde dönerse ψ_body histerezis yüzünden geride kalır,
    eller o frame'de döner görünür; ön çalışma alanı ve orta hat sınırı hedefleri robotun önünde tutar ama dönüş
    sürerken eller doğru yerde değildir. Dönüş bitince (ψ_body yetişince) düzelir.
-5. **Eğilme ile adım ayrımı modele dayanır** (`stepping.py`): eğilme kalça etrafında döner ve boynu düşürür, adım
-   düşürmez. Yana ağırlık aktarma (10–15 cm, düşüşsüz) adımdan ayrılamaz; bu yüzden yan bileşen ×0.6 sayılır. Adım
-   atan operatörün duruş referansı adımla taşındığından adım artık eğilme sayılmaz (YÜRÜME'de de).
+5. **Eğilme ile yürüme ayrımı modele dayanır** (`stepping.py`): eğilme kalça etrafında döner ve boynu düşürür,
+   yürüme düşürmez; ama doğal duruş boyu 1–3 cm oynuyor ve yürürken kafa 1–3 cm alçalıyor, bu yüzden 1 cm'ye kadar
+   düşüş hiçbir şeyi açıklamaz. Düşüşü küçük bir eğilme (~10 cm) ile kısa bir adım ayırt edilemez: küçük eğilmeler
+   elipsin içinde eğilme kalır, dik ve durgun duruşta referans yavaşça boyna çekilir (robot yürümez). Yana ağırlık
+   aktarma (10–15 cm, düşüşsüz) adımdan ayrılamaz; yan bileşen ×0.5 sayılır, yan adım ≥ ~20 cm ise izlenir.
 6. **Kalibrasyon şartları:** dik dur, ileri bak (eğim ≤ 20°), 1 s kıpırdama (2 cm, 3°). Panelden kalibrede operatör
    panele bakıyorsa reddedilir; 4 s içinde ileri bakınca kabul edilir (`calibration_error` status'ta).
 7. **Parmak dinlenme pozu sıfırlar** (`postures.hands_open`): retarget'ın "açık el"inden farklı (başparmak −1.05 rad);
@@ -303,11 +309,36 @@ inerken sağ el takibi aralıklarla düştü (replay: sağ el sol elden ~47 s fa
 üstünde kaldı; bir koşuda robot diz üstündeyken 0.9 m geri kaydı. Yerden alma gerçek operatörle denenmeli;
 emülatörde çözülmedi (kullanıcı kararı: olduğu kadar kalsın).
 
-**Adımla yürüme (`stepping.py`, D15).** Ölçüm (`acceptance --only stepping`, 2 koşu, Quest emülatörü + sim):
-6 adımın 6'sı algılandı, eğilme (25 ve 35 cm), uzanma ve yana ağırlık aktarma (±12 cm) 0 yanlış adım verdi. İleri
-0.20–0.30 m adımlar 2–5 cm hatayla; geri adımlar %35 fazla gidiyordu (`speed_gain_back` 1.15 ile düzeltildi);
-yana adımlar yana doğru ama SONIC kısa yan yürüyüşe başlarken 0.2–0.3 m geri kayıyor (2 s'lik stick yan yürüyüşünde
-kaymıyor). Açık çevrim: node robotun konumunu görmez.
+**Adımla yürüme (`stepping.py`, D15).** İlk sürüm adımı kafa durulunca sayıyordu. Kullanıcının headset denemesinde
+(kayıt `20261113-135937`) ELLER modunda 2 m'lik sürekli yürüyüş hiç adım sayılmadı: kafa hiç durulmadı, duruş
+yüksekliği "en yüksek görülen" olduğu için 3 cm'lik doğal alçalma 20 cm'lik kaymayı "eğilme" diye açıkladı. Eğilme
+±90°'ye doydu; eller o eğimle dönen operatör frame'inde ölçüldüğü için savruldu, robot yürümedi. Yeni tasarım:
+
+- Duruş referansı boynu tasmayla izler (her tick): düşüşün açıklamadığı kayma elipsi (8/6/8 cm) aşınca hemen
+  sürüklenir. ≥ 5 cm sürüklenince operatör yürüyor sayılır, elips 4 cm'ye iner, düşüşe güvenilmez. Durunca kuyruk
+  emilir. Dik duruş yüksekliği yerleşik boy ölçümünü yavaşça izler (maksimum değil).
+- Robot operatörle birlikte yürür. Bekleyen yer değiştirme ≥ 8 cm (yan ×0.5) olunca başlar, kat edilen yol
+  yürüyüş modeliyle tahmin edilir. Yürüyüş sonundaki taşma atılır (yoksa kısa adımda ileri-geri yürüyordu).
+- Operatör frame'i komut edilen eğimle eğilir (ham eğimle değil). Bilek filtresi omuz frame'inde çalışır.
+
+Replay (aynı kayıt, eski → yeni): ELLER'de eğilme p95 90° → 13°, en fazla 90° → 24°; 2 m'lik yürüyüşte robot
+0 s → 35.7 s yürüdü (38 s'nin); sağ bilek hedefinin aralığı 0.6 m → 0.3 m (kalan, operatörün kendi el hareketi ve
+dönüşlerde ψ_body gecikmesi).
+Sim (`acceptance --only stepping`, Quest emülatörü, son modelle 4 koşu, hepsi geçti, düşme yok):
+
+| Ölçüm | Sonuç |
+|---|---|
+| 1.5 m yürüyüş (0.4 m/s, kafa salınımlı) | robot 1.53–1.70 m yürüdü |
+| Yürürken eğilme | medyan 3.3°; başlangıçta en fazla 14–17° (robot gövdesi 14°) |
+| Robot bileği (pelvis frame'inde) | medyan 2.7 cm, en fazla 7.7 cm oynadı |
+| Eğilme (25 ve 35 cm) ve ağırlık aktarma (±12 cm) | robot hiç yürümedi |
+| İleri 0.20 ve 0.30 m adım | 0.10–0.28 ve 0.37–0.50 m |
+| Geri 0.20 ve 0.30 m adım | 0.43–0.56 ve 0.41–0.54 m |
+| Yana 0.35 m adım | 0.40–0.62 m, başlarken 0.2–0.3 m geri kayma |
+| Adım başına yürüyüş sayısı | 1 (taşma atılmadan önce geri 0.20 m adımda 4: ileri-geri) |
+
+Model ileri için uyduruldu: 0.75 s'lik darbeler ve 4.5 s'lik yürüyüş birlikte kazanç 1.20, gecikme 0.23 s veriyor.
+SONIC'in ileri dışındaki kısa yürüyüşleri tekrarlanabilir değil. Açık çevrim: node robotun konumunu görmez.
 
 **Stick ile dönüş (`locomotion.turn_rate`, `heading.py`).** Sol stick yürür, sağ stick x'i ölü bölge dışında
 ölçeklenip × 60°/s heading'e eklenir; kilitliyken de çalışır, squat/kneel'de çalışmaz, ψ_body'ye eklenmez (operatör

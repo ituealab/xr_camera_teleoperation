@@ -23,8 +23,9 @@ its hand. Steps (D8: walking with a controller, hands without):
   lean        lean forward (torso pitches), crouch (squat), stand up
   floor       (--only floor) turn to the floor cube, walk up, hands; go down to the floor (squat, then kneel), right
               hand palm down over the cube, fist, lift (up to 3 tries), put it down, open, stand up
-  stepping    (--only stepping) HANDS mode: the operator steps forward, back, left, right (the robot follows, D15), then
-              leans and reaches at length and shifts the weight (the robot must not step)
+  stepping    (--only stepping) HANDS mode: the operator walks 1.5 m forward at 0.4 m/s, hands held still (the robot
+              walks with them; no lean, the robot's wrists stay put in its pelvis frame), steps forward, back, left,
+              right (the robot follows, D15), then leans and reaches at length and shifts the weight (no walk)
   hands       walk to table_a; controllers down: HANDS; a hand raised lifts the robot's wrist
   cube        right hand palm down over the cube, fist, lift (up to 3 tries), carry 6 cm along the table, put down, open
   walk_again  controllers back: WALK; back to the corridor, a 180 deg turn to the left
@@ -762,6 +763,35 @@ class Run:
 
         def n_steps():
             return op.q.state()["node"]["operator"].get("steps", 0)
+
+        def wrists_local():
+            robot.update()
+            Rp, pp = robot.sim.rot("pelvis"), robot.sim.pos("pelvis")
+            return np.concatenate([Rp.T @ (robot.sim.pos(f"{s}_wrist_yaw_link") - pp) for s in ("left", "right")])
+
+        # a continuous walk (the recorded failure: never settled, read as a lean up to 90 deg, the hands swung):
+        # 1.5 m forward at 0.4 m/s, the head bobbing at 2 Hz and 1-2.5 cm lower, the hands held still
+        a, yaw_a, w0, k0 = robot.pelvis()[:2], robot.yaw(), wrists_local(), n_steps()
+        start, goal = op.base.copy(), op.base + (R_op @ np.array([0.0, 0.0, -1.5]))[[0, 2]]
+        leans, torso, dev, ticks = [], [], [], int(1.5 / 0.4 / 0.03)
+        for i in range(1, ticks + 1):
+            op.base = start + (goal - start) * i / ticks
+            op.drop = 0.01 + 0.0075 * (1.0 + math.cos(2.0 * math.pi * 2.0 * i * 0.03))
+            op.head()
+            op.place_hands()
+            time.sleep(0.03)
+            if i % 5 == 0:
+                leans.append(abs(op.q.state()["node"]["operator"].get("lean_pitch_deg", 0.0)))
+                torso.append(abs(robot.torso_pitch_deg()))
+                dev.append(float(np.linalg.norm((wrists_local() - w0).reshape(2, 3), axis=1).max()))
+        op.ease(0.3, drop=0.0)
+        time.sleep(5.0)
+        moved = rot_z(-yaw_a)[:2, :2] @ (robot.pelvis()[:2] - a)
+        out["walk"] = {"robot_m": moved.round(3).tolist(), "lean_max_deg": round(max(leans), 1),
+                       "lean_p50_deg": round(float(np.median(leans)), 1), "torso_pitch_max_deg": round(max(torso), 1),
+                       "wrist_dev_m": {"p50": round(float(np.median(dev)), 3), "max": round(max(dev), 3)},
+                       "walks": n_steps() - k0, "wrists_after_m": round(float(np.abs(wrists_local() - w0).max()), 3)}
+        self.note.update(out)
         for name, d_local in (("fwd 0.30", (0.30, 0.0)), ("back 0.30", (-0.30, 0.0)), ("left 0.35", (0.0, 0.35)),
                               ("right 0.35", (0.0, -0.35)), ("fwd 0.20", (0.20, 0.0)), ("back 0.20", (-0.20, 0.0))):
             a, k0, yaw_a = robot.pelvis()[:2], n_steps(), robot.yaw()
@@ -790,6 +820,9 @@ class Run:
         false_steps = sum(f["detected"] for f in out["false"])
         out["mean_err_m"] = round(float(np.mean(errs)), 3)
         out["false_steps"] = false_steps
+        w = out["walk"]
+        check(abs(w["robot_m"][0] - 1.5) < 0.3 and abs(w["robot_m"][1]) < 0.3, f"walked 1.5 m, the robot {w['robot_m']}")
+        check(w["lean_p50_deg"] < 5.0 and w["lean_max_deg"] < 20.0, f"a walk read as a lean ({w['lean_max_deg']} deg)")
         check(false_steps == 0, f"{false_steps} steps detected while leaning / shifting the weight")
         check(all(f["detected"] >= 1 for f in out["followed"]), "a step was not detected")
         return out

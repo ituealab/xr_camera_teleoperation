@@ -181,7 +181,8 @@ def test_step_walk_off_keeps_the_robot_still():
     off = UiAction(UiKind.SET, "step_walk", False, t=0.0, seq=99)
     _, ticks = run(sc, ui={0.5: [off]})
     assert not any(tk.sup.cmd.base.mode in WALKING for tk in ticks[int(sc.segments[-2].t0 / DT):])
-    assert ticks[-1].input.status["steps"] == 1                              # the stance still follows
+    st = ticks[-1].input.status
+    assert st["steps"] == 0 and abs(st["lean_pitch_deg"]) < 3.0                # the stance still follows: no lean
 
 
 def test_right_stick_turns_left_stick_walks_one_controller_walks():
